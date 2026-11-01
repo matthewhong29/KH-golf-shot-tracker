@@ -1,0 +1,181 @@
+/*
+ * Tips & drills, keyed by player id (data/players.json).
+ * {name}, {height} and {age} are filled in from the player's data file.
+ * callout: a "from your last session" line computed by GolfCore.sessionCallout
+ * (mishits | launch | miss | carry); it's hidden until the player has shot data.
+ * search: the YouTube search used for the drill's "Look it up" link.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.GolfTips = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+  return {
+    dad: {
+      intro: 'Pick one focus for each practice session and stick with it. Tap “Look it up” on any drill to watch a short video of it.',
+      focus: [
+        {
+          id: 'contact',
+          title: 'Solid contact first',
+          why: 'Topped and thin shots cost the most distance, and they have shown up in both sessions so far: the PW in August and the 5 wood in November. Hitting the ball first, then brushing the ground just after it, fixes most of them.',
+          callout: 'mishits',
+          drills: [
+            { name: 'Towel drill', reps: '2 sets of 10 balls', search: 'golf towel drill behind ball hit ball first',
+              steps: ['Lay a towel flat about 4–6 inches behind the ball.', 'Make half swings with a 9 iron or PW.', 'Miss the towel and hit the ball first. Touching the towel means the bottom of your swing is too far back.', 'When you miss the towel 5 times in a row, try full swings.'] },
+            { name: 'Line drill', reps: '10 practice swings, then 10 balls', search: 'golf line drill ball first contact low point',
+              steps: ['Draw a line on the ground, or lay a club across your stance.', 'Put the ball just on the target side of the line.', 'Make practice swings that brush the ground on the target side of the line, never behind it.', 'Hit balls with that same brush.'] },
+            { name: 'Feet-together half swings', reps: '15 balls with a 9 iron', search: 'feet together golf drill',
+              steps: ['Stand with your feet together and the ball in the middle.', 'Make smooth half swings, hip high to hip high.', 'Stay balanced until the ball lands. If you wobble, swing slower.'] },
+            { name: 'Long club off a low tee', reps: '10 teed up, then 5 off the mat', search: 'hybrid fairway wood low tee drill sweep',
+              steps: ['Tee the ball with your hybrid or 5 wood so it sits about a quarter inch above the grass.', 'Sweep it off the tee with a smooth, shallow swing. Don’t chop down.', 'After 5 good ones, lower the tee, then hit from the mat.'] }
+          ]
+        },
+        {
+          id: 'turn',
+          title: 'Turn your body, not just your arms',
+          why: 'The August swing video showed mostly arms with little body turn, a steep, handsy downswing and a short finish. Turning your chest back and through gives more power for less effort and makes contact easier to repeat.',
+          drills: [
+            { name: 'Towel under both arms', reps: '10 swings without a ball, then 10 balls', search: 'towel under arms golf drill connection',
+              steps: ['Tuck a small towel under both armpits.', 'Make half swings and keep the towel in place.', 'Your arms and chest turn together. If the towel drops, your arms got ahead.'] },
+            { name: 'Cross-arm shoulder turn', reps: '10 slow turns each way, before you hit balls', search: 'cross arm shoulder turn golf drill',
+              steps: ['Hold a club across your chest with your arms crossed.', 'Get into your golf posture.', 'Turn back until your front shoulder is under your chin.', 'Turn through until your chest faces the target.'] },
+            { name: 'Hold your finish for 3 seconds', reps: 'Every shot in one block of 10', search: 'hold your finish golf balance drill',
+              steps: ['After each shot, finish with your belt buckle facing the target.', 'Weight on your front foot, back heel up, balanced.', 'Hold it for a slow count of three before you move.'] }
+          ]
+        },
+        {
+          id: 'hands',
+          title: 'Hands ahead at impact',
+          why: 'Launch is high on every iron, which usually means the hands are behind the ball at impact and add loft. With your hands slightly ahead of the ball, it flies lower and farther.',
+          callout: 'launch',
+          drills: [
+            { name: 'Punch shots', reps: '10 balls with a 7 iron', search: 'golf punch shot drill hands ahead',
+              steps: ['Put the ball slightly back of center, with your hands a little ahead of it.', 'Make a short backswing, about hip high, and a short, low finish.', 'Keep the flight low. The ball should land and roll.'] },
+            { name: 'Impact check in a mirror', reps: '5 holds of 5 seconds, a few days a week', search: 'golf impact position drill flat lead wrist mirror',
+              steps: ['Take your setup facing a mirror at home.', 'Move slowly into impact: hands ahead of the ball, lead wrist flat, weight on your front foot.', 'Hold it for 5 seconds and check it in the mirror.', 'Then make slow swings through that position.'] }
+          ]
+        },
+        {
+          id: 'straight',
+          title: 'Straighter long clubs',
+          why: 'The miss grows to the right as the clubs get longer, and the long clubs start right before they curve. That usually points to an open clubface, so alignment, grip and face control help most here.',
+          callout: 'miss',
+          drills: [
+            { name: 'Alignment sticks', reps: 'Every shot in one block', search: 'alignment sticks golf setup drill',
+              steps: ['Lay one stick or club pointing at your target, just outside the ball.', 'Lay a second one along your toes, parallel to the first.', 'Set your feet, hips and shoulders parallel to them before every shot.'] },
+            { name: 'Grip check', reps: 'Before every shot', search: 'golf grip check knuckles lead hand',
+              steps: ['On your lead hand, look down and see 2 to 3 knuckles.', 'The “V” between your thumb and forefinger points at your back shoulder.', 'Check it before each shot until it feels normal.'] },
+            { name: 'Toe up to toe up', reps: '10 swings, then 10 balls with the 7 iron and 5 with a long club', search: 'toe up to toe up golf drill',
+              steps: ['Make half swings with a 7 iron.', 'Halfway back, the toe of the club points at the sky.', 'Halfway through, it points at the sky again.', 'That turn of the clubface is what squares it at impact.'] },
+            { name: 'Gate drill for start line', reps: '10 balls with the hybrid or 5 wood', search: 'golf start line gate drill',
+              steps: ['Push two tees into the ground about 3 feet in front of the ball, on your target line, a few inches wider than a ball.', 'Hit shots that start through the gate.', 'If they start right of it, check your grip and alignment first.'] }
+          ]
+        },
+        {
+          id: 'fit',
+          title: 'Setup and clubs for a {height} golfer',
+          why: 'You’re using Matthew’s standard-length Callaway Edge set. Clubs that are short for a {height} golfer can make you hunch over the ball, which leads to thin shots. Fitting charts typically suggest about ½ to 1 inch longer than standard and a slightly more upright lie for someone your height, but the right numbers depend on your wrist-to-floor measurement and your swing, so let a fitter decide.',
+          drills: [
+            { name: 'Get a fitting check', reps: 'Once, and again if you change clubs', search: 'golf club fitting wrist to floor measurement length lie',
+              steps: ['Stand up straight in golf shoes with your arms relaxed.', 'Have someone measure from the crease of your wrist to the floor.', 'Take that number and your 7 iron to a club fitter or golf shop.', 'Ask them to check the length and lie angle.'] },
+            { name: 'Posture', reps: '5 setups in a mirror before practice', search: 'golf posture hip hinge arms hang',
+              steps: ['Stand tall, then tip forward from your hips, not your waist, keeping your back straight.', 'Let your knees flex a little.', 'Let your arms hang straight down from your shoulders, and hold the club where they hang.', 'Check it side-on in a mirror or a phone video.'] },
+            { name: 'Ball position by club', reps: 'Check every time you change clubs', search: 'golf ball position by club',
+              steps: ['Wedges and short irons: middle of your stance.', '7 and 6 iron: about one ball forward of middle.', 'Hybrids and fairway woods: two balls forward, inside your front heel.', 'Driver: off your front heel. Lay a club across your stance to check.'] }
+          ]
+        },
+        {
+          id: 'plan',
+          title: 'One-bucket practice plan',
+          why: 'A small bucket with a plan beats a big bucket of random swings. Work on one focus each time, and finish with a few “test” shots for the tracker.',
+          drills: [
+            { name: 'The bucket', reps: 'One small bucket, about 50 balls', search: 'golf practice plan one bucket',
+              steps: ['Pick one focus from this page for today.', 'Warm up with 10 half-swing wedges.', 'Drill block: 20 balls on that focus’s drill.', 'Then switch clubs every shot (for example PW, 7 iron, hybrid) with your full routine: pick a target, line up, one practice swing, hit.'] },
+            { name: 'Test shots for the tracker', reps: '5–10 shots', search: 'toptracer range how to see shot data',
+              steps: ['Finish with 5–10 shots on Toptracer, thinking about today’s focus.', 'Open the “All shots” screen and take a photo that shows every row.', 'Text the photo to Matthew so it goes into this tracker.'] }
+          ]
+        }
+      ],
+      lesson: 'These work best with a second pair of eyes. A lesson or two with a PGA coach can check your grip, setup and turn in person and tell you which focus matters most right now.'
+    },
+
+    brother: {
+      intro: 'Hey {name}! Pick one thing to work on each time you practice. Tap “Look it up” to watch a quick video of any drill.',
+      focus: [
+        {
+          id: 'clubs',
+          title: 'Clubs that fit you',
+          why: 'At {height}, adult clubs are too long. Clubs that are too long make you stand too far from the ball and cause topped and fat shots. Junior clubs, or clubs cut to your size, make good contact way easier. Get them checked again as you grow.',
+          callout: 'mishits',
+          drills: [
+            { name: 'Quick fit check', reps: 'Once, then again every couple of inches you grow', search: 'junior golf club fitting by height',
+              steps: ['Take your normal setup with a 7 iron.', 'If you have to grip down past the bottom of the grip, or the toe sticks way up in the air, the club is too long.', 'Show your coach or a club fitter. Junior sets come in sizes by height.'] },
+            { name: 'Choke-down test', reps: '10 balls each way', search: 'choke down golf club drill juniors',
+              steps: ['Until your clubs fit, grip down about an inch on each club.', 'Hit 10 balls gripping normally, then 10 gripped down.', 'See which way gives you better contact.'] }
+          ]
+        },
+        {
+          id: 'basics',
+          title: 'Grip, posture and alignment',
+          why: 'These three set up every shot. Get them right and everything else gets easier.',
+          drills: [
+            { name: 'Grip', reps: '5 grip checks before you hit', search: 'golf grip for beginners kids',
+              steps: ['Lead hand on top: you should see 2 to 3 knuckles.', 'Your trail hand covers your lead thumb.', 'Both “V”s between thumb and finger point at your back shoulder.', 'Hold it like a tube of toothpaste: firm, not squeezing.'] },
+            { name: 'Athletic posture', reps: '5 setups in a mirror', search: 'golf posture for kids',
+              steps: ['Feet shoulder-width apart, knees soft.', 'Bend forward from your hips with a flat back.', 'Let your arms hang straight down. That’s where the club goes.'] },
+            { name: 'Alignment', reps: 'Every shot in one block', search: 'golf alignment drill beginners',
+              steps: ['Lay a club on the ground pointing at your target.', 'Lay another one along your toes, parallel to the first.', 'Line your feet, hips and shoulders up with the second club.'] }
+          ]
+        },
+        {
+          id: 'short',
+          title: 'Short game: the fastest way to keep up',
+          why: 'About half the shots in a round happen on or around the green. Getting up and down saves more shots than hitting it farther, and it’s where you can catch your friends fastest.',
+          drills: [
+            { name: 'Putting ladder', reps: 'Climb the ladder 3 times', search: 'putting ladder drill',
+              steps: ['Put tees at 3, 6, 9 and 12 feet from a hole.', 'Make the 3-footer to move up to 6 feet, and so on.', 'Miss and you drop back down a step.', 'Climb all the way to the top.'] },
+            { name: 'Around the world', reps: '3 rounds', search: 'around the world putting drill',
+              steps: ['Put 6 balls in a circle, 3 feet around a hole.', 'Make them all in a row.', 'Miss one? Start over.', 'Got all 6? Move the circle out to 4 feet.'] },
+            { name: 'Up-and-down game', reps: '2 rounds of 5 balls', search: 'up and down chipping game golf',
+              steps: ['Drop 5 balls in different spots around a green.', 'Chip each one, then putt it out.', 'Count how many you finish in 2 shots or fewer.', 'Beat that score next time.'] }
+          ]
+        },
+        {
+          id: 'speed',
+          title: 'Speed and distance, the fun way',
+          why: 'Swinging faster is a skill you can train, and knowing how far each club goes helps you pick the right one. After a range session, the carry chart on the Stats tab shows your numbers.',
+          callout: 'carry',
+          drills: [
+            { name: 'Whoosh drill', reps: '3 sets of 5 swings', search: 'golf whoosh drill swing speed',
+              steps: ['Flip a club upside down and hold it just below the head.', 'Make full swings and make the loudest “whoosh” in front of you, past where the ball would be.', 'Do 5 swings the other way around too.', 'Then hit 5 balls with your normal swing.'] },
+            { name: 'Know your carry', reps: '5 shots per club', search: 'how far should each golf club go juniors',
+              steps: ['At the range, hit 5 shots with each club on Toptracer.', 'Take a photo of the screen and text it to Matthew.', 'Check the Stats tab: the carry chart shows how far each club goes.', 'On the course, pick the club whose carry matches the distance.'] }
+          ]
+        },
+        {
+          id: 'games',
+          title: 'Games to play with friends',
+          why: 'Practice is more fun when somebody wins. These games sharpen the shots that matter most.',
+          drills: [
+            { name: 'Closest to the pin', reps: 'One game to 5 points', search: 'closest to the pin game golf',
+              steps: ['Everyone picks the same flag or target.', 'Each player hits one ball.', 'Closest ball gets a point.', 'First to 5 points wins.'] },
+            { name: 'Chipping HORSE', reps: 'One full game', search: 'chipping horse golf game',
+              steps: ['Like basketball HORSE: the first player picks a chip shot.', 'If it stops within a club length of the hole, everyone else has to match it.', 'Miss and you get a letter.', 'Spell HORSE and you’re out.'] }
+          ]
+        },
+        {
+          id: 'plan',
+          title: '30–45 minute practice plan',
+          why: 'Short, focused practice beats smashing a big bucket. Spend most of the time on the short game.',
+          drills: [
+            { name: 'The plan', reps: '30–45 minutes', search: 'junior golf practice plan',
+              steps: ['Warm up, 5 minutes: easy stretches and 10 half swings with a wedge.', 'Short game, 15–20 minutes: the putting ladder, then the up-and-down game.', 'Full swings, 10–15 minutes: 3 clubs, 5 balls each, with a few whoosh swings in between.', 'Finish with a game, 5 minutes: closest to the pin or chipping HORSE.'] },
+            { name: 'Track it', reps: '5 shots', search: 'toptracer range how to see shot data',
+              steps: ['At the range, finish with 5 shots on Toptracer.', 'Take a photo of the screen and text it to Matthew.', 'Watch your numbers show up on the Stats and Progress tabs.'] }
+          ]
+        }
+      ],
+      lesson: 'Ask your team coach, or book a lesson with a PGA coach, to check your grip, setup and clubs in person. A quick look from a coach goes a long way.'
+    }
+  };
+});

@@ -1,39 +1,87 @@
-/* Golf Shot Tracker: UI. Needs js/core.js (window.GolfCore). */
+/* Golf Shot Tracker: UI. Needs js/core.js (GolfCore) and js/tips.js (GolfTips). */
 (function () {
   'use strict';
   const C = window.GolfCore;
-  const LS_LOCAL = 'golfTracker.v2';
-  const LS_BUNDLE = 'golfTracker.bundleCache';
-  const DATA_URL = 'data/dad_golf_data.json';
+  const TIPS = window.GolfTips || {};
+  const LS = 'golfTracker.v3';
+  const REGISTRY_URL = 'data/players.json';
   const OPTIONAL_KEYS = ['club_speed_mph', 'smash_factor', 'spin_rpm'];
+  // Used until data/players.json loads (and if it can't).
+  const DEFAULT_PLAYERS = [
+    { id: 'dad', name: 'Dad', file: 'data/dad_golf_data.json' },
+    { id: 'brother', name: 'M3', file: 'data/brother_golf_data.json' }
+  ];
 
   // ---------------------------------------------------------------------------
-  // State
+  // Players and per-player state
   // ---------------------------------------------------------------------------
-  let bundle = loadJSON(LS_BUNDLE);   // last copy of data/dad_golf_data.json
-  let bundleStatus = 'loading';       // loading | fresh | offline | missing
-  let local = loadLocal();            // edits made on this device
-  let data = merge();
-  const ui = {
-    tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds',
-    sessionId: null, newSession: false, addMode: null, editNotes: false,
-    entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
-    imp: { text: '', parsed: null, columns: null, sig: '', include: {}, flips: {}, defaultClub: '', lateralUnit: 'ft', apexUnit: 'ft' }
-  };
-
-  function emptyLocal() { return { sessions: [], hidden: [], player: null, baselineSessionId: null }; }
   function loadJSON(key) { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } }
+  function saveJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); return true; } catch (e) { return false; } }
+  function validPlayers(list) { return Array.isArray(list) && list.length && list.every((p) => p && p.id && p.file) ? list : null; }
+  function urlPlayer() { try { return new URLSearchParams(window.location.search).get('player'); } catch (e) { return null; } }
+  function lastPlayer() { try { return localStorage.getItem(LS + '.lastPlayer'); } catch (e) { return null; } }
+
+  // v2 kept Dad's edits under one key; carry them over once.
+  (function migrate() {
+    try {
+      const old = localStorage.getItem('golfTracker.v2');
+      if (old && !localStorage.getItem(LS + '.dad.local')) localStorage.setItem(LS + '.dad.local', old);
+      const oldB = localStorage.getItem('golfTracker.bundleCache');
+      if (oldB && !localStorage.getItem(LS + '.dad.bundle')) localStorage.setItem(LS + '.dad.bundle', oldB);
+    } catch (e) { /* storage blocked */ }
+  })();
+
+  let players = validPlayers(loadJSON(LS + '.players')) || DEFAULT_PLAYERS;
+  let playerId = C.resolvePlayer(players, urlPlayer(), lastPlayer());
+  let bundle = null;            // this player's data file
+  let bundleStatus = 'loading'; // loading | fresh | offline | missing
+  let local = null;             // this player's edits on this device
+  let data = null;              // merged view
+  const ui = freshUI();
+
+  function freshUI() {
+    return {
+      tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds',
+      sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
+      entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
+      imp: { text: '', parsed: null, columns: null, sig: '', include: {}, flips: {}, defaultClub: '', lateralUnit: 'ft', apexUnit: 'ft' }
+    };
+  }
+  function playerInfo() { return players.find((p) => p.id === playerId) || players[0]; }
+  function key(kind) { return LS + '.' + playerId + '.' + kind; }
+  function emptyLocal() { return { sessions: [], hidden: [], player: null, baselineSessionId: null }; }
   function loadLocal() {
-    const d = loadJSON(LS_LOCAL);
+    const d = loadJSON(key('local'));
     return d && Array.isArray(d.sessions) ? Object.assign(emptyLocal(), d) : emptyLocal();
   }
-  function saveLocal() {
-    try { localStorage.setItem(LS_LOCAL, JSON.stringify(local)); }
-    catch (e) { toast('Couldn’t save on this device. Export a backup from the Data tab.'); }
+  function saveLocal() { if (!saveJSON(key('local'), local)) toast('Couldn’t save on this device. Export a backup from Data & backup.'); }
+  function loadPlayerState() {
+    bundle = loadJSON(key('bundle'));
+    bundleStatus = 'loading';
+    local = loadLocal();
+    data = merge();
   }
+  function setURL() {
+    try {
+      const want = '?player=' + encodeURIComponent(playerId);
+      if (window.location.search !== want) history.replaceState(null, '', window.location.pathname + want + window.location.hash);
+    } catch (e) { /* file:// or sandboxed */ }
+  }
+  function switchPlayer(id) {
+    if (!players.some((p) => p.id === id)) return;
+    const tab = ui.tab;
+    playerId = id;
+    try { localStorage.setItem(LS + '.lastPlayer', id); } catch (e) { /* ignore */ }
+    setURL();
+    loadPlayerState();
+    Object.assign(ui, freshUI(), { tab });
+    render();
+    window.scrollTo(0, 0);
+    fetchBundle();
+  }
+
   function fileSessions() { return bundle && Array.isArray(bundle.sessions) ? bundle.sessions : []; }
   function fileSession(id) { return fileSessions().find((s) => s.id === id) || null; }
-
   // Merged view: file sessions minus hidden ones, local sessions win by id.
   function merge() {
     const b = bundle || {};
@@ -43,9 +91,10 @@
     local.sessions.forEach((s) => { byId.set(s.id, { s, source: fileSession(s.id) ? 'edited' : 'local' }); });
     const sessions = Array.from(byId.values()).map((x) => Object.assign({}, x.s, { _source: x.source })).sort(C.compareSessions);
     return {
-      player: local.player || b.player || { name: 'Golfer' },
+      player: local.player || b.player || { name: playerInfo().name },
       clubs: Object.assign({}, b.clubs || {}, local.clubs || {}),
-      baseline_session_id: local.baselineSessionId || b.baseline_session_id || null,
+      // local.baselineSessionId: null = use the file's; '' = none (first session per club)
+      baseline_session_id: local.baselineSessionId != null ? (local.baselineSessionId || null) : (b.baseline_session_id || null),
       sessions
     };
   }
@@ -54,6 +103,7 @@
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function getSession(id) { return data.sessions.find((s) => s.id === id) || null; }
   function baselineSession() { return getSession(data.baseline_session_id); }
+  function playerName() { return (data.player && data.player.name) || playerInfo().name; }
 
   function editSession(id, fn) {
     let s = local.sessions.find((x) => x.id === id);
@@ -89,23 +139,39 @@
   function todayISO() { const d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
   function nowHHMM() { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
   function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'session'; }
+  function cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
   function deviceLine(s) { return [s.device || 'Session', s.bay != null ? 'Bay ' + s.bay : s.location].filter(Boolean).join(' · '); }
   function unitLabel(m) { return m.dir ? 'ft, L/R' : m.unit; }
   function shotCount(s) { return C.sessionShots(s).length; }
+  function plural(n, w) { return C.plural(n, w); }
   // Direction with its unit, golf style: "27 ft R", "9.0 yds L".
   function dirU(v, unit, dec) {
     if (!C.isNum(v)) return '—';
     const m = /^(.*?)( [LR])?$/.exec(dec == null ? C.fmtRawDir(v) : C.fmtDir(v, dec));
     return m[1] + ' ' + unit + (m[2] || '');
   }
-  function badSet(shots) { return new Set(C.mishits(shots).map((m) => m.shot)); }
+  function withUnit(m, v) {
+    if (!C.isNum(v)) return '—';
+    if (m.dir) return dirU(v, 'ft', m.dec);
+    const s = C.fmtAvg(m, v);
+    return m.unit === '°' ? s + '°' : m.unit ? s + ' ' + m.unit : s;
+  }
+  function fillText(s) {
+    const pl = data.player || {};
+    const h = C.fmtHeight(pl.height_in);
+    return String(s || '')
+      .replace(/a \{height\} golfer/g, h ? 'a ' + h + ' golfer' : 'your height')
+      .replace(/\{height\}/g, h || 'your height')
+      .replace(/\{name\}/g, playerName())
+      .replace(/\{age\}/g, C.isNum(pl.age) ? String(pl.age) : '');
+  }
   let toastTimer;
   function toast(msg) {
     const t = $('#toast');
     t.textContent = msg;
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
   }
   function download(name, text, type) {
     const a = document.createElement('a');
@@ -117,7 +183,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Chart helpers (SVG strings; colours come from CSS classes so dark mode just works)
+  // Chart helpers (SVG strings drawn at the real pixel width; colours from CSS)
   // ---------------------------------------------------------------------------
   function chartWidth(el, min) { return Math.max(min || 240, Math.floor(el.getBoundingClientRect().width)); }
   function niceStep(span, target) {
@@ -142,7 +208,10 @@
     return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}">${body}</svg>`;
   }
   function dotMark(cx, cy, r, tip, mis) {
-    return `<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}"><circle class="dot${mis ? ' mis' : ''}" cx="${f1(cx)}" cy="${f1(cy)}" r="${r}"/><circle class="hit" cx="${f1(cx)}" cy="${f1(cy)}" r="12"/></g>`;
+    return `<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}"><circle class="dot${mis ? ' mis' : ''}" cx="${f1(cx)}" cy="${f1(cy)}" r="${r}"/><circle class="hit" cx="${f1(cx)}" cy="${f1(cy)}" r="14"/></g>`;
+  }
+  function rangeMark(x0, x1, cy, tip) {
+    return `<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}"><rect class="rng" x="${f1(x0)}" y="${f1(cy - 5)}" width="${f1(Math.max(10, x1 - x0))}" height="10" rx="5"/><rect class="hit" x="${f1(x0 - 6)}" y="${f1(cy - 14)}" width="${f1(x1 - x0 + 12)}" height="28"/></g>`;
   }
   // Spread overlapping dots vertically so every shot stays visible.
   function swarm(xs, r) {
@@ -157,58 +226,62 @@
     });
     return out;
   }
-  function shotTip(s, extra) {
+  function shotTip(s, mis) {
     return tipAttr([
       `${C.fmtRaw(s.carry_yds)} yds carry` + (C.isNum(s.offline_ft) ? ` · ${dirU(s.offline_ft, 'ft')} (${dirU(s.offline_ft / 3, 'yds', 1)})` : ''),
       [s.club, s.time].filter(Boolean).join(' · '),
-      extra
+      mis ? 'Likely thin or topped, left out of the numbers' : ''
     ]);
   }
 
-  // Carry gapping: one row per club, short to long.
-  function drawGap(el, entries, clubs, bad) {
-    const rows = clubs.map((c) => ({ club: c, e: entries[c], st: C.metricStat(entries[c], 'carry_yds') })).filter((r) => r.st && C.isNum(r.st.min));
+  // Carry gapping: a row per club (label above, so the bar gets the full width).
+  function drawGap(el, entries, clubs) {
+    const rows = clubs.map((c) => {
+      const e = entries[c];
+      return { club: c, e, st: C.metricStat(e, 'carry_yds'), pts: e.shots.filter((s) => C.isNum(s.carry_yds)), mis: new Set(e.mis) };
+    }).filter((r) => r.pts.length || (r.st && C.isNum(r.st.min)));
     if (!rows.length) { el.innerHTML = '<p class="empty">No carry data in this session.</p>'; return; }
-    const W = chartWidth(el), rowH = 46, top = 4, axisH = 24, padL = 44, padR = 66;
+    const W = chartWidth(el), rowH = 94, top = 2, axisH = 32, padL = 16, padR = 20;
     const H = top + rows.length * rowH + axisH;
-    const t = ticksFor(Math.min(...rows.map((r) => r.st.min)), Math.max(...rows.map((r) => r.st.max)), W < 420 ? 4 : 7);
+    const vals = [];
+    rows.forEach((r) => { r.pts.forEach((s) => vals.push(s.carry_yds)); if (r.st && C.isNum(r.st.min)) vals.push(r.st.min, r.st.max); });
+    const t = ticksFor(Math.min(...vals), Math.max(...vals), W < 420 ? 4 : 6);
     const x = lin(t.lo, t.hi, padL, W - padR);
     const g = [];
-    t.ticks.forEach((v) => { g.push(line('grid', x(v), top, x(v), H - axisH)); g.push(text('tick', x(v), H - 7, C.fmtRaw(v), 'middle')); });
-    g.push(text('sub', W - 4, H - 7, 'yds', 'end'));
+    t.ticks.forEach((v) => { g.push(line('grid', x(v), top, x(v), H - axisH)); g.push(text('tick', x(v), H - 10, C.fmtRaw(v), 'middle')); });
     let prev = null;
     rows.forEach((r, i) => {
-      const cy = top + i * rowH + rowH / 2;
-      const x0 = x(r.st.min), x1 = x(r.st.max);
-      g.push(text('rowlbl', padL - 10, cy + 4, r.club, 'end'));
-      const rangeTip = tipAttr([`${C.fmtRange(r.st.min, r.st.max)} yds`, `${r.club} carry range` + (r.st.n ? ` · ${C.plural(r.st.n, 'shot')}` : ' (ranges only)')]);
-      g.push(`<g class="pt" tabindex="0" data-tip="${rangeTip}" aria-label="${rangeTip}"><rect class="rng" x="${f1(x0)}" y="${f1(cy - 4)}" width="${f1(Math.max(8, x1 - x0))}" height="8" rx="4"/><rect class="hit" x="${f1(x0 - 6)}" y="${f1(cy - 12)}" width="${f1(x1 - x0 + 12)}" height="24"/></g>`);
-      const shots = r.e.shots.filter((s) => C.isNum(s.carry_yds));
-      const dys = swarm(shots.map((s) => x(s.carry_yds)), 4.5);
-      shots.forEach((s, k) => {
-        const mis = bad.has(s);
-        g.push(dotMark(x(s.carry_yds), cy + dys[k], 4.5, shotTip(s, mis ? 'Likely thin or topped' : ''), mis));
-      });
-      if (C.isNum(r.st.avg)) {
-        const xa = x(r.st.avg);
-        g.push(line('halo', xa, cy - 11, xa, cy + 11), line('avg', xa, cy - 11, xa, cy + 11));
-        g.push(text('val', W - padR + 8, cy + 1, C.fmtNum(r.st.avg, 1)));
-        if (prev != null) g.push(text('sub', W - padR + 8, cy + 15, `${C.fmtSigned(r.st.avg - prev, 1)} gap`));
+      const y0 = top + i * rowH, ty = y0 + 22, cy = y0 + 62;
+      g.push(text('rowlbl', padL, ty, r.club));
+      if (r.st && C.isNum(r.st.avg)) {
+        const gap = prev != null ? `${C.fmtSigned(r.st.avg - prev, 1)} gap` : '';
+        g.push(`<text class="val" x="${f1(W - padR)}" y="${f1(ty)}" text-anchor="end">${esc(C.fmtNum(r.st.avg, 1))} yds${gap ? `<tspan class="sub"> · ${esc(gap)}</tspan>` : ''}</text>`);
         prev = r.st.avg;
+      } else if (r.st && r.st.allMis) {
+        g.push(text('sub', W - padR, ty, `all ${r.st.total} were mis-hits`, 'end'));
       } else {
-        g.push(text('sub', W - padR + 8, cy + 4, 'range only'));
+        g.push(text('sub', W - padR, ty, 'recorded range', 'end'));
+      }
+      if (r.st && C.isNum(r.st.min) && C.isNum(r.st.max)) {
+        g.push(rangeMark(x(r.st.min), x(r.st.max), cy, tipAttr([`${C.fmtRange(r.st.min, r.st.max)} yds`,
+          `${r.club} carry range` + (r.st.summaryOnly ? ' (recorded, includes any topped shots)' : ` · ${plural(r.st.n, 'solid shot')}`)])));
+      }
+      const dys = swarm(r.pts.map((s) => x(s.carry_yds)), 6);
+      r.pts.forEach((s, k) => { const mis = r.mis.has(s); g.push(dotMark(x(s.carry_yds), cy + dys[k], 6, shotTip(s, mis), mis)); });
+      if (r.st && C.isNum(r.st.avg)) {
+        const xa = x(r.st.avg);
+        g.push(line('halo', xa, cy - 17, xa, cy + 17), line('avg', xa, cy - 17, xa, cy + 17));
       }
     });
-    el.innerHTML = svg(W, H, 'Carry by club: range, each shot, and average', g.join(''));
+    el.innerHTML = svg(W, H, 'Carry by club: range and average of solid shots, plus every shot', g.join(''));
   }
 
-  // Dispersion helpers. Offline is converted from feet to yards so both axes
-  // share one scale (a true top-down view).
-  function dispPoints(shots) {
-    return shots.filter((s) => C.isNum(s.offline_ft) && C.isNum(s.carry_yds)).map((s) => ({ s, x: s.offline_ft / 3, y: s.carry_yds }));
+  // Dispersion. Offline is converted from feet to yards so both axes share one scale.
+  function dispPoints(entry) {
+    const mis = new Set(entry.mis);
+    return entry.shots.filter((s) => C.isNum(s.offline_ft) && C.isNum(s.carry_yds)).map((s) => ({ s, x: s.offline_ft / 3, y: s.carry_yds, mis: mis.has(s) }));
   }
-  function dispBody(pts, o, bad) {
-    // o: { W, H, padL, padT, xMax, yLo, yHi, k, small }
+  function dispBody(pts, o) {
     const sx = (v) => o.padL + (v + o.xMax) * o.k;
     const sy = (v) => o.padT + (o.yHi - v) * o.k;
     const plotB = sy(o.yLo), plotR = sx(o.xMax);
@@ -218,140 +291,145 @@
     const tx = ticksFor(-o.xMax, o.xMax, o.small ? 2 : 4);
     tx.ticks.filter((v) => v >= -o.xMax - 1e-6 && v <= o.xMax + 1e-6).forEach((v) => {
       if (v !== 0) g.push(line('grid', sx(v), o.padT, sx(v), plotB));
-      g.push(text('tick', sx(v), plotB + 14, C.fmtRawDir(v), 'middle'));
+      g.push(text('tick', sx(v), plotB + 22, C.fmtRawDir(v), 'middle'));
     });
-    const ty = ticksFor(o.yLo, o.yHi, o.small ? 3 : 5);
-    ty.ticks.filter((v) => sy(v) >= o.padT + 6 && sy(v) <= plotB - 10).forEach((v) => {
+    const ty = ticksFor(o.yLo, o.yHi, o.small ? 4 : 5);
+    ty.ticks.filter((v) => sy(v) >= o.padT + 8 && sy(v) <= plotB - 14).forEach((v) => {
       g.push(line('grid', o.padL, sy(v), plotR, sy(v)));
-      g.push(text('tick', o.padL - 5, sy(v) + 4, C.fmtRaw(v), 'end'));
+      g.push(text('tick', o.padL - 7, sy(v) + 5, C.fmtRaw(v), 'end'));
     });
     g.push(line('target', sx(0), o.padT, sx(0), plotB));
-    pts.forEach((p) => {
-      const mis = bad.has(p.s);
-      g.push(dotMark(sx(p.x), sy(p.y), o.small ? 4 : 5, shotTip(p.s, mis ? 'Likely thin or topped' : ''), mis));
-    });
-    if (pts.length >= 2) {
-      const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length, my = pts.reduce((a, p) => a + p.y, 0) / pts.length;
-      const cx = sx(mx), cy = sy(my), a = o.small ? 6 : 8;
-      const tip = tipAttr([`${C.fmtNum(my, 1)} yds carry · ${dirU(mx, 'yds', 1)}`, 'Average of ' + C.plural(pts.length, 'shot')]);
+    pts.forEach((p) => g.push(dotMark(sx(p.x), sy(p.y), 6, shotTip(p.s, p.mis), p.mis)));
+    const solid = pts.filter((p) => !p.mis);
+    if (solid.length >= 2) {
+      const mx = solid.reduce((a, p) => a + p.x, 0) / solid.length, my = solid.reduce((a, p) => a + p.y, 0) / solid.length;
+      const cx = sx(mx), cy = sy(my), a = 10;
+      const tip = tipAttr([`${C.fmtNum(my, 1)} yds carry · ${dirU(mx, 'yds', 1)}`, 'Average of ' + plural(solid.length, 'solid shot')]);
       g.push(`<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}">` +
         line('halo', cx - a, cy, cx + a, cy) + line('halo', cx, cy - a, cx, cy + a) +
         line('avg', cx - a, cy, cx + a, cy) + line('avg', cx, cy - a, cx, cy + a) +
-        `<circle class="hit" cx="${f1(cx)}" cy="${f1(cy)}" r="12"/></g>`);
+        `<circle class="hit" cx="${f1(cx)}" cy="${f1(cy)}" r="14"/></g>`);
     }
     return g.join('');
   }
-  function drawDispersion(el, shots, club, bad) {
-    const pts = dispPoints(shots);
+  function drawDispersion(el, entry, club) {
+    const pts = dispPoints(entry);
     if (!pts.length) { el.innerHTML = '<p class="empty">No shots with both carry and offline.</p>'; return; }
-    const W = chartWidth(el), padL = 40, padR = 12, padT = 10, padB = 24;
+    const W = chartWidth(el), padL = 46, padR = 22, padT = 12, padB = 34;
     let xMax = Math.max(15, Math.ceil((Math.max(...pts.map((p) => Math.abs(p.x))) + 3) / 5) * 5);
     let yLo = Math.floor((Math.min(...pts.map((p) => p.y)) - 5) / 10) * 10;
     let yHi = Math.ceil((Math.max(...pts.map((p) => p.y)) + 5) / 10) * 10;
     const plotW = W - padL - padR;
     let k = plotW / (2 * xMax);
     let plotH = (yHi - yLo) * k;
-    const maxH = Math.max(220, Math.min(440, Math.round(window.innerHeight * 0.55))), minH = 200;
+    const maxH = Math.max(260, Math.min(480, Math.round(window.innerHeight * 0.6))), minH = 230;
     if (plotH > maxH) { k = maxH / (yHi - yLo); plotH = maxH; xMax = plotW / (2 * k); }
     if (plotH < minH) { const extra = (minH / k - (yHi - yLo)) / 2; yLo -= extra; yHi += extra; plotH = minH; }
     const H = Math.round(padT + plotH + padB);
-    el.innerHTML = svg(W, H, `${club} dispersion: carry against yards left or right`, dispBody(pts, { W, H, padL, padT, xMax, yLo, yHi, k }, bad));
+    el.innerHTML = svg(W, H, `${club} dispersion: carry against yards left or right`, dispBody(pts, { padL, padT, xMax, yLo, yHi, k }));
   }
-  function drawFacets(box, entries, clubs, bad) {
-    const items = clubs.map((c) => ({ c, pts: dispPoints(entries[c].shots) })).filter((i) => i.pts.length);
+  function drawFacets(box, entries, clubs) {
+    const items = clubs.map((c) => ({ c, e: entries[c], pts: dispPoints(entries[c]) })).filter((i) => i.pts.length);
     box.innerHTML = items.map((i) => {
-      const st = C.summarize(i.pts.map((p) => p.s), 'carry_yds'), off = C.summarize(i.pts.map((p) => p.s), 'offline_ft');
-      return `<div class="facet"><h4>${esc(i.c)}</h4><div class="fmeta">${C.plural(i.pts.length, 'shot')} · ${C.fmtNum(st.avg, 1)} yds · ${dirU(off.avg / 3, 'yds', 1)}</div><div class="chart" data-facet="${esc(i.c)}"></div></div>`;
+      const car = C.summarize(i.e.solid, 'carry_yds'), off = C.summarize(i.e.solid, 'offline_ft');
+      const nm = i.e.mis.length;
+      const nums = car.n ? ` · ${C.fmtNum(car.avg, 1)} yds · ${dirU(off.avg / 3, 'yds', 1)}` : ' · all mis-hits';
+      return `<div class="facet"><h4>${esc(i.c)}</h4><div class="fmeta">${plural(i.e.shots.length, 'shot')}${nm ? ` (${plural(nm, 'mis-hit')})` : ''}${esc(nums)}</div><div class="chart" data-facet="${esc(i.c)}"></div></div>`;
     }).join('');
     if (!items.length) return;
-    const first = $('[data-facet]', box);
-    const fw = chartWidth(first, 120), padL = 30, padR = 8, padT = 6, padB = 20;
+    const fw = chartWidth($('[data-facet]', box), 200), padL = 44, padR = 22, padT = 10, padB = 34;
     const xMax = Math.max(15, Math.ceil((Math.max(...items.map((i) => Math.max(...i.pts.map((p) => Math.abs(p.x))))) + 3) / 5) * 5);
     const k = (fw - padL - padR) / (2 * xMax);
-    const spread = Math.max(...items.map((i) => Math.max(...i.pts.map((p) => p.y)) - Math.min(...i.pts.map((p) => p.y)))) + 20;
-    const plotH = Math.max(110, spread * k);
-    const ySpan = plotH / k;
-    const H = Math.round(padT + plotH + padB);
     items.forEach((i) => {
       const ys = i.pts.map((p) => p.y);
-      const mid = (Math.min(...ys) + Math.max(...ys)) / 2;
-      const o = { W: fw, H, padL, padT, xMax, yLo: mid - ySpan / 2, yHi: mid + ySpan / 2, k, small: true };
-      $$('[data-facet]', box).filter((d) => d.getAttribute('data-facet') === i.c)[0].innerHTML =
-        svg(fw, H, `${i.c} dispersion`, dispBody(i.pts, o, bad));
+      const lo = Math.min(...ys), hi = Math.max(...ys);
+      const plotH = Math.max(170, (hi - lo + 24) * k);
+      const span = plotH / k, mid = (lo + hi) / 2;
+      const H = Math.round(padT + plotH + padB);
+      const o = { padL, padT, xMax, yLo: mid - span / 2, yHi: mid + span / 2, k, small: true };
+      $$('[data-facet]', box).filter((d) => d.getAttribute('data-facet') === i.c)[0].innerHTML = svg(fw, H, `${i.c} dispersion`, dispBody(i.pts, o));
     });
   }
 
-  // Average miss by club: bars grow left or right from the target line.
-  function drawMiss(el, rows, bad) {
-    const W = chartWidth(el), rowH = 34, top = 4, axisH = 22, padL = 44, padR = 10, label = 54;
+  // Average miss by club: bars grow left or right from the target line; values in a column.
+  function drawMiss(el, rows) {
+    const W = chartWidth(el), rowH = 54, top = 4, axisH = 32, padL = 62, padR = 88;
     const H = top + rows.length * rowH + axisH;
     const vals = rows.map((r) => r.st.avg / 3);
-    const D = Math.max(5, ...vals.map(Math.abs));
-    const cx = padL + (W - padL - padR) / 2;
-    const k = ((W - padL - padR) / 2 - label) / D;
-    const sx = (v) => cx + v * k;
+    const D = Math.max(5, ...vals.map(Math.abs)) * 1.08;
+    const x = lin(-D, D, padL, W - padR), cx = x(0);
     const g = [];
-    const t = ticksFor(-D, D, W < 420 ? 2 : 4);
-    t.ticks.filter((v) => Math.abs(v) <= D + 1e-6).forEach((v) => {
-      g.push(line(v === 0 ? 'axis' : 'grid', sx(v), top, sx(v), H - axisH));
-      g.push(text('tick', sx(v), H - 6, C.fmtRawDir(v), 'middle'));
+    const t = ticksFor(-D, D, W < 420 ? 3 : 5);
+    t.ticks.filter((v) => Math.abs(v) <= D + 1e-6 && v !== 0).forEach((v) => {
+      g.push(line('grid', x(v), top, x(v), H - axisH));
+      g.push(text('tick', x(v), H - 10, C.fmtRawDir(v), 'middle'));
     });
+    g.push(line('axis', cx, top, cx, H - axisH), text('tick', cx, H - 10, '0', 'middle'));
     rows.forEach((r, i) => {
-      const cy = top + i * rowH + rowH / 2, v = vals[i], h = 14, x1 = sx(v);
-      const w = Math.abs(x1 - cx), rr = Math.min(4, w / 2, h / 2);
-      const y0 = cy - h / 2, y1 = cy + h / 2;
+      const cy = top + i * rowH + rowH / 2, v = vals[i], h = 20, x1 = x(v);
+      const w = Math.abs(x1 - cx), rr = Math.min(5, w / 2, h / 2), y0 = cy - h / 2, y1 = cy + h / 2;
       let path = '';
       if (w >= 0.5) {
         path = v >= 0
           ? `M${f1(cx)} ${f1(y0)}H${f1(x1 - rr)}Q${f1(x1)} ${f1(y0)} ${f1(x1)} ${f1(y0 + rr)}V${f1(y1 - rr)}Q${f1(x1)} ${f1(y1)} ${f1(x1 - rr)} ${f1(y1)}H${f1(cx)}Z`
           : `M${f1(cx)} ${f1(y0)}H${f1(x1 + rr)}Q${f1(x1)} ${f1(y0)} ${f1(x1)} ${f1(y0 + rr)}V${f1(y1 - rr)}Q${f1(x1)} ${f1(y1)} ${f1(x1 + rr)} ${f1(y1)}H${f1(cx)}Z`;
       }
-      const nb = r.e.shots.filter((s) => bad.has(s) && C.isNum(s.offline_ft)).length;
-      const tip = tipAttr([
-        `${dirU(v, 'yds', 1)} (${dirU(r.st.avg, 'ft', 1)})`,
-        `${r.club} average miss · ${C.plural(r.st.n, 'shot')}`,
-        `Range ${C.fmtRange(r.st.min, r.st.max, true)} ft`,
-        nb ? `Includes ${C.plural(nb, 'thin or topped shot')}` : ''
-      ]);
-      g.push(text('rowlbl', padL - 10, cy + 4, r.club, 'end'));
-      g.push(`<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}">${path ? `<path class="bar" d="${path}"/>` : ''}<rect class="hit" x="${f1(Math.min(cx, x1) - 6)}" y="${f1(cy - 12)}" width="${f1(w + 12)}" height="24"/></g>`);
-      g.push(text('val', v >= 0 ? x1 + 6 : x1 - 6, cy + 4, C.fmtDir(v, 1), v >= 0 ? 'start' : 'end'));
+      const nm = r.e.mis.filter((s) => C.isNum(s.offline_ft)).length;
+      const tip = tipAttr([`${dirU(v, 'yds', 1)} (${dirU(r.st.avg, 'ft', 1)})`, `${r.club} average miss · ${plural(r.st.n, 'solid shot')}`,
+        `Range ${C.fmtRange(r.st.min, r.st.max, true)} ft`, nm ? `Leaves out ${plural(nm, 'mis-hit')}` : '']);
+      g.push(text('rowlbl', padL - 12, cy + 6, r.club, 'end'));
+      g.push(`<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}">${path ? `<path class="bar" d="${path}"/>` : ''}<rect class="hit" x="${f1(Math.min(cx, x1) - 6)}" y="${f1(cy - 15)}" width="${f1(w + 12)}" height="30"/></g>`);
+      g.push(text('val', W - 6, cy + 6, C.fmtDir(v, 1), 'end'));
     });
     el.innerHTML = svg(W, H, 'Average miss by club, in yards left or right of the target line', g.join(''));
   }
 
-  // Progress: one row per session for a club and metric.
-  function drawProgress(el, P, m) {
-    const rows = P.rows.map((r) => ({ r, st: C.metricStat(r.entry, m.key) })).filter((x) => x.st && (C.isNum(x.st.min) || C.isNum(x.st.avg)));
+  // Progress: a row per session for one club and metric (label above each bar).
+  function drawProgress(el, P, metricKey) {
+    const solidMode = metricKey === C.SOLID_METRIC.key;
+    const m = solidMode ? C.SOLID_METRIC : C.METRIC[metricKey];
+    const rows = P.rows.map((r) => ({ r, st: solidMode ? null : C.metricStat(r.entry, metricKey), p: solidMode ? C.solidPct(r.entry) : null }))
+      .filter((x) => solidMode || x.st);
     if (!rows.length) { el.innerHTML = '<p class="empty">No data for this metric.</p>'; return; }
-    const W = chartWidth(el), rowH = 50, top = 4, axisH = 22, padL = 108, padR = 64;
+    const W = chartWidth(el), rowH = 100, top = 2, axisH = 32, padL = 16, padR = 20;
     const H = top + rows.length * rowH + axisH;
-    const vals = [];
-    rows.forEach((x) => [x.st.min, x.st.max, x.st.avg].forEach((v) => { if (C.isNum(v)) vals.push(v); }));
-    if (m.dir) vals.push(0);
-    const t = ticksFor(Math.min(...vals), Math.max(...vals), W < 420 ? 4 : 6);
+    let t;
+    if (solidMode) t = { lo: 0, hi: 100, ticks: [0, 25, 50, 75, 100] };
+    else {
+      const vals = [];
+      rows.forEach((x) => [x.st.min, x.st.max, x.st.avg].forEach((v) => { if (C.isNum(v)) vals.push(v); }));
+      if (m.dir) vals.push(0);
+      t = vals.length ? ticksFor(Math.min(...vals), Math.max(...vals), W < 420 ? 4 : 6) : { lo: 0, hi: 1, ticks: [] };
+    }
     const x = lin(t.lo, t.hi, padL, W - padR);
-    const fmtT = m.dir ? C.fmtRawDir : C.fmtRaw;
+    const fmtT = solidMode ? (v) => v + '%' : m.dir ? C.fmtRawDir : C.fmtRaw;
     const g = [];
-    t.ticks.forEach((v) => { g.push(line(m.dir && v === 0 ? 'axis' : 'grid', x(v), top, x(v), H - axisH)); g.push(text('tick', x(v), H - 6, fmtT(v), 'middle')); });
+    t.ticks.forEach((v) => { g.push(line(m.dir && v === 0 ? 'axis' : 'grid', x(v), top, x(v), H - axisH)); g.push(text('tick', x(v), H - 10, fmtT(v), 'middle')); });
     rows.forEach((row, i) => {
-      const s = row.r.session, st = row.st, cy = top + i * rowH + rowH / 2;
+      const s = row.r.session, e = row.r.entry, st = row.st;
+      const y0 = top + i * rowH, ty1 = y0 + 22, ty2 = y0 + 44, cy = y0 + 74;
       const isBase = P.baseline && P.baseline.session.id === s.id;
-      g.push(text('rowlbl', 8, cy - 2, C.fmtDate(s.date)));
-      g.push(text('rowsub', 8, cy + 12, C.shortDevice(s.device) + (isBase ? ' · baseline' : '')));
-      if (C.isNum(st.min) && C.isNum(st.max)) {
-        const tip = tipAttr([`${C.fmtRange(st.min, st.max, m.dir)} ${m.unit}`.trim(), `${m.label} range · ${C.fmtDate(s.date)}`]);
-        const x0 = x(st.min), x1 = x(st.max);
-        g.push(`<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}"><rect class="rng" x="${f1(x0)}" y="${f1(cy - 4)}" width="${f1(Math.max(8, x1 - x0))}" height="8" rx="4"/><rect class="hit" x="${f1(x0 - 6)}" y="${f1(cy - 12)}" width="${f1(x1 - x0 + 12)}" height="24"/></g>`);
-      }
-      if (C.isNum(st.avg)) {
-        const tip = tipAttr([(m.dir ? dirU(st.avg, 'ft', 1) : `${C.fmtAvg(m, st.avg)} ${m.unit}`.trim()) + ' average', `${C.fmtDate(s.date)} · ${C.plural(st.n, 'shot')}`]);
-        g.push(dotMark(x(st.avg), cy, 5, tip, false));
-        g.push(text('val', W - padR + 8, cy + 1, C.fmtAvg(m, st.avg)));
-        g.push(text('sub', W - padR + 8, cy + 15, st.n < st.of ? `${st.n} of ${st.of}` : C.plural(st.n, 'shot')));
+      g.push(text('rowlbl', padL, ty1, C.fmtDate(s.date)));
+      g.push(text('rowsub', padL, ty2, C.shortDevice(s.device) + (isBase ? ' · baseline' : '')));
+      let value, sub;
+      if (solidMode) {
+        value = row.p == null ? 'unknown' : C.roundHalfEven(row.p, 0) + '%';
+        sub = row.p == null ? 'ranges only' : `${e.solid.length} of ${plural(e.shots.length, 'shot')}`;
+        if (row.p != null) {
+          g.push(rangeMark(x(0), x(row.p), cy, tipAttr([`${C.roundHalfEven(row.p, 0)}% solid contact`, `${e.solid.length} of ${plural(e.shots.length, 'shot')} · ${C.fmtDate(s.date)}`])));
+          g.push(dotMark(x(row.p), cy, 6, tipAttr([`${C.roundHalfEven(row.p, 0)}% solid contact`, C.fmtDate(s.date)]), false));
+        }
       } else {
-        g.push(text('sub', W - padR + 8, cy + 4, 'ranges only'));
+        value = st.allMis ? '—' : C.isNum(st.avg) ? withUnit(m, st.avg) : C.fmtRange(st.min, st.max, m.dir);
+        sub = st.allMis ? `all ${st.total} were mis-hits` : st.summaryOnly ? 'recorded range' : e.mis.length ? `${st.n} solid of ${e.shots.length}` : plural(st.n, 'shot');
+        if (C.isNum(st.min) && C.isNum(st.max)) {
+          g.push(rangeMark(x(st.min), x(st.max), cy, tipAttr([`${C.fmtRange(st.min, st.max, m.dir)} ${m.dir ? 'ft' : m.unit}`.trim(),
+            `${m.label} range · ${C.fmtDate(s.date)}` + (st.summaryOnly ? ' (includes any topped shots)' : '')])));
+        }
+        if (C.isNum(st.avg)) g.push(dotMark(x(st.avg), cy, 6, tipAttr([withUnit(m, st.avg) + ' average', `${C.fmtDate(s.date)} · ${plural(st.n, 'solid shot')}`]), false));
       }
+      g.push(text('val', W - padR, ty1, value, 'end'));
+      g.push(text('sub', W - padR, ty2, sub, 'end'));
     });
     el.innerHTML = svg(W, H, `${m.label} by session`, g.join(''));
   }
@@ -360,32 +438,41 @@
   // Rendering
   // ---------------------------------------------------------------------------
   function render() {
-    renderWho();
+    renderHeader();
     renderBanner();
     $$('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === ui.tab)));
     $$('section.view').forEach((v) => { v.hidden = v.dataset.view !== ui.tab; });
-    ({ stats: renderStats, progress: renderProgress, sessions: renderSessions, data: renderData })[ui.tab]();
+    ({ stats: renderStats, progress: renderProgress, tips: renderTips, sessions: renderSessions })[ui.tab]();
   }
-  function renderWho() {
-    const p = data.player || {};
-    $('#who').textContent = [p.name, p.level].filter(Boolean).join(' · ');
+  function renderHeader() {
+    const box = $('#players');
+    box.innerHTML = players.map((p) => `<button type="button" data-action="player" data-id="${esc(p.id)}" aria-pressed="${p.id === playerId}">${esc(p.id === playerId ? playerName() : p.name)}</button>`).join('');
+    box.hidden = players.length < 2;
+    const pl = data.player || {};
+    $('#who').textContent = [pl.level ? cap(pl.level) : '', C.isNum(pl.age) ? 'age ' + pl.age : '', C.fmtHeight(pl.height_in)].filter(Boolean).join(' · ');
+    document.title = playerName() + ' · Shot Tracker';
+    const meta = $('meta[name="apple-mobile-web-app-title"]');
+    if (meta) meta.setAttribute('content', playerName() + ' · Golf');
   }
   function renderBanner() {
     const el = $('#banner');
     let msg = '';
+    const file = playerInfo().file;
     if (bundleStatus === 'missing') {
       msg = data.sessions.length
-        ? 'Couldn’t load data/dad_golf_data.json, so only sessions saved on this device are shown.'
-        : 'Couldn’t load data/dad_golf_data.json. If you opened index.html straight from your computer, serve the folder instead (for example python3 -m http.server), or use Data → Import JSON.';
+        ? `Couldn’t load ${file}, so only sessions saved on this device are shown.`
+        : `Couldn’t load ${file}. If you opened index.html straight from your computer, serve the folder instead (for example python3 -m http.server), or use Sessions → Data & backup → Import JSON.`;
     } else if (bundleStatus === 'offline') {
-      msg = 'Offline: showing the last downloaded copy of the data file.';
+      msg = 'Offline: showing the last downloaded copy of the data.';
     }
     el.textContent = msg;
     el.hidden = !msg;
   }
-  function emptyState() {
-    if (bundleStatus === 'loading') return '<p class="empty">Loading…</p>';
-    return '<div class="card"><p>No sessions yet.</p><p class="hint">Add one on the Sessions tab, or import a JSON file on the Data tab.</p></div>';
+  function emptyState(onSessionsTab) {
+    if (bundleStatus === 'loading' && !data.sessions.length) return '<p class="empty" style="margin-top:20px">Loading…</p>';
+    return `<div class="card empty-card" style="margin-top:22px"><h3>No sessions yet</h3>
+      <p>After a range session, text the screen photos to Matthew.</p>
+      <p class="hint">${onSessionsTab ? 'Or tap “+ New session” to add shots yourself.' : 'You can also add shots yourself on the Sessions tab.'}</p></div>`;
   }
 
   // ----- Stats -----
@@ -403,14 +490,15 @@
   function scopeOptions(cur) {
     const opts = data.sessions.slice().reverse().map((s) => {
       const n = shotCount(s);
-      return `<option value="${esc(s.id)}"${s.id === cur ? ' selected' : ''}>${esc(C.fmtDate(s.date))} · ${esc(C.shortDevice(s.device))} (${n ? C.plural(n, 'shot') : 'ranges only'})</option>`;
+      return `<option value="${esc(s.id)}"${s.id === cur ? ' selected' : ''}>${esc(C.fmtDate(s.date))} · ${esc(C.shortDevice(s.device))} (${n ? plural(n, 'shot') : 'ranges only'})</option>`;
     });
     const total = data.sessions.reduce((a, s) => a + shotCount(s), 0);
-    if (total) opts.push(`<option value="all"${cur === 'all' ? ' selected' : ''}>All sessions (${C.plural(total, 'shot')})</option>`);
+    if (total) opts.push(`<option value="all"${cur === 'all' ? ' selected' : ''}>All sessions (${plural(total, 'shot')})</option>`);
     return opts.join('');
   }
   function cellHtml(m, s) {
     if (!s) return '<td class="muted">—</td>';
+    if (s.allMis) return `<td><span class="v">—</span><span class="n">all ${s.total} were mis-hits</span></td>`;
     const avg = C.isNum(s.avg) ? C.fmtAvg(m, s.avg) : '—';
     const part = s.n && s.n < s.of ? `<span class="n">${s.n} of ${s.of}</span>` : '';
     return `<td><span class="v">${esc(avg)}</span><span class="r">${esc(C.fmtRange(s.min, s.max, m.dir))}</span>${part}</td>`;
@@ -418,15 +506,21 @@
   function matrixTable(entries, clubs) {
     if (!clubs.length) return '<p class="empty">No club data in this session.</p>';
     const head = `<thead><tr><th scope="col">Club</th>${clubs.map((c) => `<th scope="col" title="${esc(C.clubName(c, data.clubs))}">${esc(c)}</th>`).join('')}</tr></thead>`;
-    const rows = [`<tr><th scope="row">Shots</th>${clubs.map((c) => `<td>${entries[c].shots.length || '<span class="muted">ranges</span>'}</td>`).join('')}</tr>`];
-    const missing = [];
+    const shotsRow = `<tr><th scope="row">Shots</th>${clubs.map((c) => {
+      const e = entries[c];
+      if (!e.shots.length) return '<td><span class="v">—</span><span class="n">ranges only</span></td>';
+      return `<td><span class="v">${e.shots.length}</span>${e.mis.length ? `<span class="n">${plural(e.mis.length, 'mis-hit')}</span>` : ''}</td>`;
+    }).join('')}</tr>`;
+    const rows = [shotsRow], missing = [];
     C.METRICS.forEach((m) => {
       const stats = clubs.map((c) => C.metricStat(entries[c], m.key));
       if (stats.every((s) => !s)) { missing.push(m.label.toLowerCase()); return; }
       rows.push(`<tr><th scope="row">${esc(m.label)}${m.unit ? `<span class="u">${esc(unitLabel(m))}</span>` : ''}</th>${stats.map((s) => cellHtml(m, s)).join('')}</tr>`);
     });
-    return `<div class="table-wrap"><table class="matrix">${head}<tbody>${rows.join('')}</tbody></table></div>
-      <p class="hint">Each cell shows the average, then lowest–highest. “3 of 9” means only some shots had that number. Curve and offline are in feet; L = left, R = right.${missing.length ? ' Not measured: ' + esc(missing.join(', ')) + '.' : ''}</p>`;
+    const anyMis = clubs.some((c) => entries[c].mis.length);
+    const swipe = clubs.length > 2 ? `<p class="swipe-hint">Swipe the table sideways to see all ${clubs.length} clubs →</p>` : '';
+    return `${swipe}<div class="table-wrap"><table class="matrix">${head}<tbody>${rows.join('')}</tbody></table></div>
+      <p class="hint">Each cell shows the average, then lowest–highest. ${anyMis ? 'Averages and ranges leave out likely mis-hits (the hollow dots on the charts). ' : ''}“3 of 9” means only some ${anyMis ? 'solid ' : ''}shots had that number. Curve and offline are in feet; L = left, R = right.${missing.length ? ' Not measured: ' + esc(missing.join(', ')) + '.' : ''}</p>`;
   }
   function renderStats() {
     const el = $('#view-stats');
@@ -434,103 +528,110 @@
     const sc = scopeInfo();
     const entries = C.clubData(sc.sessions);
     const clubs = C.sortClubs(Object.keys(entries));
-    const allShots = [];
-    sc.sessions.forEach((s) => C.sessionShots(s).forEach((x) => allShots.push(x)));
-    const bad = badSet(allShots);
     const hl = C.buildHighlights(sc.sessions, baselineSession());
-    const dispClubs = clubs.filter((c) => dispPoints(entries[c].shots).length);
+    const dispClubs = clubs.filter((c) => dispPoints(entries[c]).length);
     if (ui.dispClub !== 'All' && dispClubs.indexOf(ui.dispClub) < 0) ui.dispClub = 'All';
     const single = dispClubs.length === 1 ? dispClubs[0] : (ui.dispClub !== 'All' ? ui.dispClub : null);
-    const missRows = clubs.map((c) => ({ club: c, e: entries[c], st: C.summarize(entries[c].shots, 'offline_ft') })).filter((r) => r.st.n);
+    const missRows = clubs.map((c) => ({ club: c, e: entries[c], st: C.summarize(entries[c].solid, 'offline_ft') })).filter((r) => r.st.n);
     const notes = sc.session ? C.asList(sc.session.coaching_notes) : [];
-    const hasMis = allShots.some((s) => bad.has(s));
+    const hasMis = clubs.some((c) => entries[c].mis.length);
 
     let disp = '';
     if (dispClubs.length) {
       let inner;
       if (single) {
-        const shots = entries[single].shots;
-        const car = C.summarize(shots, 'carry_yds'), off = C.summarize(shots, 'offline_ft');
+        const e = entries[single];
+        const car = C.summarize(e.solid, 'carry_yds'), off = C.summarize(e.solid, 'offline_ft');
         const spread = C.isNum(off.min) ? off.max - off.min : null;
         inner = `<div class="tiles">
-            <div class="tile"><div class="k">Shots</div><div class="v">${car.n}</div><div class="s">${esc(C.clubName(single, data.clubs))}</div></div>
-            <div class="tile"><div class="k">Average carry</div><div class="v">${C.fmtNum(car.avg, 1)} yds</div><div class="s">${esc(C.fmtRange(car.min, car.max))}</div></div>
+            <div class="tile"><div class="k">Shots</div><div class="v">${e.shots.length}</div><div class="s">${e.mis.length ? `${e.solid.length} solid · ${plural(e.mis.length, 'mis-hit')}` : esc(C.clubName(single, data.clubs))}</div></div>
+            <div class="tile"><div class="k">Average carry</div><div class="v">${car.n ? C.fmtNum(car.avg, 1) + ' yds' : '—'}</div><div class="s">${car.n ? esc(C.fmtRange(car.min, car.max)) : 'all mis-hits'}</div></div>
             <div class="tile"><div class="k">Average miss</div><div class="v">${dirU(off.avg / 3, 'yds', 1)}</div><div class="s">${dirU(off.avg, 'ft', 1)}</div></div>
-            <div class="tile"><div class="k">Left to right spread</div><div class="v">${C.isNum(spread) ? C.fmtNum(spread / 3, 1) + ' yds' : '—'}</div><div class="s">${esc(C.fmtRange(off.min, off.max, true))} ft</div></div>
+            <div class="tile"><div class="k">Left to right spread</div><div class="v">${C.isNum(spread) ? C.fmtNum(spread / 3, 1) + ' yds' : '—'}</div><div class="s">${C.isNum(spread) ? esc(C.fmtRange(off.min, off.max, true)) + ' ft' : ''}</div></div>
           </div><div class="chart" id="dispChart"></div>`;
       } else {
         inner = '<div class="facets" id="facets"></div>';
       }
+      const shotsForTable = single ? entries[single].shots : [].concat(...clubs.map((c) => entries[c].shots));
+      const misSet = new Set([].concat(...clubs.map((c) => entries[c].mis)));
       disp = `<h2>Dispersion</h2><div class="card">
         ${dispClubs.length > 1 ? `<div class="chips" role="group" aria-label="Club">${['All'].concat(dispClubs).map((c) => `<button class="chip" data-action="disp-club" data-club="${esc(c)}" aria-pressed="${c === (single || 'All')}">${c === 'All' ? 'All clubs' : esc(c)}</button>`).join('')}</div>` : ''}
         ${inner}
-        <p class="hint">${single ? '' : 'Each panel is one club, all drawn to the same scale. '}Up is carry in yards; across is yards left or right of the target line (offline ÷ 3). Cross: average. Shaded band: a 30-yard-wide fairway.${hasMis ? ' Hollow dots: likely thin or topped.' : ''}</p>
-        <details class="more"><summary>Show as a table</summary>${shotTable(single ? entries[single].shots : allShots, bad)}</details>
+        <p class="hint">${single ? '' : 'Each panel is one club, all drawn to the same scale. '}Up is carry in yards; across is yards left or right of the target line. The cross is the average of solid shots. The grey band is a 30-yard-wide fairway.${hasMis ? ' Hollow dots are likely mis-hits.' : ''}</p>
+        <details class="more"><summary>Show as a table</summary>${shotTable(shotsForTable, misSet)}</details>
       </div>`;
     }
 
     el.innerHTML = `
       <div class="filters"><label for="scope">Session</label><select id="scope" data-change="scope">${scopeOptions(sc.id)}</select></div>
-      ${sc.id === 'all' && data.sessions.some((s) => C.isSummaryOnly(s)) ? '<p class="note">“All sessions” pools sessions with individual shots. Sessions with ranges only are left out; pick one in the menu to see its ranges.</p>' : ''}
+      ${sc.id === 'all' && data.sessions.some((s) => C.isSummaryOnly(s)) ? '<p class="note" style="margin-bottom:14px">“All sessions” pools sessions with individual shots. Sessions with ranges only are left out; pick one in the menu to see its ranges.</p>' : ''}
       <div class="card"><h3 class="card-title">Highlights</h3><ul class="hl">${hl.map((h) => `<li>${esc(h.text)}</li>`).join('')}</ul></div>
       <h2>Averages and ranges</h2>
       <div class="card">${matrixTable(entries, clubs)}</div>
       <h2>Carry gapping</h2>
       <div class="card"><div class="chart" id="gapChart"></div>
-        <p class="hint">Bar: shortest to longest carry. Dots: each shot${hasMis ? ' (hollow = likely thin or topped)' : ''}. Line and number: average. “Gap” is the change from the next-shorter club.</p></div>
+        <p class="hint">Carry in yards. Bar: shortest to longest solid shot. Black line and number: average of solid shots. Dots: every shot${hasMis ? ' (hollow = likely mis-hit, left out of the numbers)' : ''}. “Gap” is the change from the next-shorter club.</p></div>
       ${disp}
-      ${missRows.length >= 2 ? `<h2>Average miss by club</h2><div class="card"><div class="chart" id="missChart"></div><p class="hint">Average offline in yards. Bars to the right are misses right of the target line.</p></div>` : ''}
+      ${missRows.length >= 2 ? `<h2>Average miss by club</h2><div class="card"><div class="chart" id="missChart"></div><p class="hint">Average offline of solid shots, in yards. Bars to the right are misses right of the target line.</p></div>` : ''}
       ${sc.session ? `<h2>Coaching notes</h2><div class="card">${notes.length ? `<ul class="plain">${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '<p class="empty">No coaching notes for this session.</p>'}
         <div class="row-actions"><button class="btn small ghost" data-action="goto-notes" data-id="${esc(sc.session.id)}">${notes.length ? 'Edit notes' : 'Add notes'}</button></div></div>` : ''}
     `;
-    drawGap($('#gapChart'), entries, clubs, bad);
-    if ($('#dispChart')) drawDispersion($('#dispChart'), entries[single].shots, single, bad);
-    if ($('#facets')) drawFacets($('#facets'), entries, dispClubs, bad);
-    if ($('#missChart')) drawMiss($('#missChart'), missRows, bad);
+    drawGap($('#gapChart'), entries, clubs);
+    if ($('#dispChart')) drawDispersion($('#dispChart'), entries[single], single);
+    if ($('#facets')) drawFacets($('#facets'), entries, dispClubs);
+    if ($('#missChart')) drawMiss($('#missChart'), missRows);
   }
-  function shotTable(shots, bad) {
+  function shotTable(shots, misSet) {
     const rows = C.sortClubs(Array.from(new Set(shots.map((s) => s.club)))).map((c) => shots.filter((s) => s.club === c))
       .reduce((a, b) => a.concat(b), [])
       .filter((s) => C.isNum(s.carry_yds) || C.isNum(s.offline_ft))
-      .map((s) => `<tr><td>${esc(s.club)}</td><td>${esc(s.time || '')}</td><td>${C.fmtRaw(s.carry_yds)}</td><td>${esc(C.fmtRawDir(s.offline_ft))}</td><td>${C.isNum(s.offline_ft) ? esc(C.fmtDir(s.offline_ft / 3, 1)) : '—'}</td><td>${esc(C.fmtRawDir(s.curve_ft))}</td><td>${bad.has(s) ? 'thin/topped' : ''}</td></tr>`);
-    return `<div class="table-wrap"><table class="matrix"><thead><tr><th>Club</th><th>Time</th><th>Carry yds</th><th>Offline ft</th><th>Offline yds</th><th>Curve ft</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+      .map((s) => `<tr><td>${esc(s.club)}</td><td>${esc(s.time || '')}</td><td>${C.fmtRaw(s.carry_yds)}</td><td>${esc(C.fmtRawDir(s.offline_ft))}</td><td>${esc(C.fmtRawDir(s.curve_ft))}</td><td>${misSet.has(s) ? 'mis-hit' : ''}</td></tr>`);
+    return `<div class="table-wrap"><table class="matrix"><thead><tr><th>Club</th><th>Time</th><th>Carry yds</th><th>Offline ft</th><th>Curve ft</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
   }
 
   // ----- Progress -----
   function renderProgress() {
     const el = $('#view-progress');
     const clubs = C.sortClubs(Object.keys(C.clubData(data.sessions)));
-    if (!clubs.length) { el.innerHTML = emptyState(); return; }
+    if (!data.sessions.length || !clubs.length) { el.innerHTML = emptyState(); return; }
     if (clubs.indexOf(ui.progClub) < 0) {
       ui.progClub = clubs.find((c) => C.progressFor(data.sessions, c, data.baseline_session_id).rows.length >= 2) || clubs[0];
     }
     const club = ui.progClub;
     const P = C.progressFor(data.sessions, club, data.baseline_session_id);
-    const metrics = C.METRICS.filter((m) => P.rows.some((r) => C.metricStat(r.entry, m.key)));
-    if (!metrics.some((m) => m.key === ui.progMetric)) ui.progMetric = metrics.length ? metrics[0].key : 'carry_yds';
-    const m = C.METRIC[ui.progMetric];
+    const metrics = (P.rows.some((r) => r.entry.shots.length) ? [C.SOLID_METRIC] : [])
+      .concat(C.METRICS.filter((m) => P.rows.some((r) => C.metricStat(r.entry, m.key))));
+    if (!metrics.some((m) => m.key === ui.progMetric)) ui.progMetric = metrics.some((m) => m.key === 'carry_yds') ? 'carry_yds' : metrics[0].key;
+    const m = metrics.find((x) => x.key === ui.progMetric);
     const base = baselineSession();
+    const rangeOnly = P.rows.filter((r) => !r.entry.shots.length).map((r) => C.fmtDate(r.session.date));
     el.innerHTML = `
       <div class="filters">
+        <span class="label">Club</span>
         <div class="chips" role="group" aria-label="Club">${clubs.map((c) => `<button class="chip" data-action="prog-club" data-club="${esc(c)}" aria-pressed="${c === club}">${esc(c)}</button>`).join('')}</div>
-        <label for="progMetric">Metric</label>
-        <select id="progMetric" data-change="prog-metric">${metrics.map((x) => `<option value="${x.key}"${x.key === m.key ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}</select>
+        <label for="progMetric" style="margin-top:6px">Metric</label>
+        <select id="progMetric" data-change="prog-metric">${metrics.map((x) => `<option value="${x.key}"${x.key === m.key ? ' selected' : ''}>${esc(x.label)}${x.key === C.SOLID_METRIC.key ? ' %' : ''}</option>`).join('')}</select>
       </div>
-      ${P.fallback && P.baseline ? `<p class="note">${base ? `The ${esc(C.fmtDate(base.date))} baseline has no ${esc(club)}, so` : 'No baseline session is set, so'} the first ${esc(club)} session (${esc(C.fmtDate(P.baseline.session.date))}) is its baseline.</p>` : ''}
-      <div class="card"><h3 class="card-title">${esc(club)} ${esc(m.label.toLowerCase())} by session</h3><div class="chart" id="progChart"></div>
-        <p class="hint">Bar: lowest to highest. Dot and number: average (sessions with individual shots only).${m.dir ? ' Feet; L = left, R = right.' : ''}</p></div>
+      ${P.fallback && P.baseline ? `<p class="note" style="margin-bottom:14px">${base ? `The ${esc(C.fmtDate(base.date))} baseline has no ${esc(club)}, so` : 'No baseline session is set, so'} the first ${esc(club)} session (${esc(C.fmtDate(P.baseline.session.date))}) is its baseline.</p>` : ''}
+      <div class="card"><h3 class="card-title">${esc(club)}: ${esc(m.label.toLowerCase())}${m.key === C.SOLID_METRIC.key ? ' %' : ''} by session</h3><div class="chart" id="progChart"></div>
+        <p class="hint">${m.key === C.SOLID_METRIC.key ? 'Share of shots that weren’t likely mis-hits.' : 'Bar: lowest to highest. Dot and number: average. Solid shots only.'}${m.dir ? ' Feet; L = left, R = right.' : ''}${rangeOnly.length ? ` ${esc(rangeOnly.join(', '))} recorded ranges only, so ${rangeOnly.length > 1 ? 'their' : 'its'} numbers include any topped shots and ${rangeOnly.length > 1 ? 'their' : 'its'} solid-contact rate is unknown.` : ''}</p></div>
       ${P.rows.length < 2
         ? `<div class="card"><p class="note">Only one session with the ${esc(club)} so far. Progress shows up after the next one.</p></div>`
         : `<h2>Since the baseline</h2><div class="card">${progTable(P)}</div>`}
     `;
-    drawProgress($('#progChart'), P, m);
+    drawProgress($('#progChart'), P, m.key);
   }
   function statCell(m, s) {
     if (!s) return '<span class="muted">—</span>';
+    if (s.allMis) return `<span class="v">—</span><span class="n">all ${s.total} were mis-hits</span>`;
     return (C.isNum(s.avg) ? `<span class="v">${esc(C.fmtAvg(m, s.avg))}</span>` : '') + `<span class="r">${esc(C.fmtRange(s.min, s.max, m.dir))}</span>`;
   }
   function progTable(P) {
     const b = P.baseline, l = P.latest;
+    const pa = C.solidPct(b.entry), pl = C.solidPct(l.entry);
+    const pctCell = (p, e) => p == null ? '<span class="v">—</span><span class="n">unknown (ranges only)</span>' : `<span class="v">${C.roundHalfEven(p, 0)}%</span><span class="r">${e.solid.length} of ${e.shots.length}</span>`;
+    const solidRow = (b.entry.shots.length || l.entry.shots.length)
+      ? `<tr><th scope="row">Solid contact</th><td>${pctCell(pa, b.entry)}</td><td>${pctCell(pl, l.entry)}${pa != null && pl != null ? `<span class="chg">${esc(C.fmtSigned(pl - pa, 0))} points</span>` : ''}</td></tr>` : '';
     const rows = C.METRICS.map((m) => {
       const a = C.metricStat(b.entry, m.key), c = C.metricStat(l.entry, m.key);
       if (!a && !c) return '';
@@ -550,13 +651,43 @@
       return `<tr><th scope="row">${esc(m.label)}${m.unit ? `<span class="u">${esc(unitLabel(m))}</span>` : ''}</th><td>${statCell(m, a)}</td><td>${statCell(m, c)}${change ? `<span class="chg">${esc(change)}</span>` : ''}</td></tr>`;
     }).join('');
     const head = (r, label) => `${label}<span class="u">${esc(C.fmtDate(r.session.date))} · ${esc(C.shortDevice(r.session.device))}</span>`;
-    return `<div class="table-wrap"><table class="matrix cmp"><thead><tr><th scope="col">Metric</th><th scope="col">${head(b, 'Baseline')}</th><th scope="col">${head(l, 'Latest')}</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="hint">Each cell shows the average (when individual shots exist), then lowest–highest. Changes are latest minus baseline.</p>`;
+    return `<div class="table-wrap"><table class="matrix cmp"><thead><tr><th scope="col">Metric</th><th scope="col">${head(b, 'Baseline')}</th><th scope="col">${head(l, 'Latest')}</th></tr></thead><tbody>${solidRow}${rows}</tbody></table></div>
+      <p class="hint">Each cell shows the average (when individual shots exist), then lowest–highest, from solid shots. Changes are latest minus baseline.</p>`;
+  }
+
+  // ----- Tips -----
+  function renderTips() {
+    const el = $('#view-tips');
+    const t = TIPS[playerId];
+    if (!t) { el.innerHTML = '<div class="card" style="margin-top:22px"><p>No tips for this player yet.</p></div>'; return; }
+    el.innerHTML = `
+      <h2>Tips &amp; drills</h2>
+      <p class="lead">${esc(fillText(t.intro))}</p>
+      ${t.focus.map((f, i) => focusCard(f, i)).join('')}
+      <div class="card lesson"><h3>Check it with a coach</h3><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>`;
+  }
+  function focusCard(f, i) {
+    const call = f.callout ? C.sessionCallout(f.callout, data.sessions) : null;
+    const drills = f.drills.map((d) => `<div class="drill">
+        <h4>${esc(fillText(d.name))}</h4>
+        <ol>${d.steps.map((s) => `<li>${esc(fillText(s))}</li>`).join('')}</ol>
+        <p class="reps"><strong>Reps:</strong> ${esc(fillText(d.reps))}</p>
+        <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(d.search))}" target="_blank" rel="noopener">Look it up on YouTube <span aria-hidden="true">↗</span></a>
+      </div>`).join('');
+    return `<details class="card focus" data-focus="${esc(f.id)}"${i === 0 ? ' open' : ''}>
+      <summary><span class="fnum" aria-hidden="true">${i + 1}</span><span>${esc(fillText(f.title))}</span></summary>
+      <div class="focus-body">
+        <p class="why"><strong>Why it matters:</strong> ${esc(fillText(f.why))}</p>
+        ${call ? `<div class="callout"><p class="ctitle">${esc(call.title)}</p><p>${esc(call.text)}</p></div>` : ''}
+        ${drills}
+      </div>
+    </details>`;
   }
 
   // ----- Sessions -----
   function renderSessions() {
     const el = $('#view-sessions');
+    if (ui.sessionsView === 'data') { renderData(el); return; }
     if (ui.sessionId) {
       const s = getSession(ui.sessionId);
       if (s) { renderSessionDetail(el, s); return; }
@@ -564,8 +695,9 @@
     }
     el.innerHTML = `
       <div class="row-between"><h2>Sessions</h2>${ui.newSession ? '' : '<button class="btn small" data-action="new-session">+ New session</button>'}</div>
+      <button class="btn ghost block data-link" data-action="open-data">Data &amp; backup</button>
       ${ui.newSession ? newSessionForm() : ''}
-      ${data.sessions.length ? data.sessions.slice().reverse().map(sessionCard).join('') : emptyState()}
+      ${data.sessions.length ? data.sessions.slice().reverse().map(sessionCard).join('') : emptyState(true)}
     `;
   }
   function sessionCard(s) {
@@ -579,18 +711,16 @@
     return `<button class="session-card" data-action="open-session" data-id="${esc(s.id)}">
       <span class="sc-date">${esc(C.fmtDate(s.date))}</span>
       <span class="sc-meta">${esc(deviceLine(s))}</span>
-      <span class="sc-meta">${n ? C.plural(n, 'shot') : 'No individual shots'}${clubs.length ? ' · ' + esc(clubs.join(', ')) : ''}</span>
+      <span class="sc-meta">${n ? plural(n, 'shot') : 'No individual shots'}${clubs.length ? ' · ' + esc(clubs.join(', ')) : ''}</span>
       ${badges.length ? `<span class="badges">${badges.map((b) => `<span class="badge">${esc(b)}</span>`).join('')}</span>` : ''}
     </button>`;
   }
   function newSessionForm() {
     return `<div class="card">
       <h3 class="card-title">New session</h3>
-      <div class="grid2">
-        <div class="field"><label for="nsDate">Date</label><input id="nsDate" type="date" value="${todayISO()}"></div>
-        <div class="field"><label for="nsDevice">Device</label><select id="nsDevice" data-change="ns-device">
-          <option>Toptracer Range</option><option>Rapsodo</option><option>TrackMan</option><option value="other">Other…</option></select></div>
-      </div>
+      <div class="field"><label for="nsDate">Date</label><input id="nsDate" type="date" value="${todayISO()}"></div>
+      <div class="field"><label for="nsDevice">Device</label><select id="nsDevice" data-change="ns-device">
+        <option>Toptracer Range</option><option>Rapsodo</option><option>TrackMan</option><option value="other">Other…</option></select></div>
       <div class="field" id="nsOtherWrap" hidden><label for="nsOther">Device name</label><input id="nsOther" type="text"></div>
       <div class="field"><label for="nsLoc">Location or bay</label><input id="nsLoc" type="text" placeholder="e.g. Bay 7"></div>
       <div class="field"><label for="nsNotes">Coaching notes (one per line)</label><textarea id="nsNotes" rows="3"></textarea></div>
@@ -608,7 +738,7 @@
       <button class="back" data-action="close-session">← All sessions</button>
       <div class="detail-head">
         <h2>${esc(C.fmtDate(s.date))}</h2>
-        <p class="meta">${esc(deviceLine(s))}${s.equipment ? ' · ' + esc(s.equipment) : ''} · ${n ? C.plural(n, 'shot') : 'no individual shots'}</p>
+        <p class="meta">${esc(deviceLine(s))}${s.equipment ? ' · ' + esc(s.equipment) : ''} · ${n ? plural(n, 'shot') : 'no individual shots'}</p>
         ${s.date_note ? `<p class="hint">${esc(s.date_note)}</p>` : ''}
         ${s._source === 'edited' ? '<div class="edited"><span class="badge">Edited on this device</span><button class="btn small ghost" data-action="revert-session">Revert to file version</button></div>' : ''}
         ${s._source === 'local' ? '<div class="edited"><span class="badge">Added on this device</span></div>' : ''}
@@ -616,7 +746,7 @@
       <div class="card">
         <div class="row-between"><h3>Coaching notes</h3>${ui.editNotes ? '' : '<button class="btn small ghost" data-action="edit-notes">Edit</button>'}</div>
         ${ui.editNotes
-          ? `<div class="field" style="margin-top:8px"><label for="notesText">One note per line</label><textarea id="notesText" rows="6">${esc(coaching.join('\n'))}</textarea></div>
+          ? `<div class="field" style="margin-top:10px"><label for="notesText">One note per line</label><textarea id="notesText" rows="6">${esc(coaching.join('\n'))}</textarea></div>
              <div class="row-actions"><button class="btn small" data-action="save-notes">Save notes</button><button class="btn small ghost" data-action="cancel-notes">Cancel</button></div>`
           : (listHtml(coaching) || '<p class="empty">No coaching notes yet.</p>')}
       </div>
@@ -625,14 +755,14 @@
       ${C.hasSummary(s) ? summaryCard(s) : ''}
       <div class="card">
         <h3>Add shots</h3>
-        <div class="seg" role="group" aria-label="How to add shots" style="margin:8px 0 12px">
+        <div class="seg" role="group" aria-label="How to add shots" style="margin:12px 0 16px">
           <button data-action="add-mode" data-mode="enter" aria-pressed="${ui.addMode === 'enter'}">Enter a shot</button>
           <button data-action="add-mode" data-mode="paste" aria-pressed="${ui.addMode === 'paste'}">Paste rows</button>
         </div>
         ${ui.addMode === 'paste' ? pasteForm() : entryForm()}
       </div>
       <div class="card"><h3>Shots</h3>${shotList(s)}</div>
-      <button class="btn ghost danger" data-action="delete-session">Delete session</button>
+      <button class="btn danger" data-action="delete-session">Delete session</button>
     `;
     if (ui.addMode === 'paste') {
       if (ui.imp.text && !ui.imp.parsed) setImportParsed(C.parsePaste(ui.imp.text));
@@ -649,7 +779,7 @@
     keys.sort((a, b) => (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)));
     const label = (k) => C.METRIC[k] ? C.METRIC[k].label + (C.METRIC[k].unit ? ` (${unitLabel(C.METRIC[k])})` : '') : k === 'consistency_pct' ? 'Consistency (%)' : k;
     const fmt = (k, v) => !C.isNum(v) ? '—' : C.METRIC[k] && C.METRIC[k].dir ? C.fmtRawDir(v) : C.fmtRaw(v);
-    return `<div class="card"><h3>Screen averages</h3><p class="hint" style="margin:2px 0 6px">As shown on the ${esc(C.shortDevice(s.device))} screen, for checking.</p>
+    return `<div class="card"><h3>Screen averages</h3><p class="hint" style="margin:4px 0 8px">As shown on the ${esc(C.shortDevice(s.device))} screen (all shots), for checking.</p>
       <div class="table-wrap"><table class="matrix"><thead><tr><th>Metric</th>${clubs.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
       ${keys.map((k) => `<tr><th scope="row">${esc(label(k))}</th>${clubs.map((c) => `<td>${esc(fmt(k, (sa[c] || {})[k]))}</td>`).join('')}</tr>`).join('')}
       </tbody></table></div></div>`;
@@ -658,7 +788,7 @@
     const sum = s.summary || {};
     const clubs = C.sortClubs(Object.keys(sum));
     const keys = C.METRICS.map((m) => m.key).filter((k) => clubs.some((c) => sum[c] && sum[c][k]));
-    return `<div class="card"><h3>Recorded ranges</h3>
+    return `<div class="card"><h3>Recorded ranges</h3><p class="hint" style="margin:4px 0 8px">Only ranges were kept from this session, so they include any topped shots.</p>
       <div class="table-wrap"><table class="matrix"><thead><tr><th>Metric</th>${clubs.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
       ${keys.map((k) => `<tr><th scope="row">${esc(C.METRIC[k].label)}<span class="u">${esc(unitLabel(C.METRIC[k]))}</span></th>${clubs.map((c) => { const r = (sum[c] || {})[k]; return `<td>${r ? esc(C.fmtRange(r.min, r.max, C.METRIC[k].dir)) : '—'}</td>`; }).join('')}</tr>`).join('')}
       </tbody></table></div></div>`;
@@ -666,27 +796,27 @@
   function shotList(s) {
     const shots = s.shots || [];
     if (!C.sessionShots(s).length) return `<p class="empty">${C.isSummaryOnly(s) ? 'Ranges only. Individual shots weren’t recorded.' : 'No shots yet.'}</p>`;
-    const bad = badSet(C.sessionShots(s));
+    const mis = C.sessionMishits([s]);
     const clubs = C.sortClubs(Array.from(new Set(C.sessionShots(s).map((x) => x.club))));
     return clubs.map((c) => {
       const items = [];
-      shots.forEach((x, idx) => { if (x && x.club === c) items.push(shotRow(x, idx, bad.has(x))); });
-      return `<details class="club-group" open><summary>${esc(c)} · ${C.plural(items.length, 'shot')}</summary>${items.join('')}</details>`;
+      shots.forEach((x, idx) => { if (x && x.club === c) items.push(shotRow(x, idx, mis.has(x))); });
+      return `<details class="club-group" open><summary>${esc(c)} · ${plural(items.length, 'shot')}</summary>${items.join('')}</details>`;
     }).join('');
   }
   function shotRow(x, idx, mis) {
     const main = [x.time, C.isNum(x.carry_yds) ? C.fmtRaw(x.carry_yds) + ' carry' : null, C.isNum(x.total_yds) ? C.fmtRaw(x.total_yds) + ' total' : null,
-      C.isNum(x.offline_ft) ? 'offline ' + C.fmtRawDir(x.offline_ft) + ' ft' : null].filter(Boolean).join(' · ');
+      C.isNum(x.offline_ft) ? 'offline ' + dirU(x.offline_ft, 'ft') : null].filter(Boolean).join(' · ');
     const sub = [
       C.isNum(x.ball_speed_mph) ? C.fmtRaw(x.ball_speed_mph) + ' mph' : null,
       C.isNum(x.launch_deg) ? C.fmtRaw(x.launch_deg) + '° launch' : null,
       C.isNum(x.apex_ft) ? C.fmtRaw(x.apex_ft) + ' ft apex' : null,
       C.isNum(x.landing_deg) ? C.fmtRaw(x.landing_deg) + '° landing' : null,
-      C.isNum(x.curve_ft) ? 'curve ' + C.fmtRawDir(x.curve_ft) + ' ft' : null,
+      C.isNum(x.curve_ft) ? 'curve ' + dirU(x.curve_ft, 'ft') : null,
       C.isNum(x.hang_time_s) ? C.fmtRaw(x.hang_time_s) + ' s hang' : null,
       C.isNum(x.club_speed_mph) ? C.fmtRaw(x.club_speed_mph) + ' mph club' : null,
       C.isNum(x.spin_rpm) ? C.fmtRaw(x.spin_rpm) + ' rpm' : null,
-      mis ? 'likely thin or topped' : null
+      mis ? 'likely mis-hit (left out of the numbers)' : null
     ].filter(Boolean).join(' · ');
     return `<div class="shot"><div class="main">${esc(main)}</div><div class="meta">${esc(sub)}${x.note ? ' — ' + esc(x.note) : ''}</div>
       <button class="icon-btn" data-action="delete-shot" data-idx="${idx}" aria-label="Delete shot ${esc(x.club)} ${esc(x.time || '')}">×</button></div>`;
@@ -712,18 +842,18 @@
       <input id="e_${key}" type="number" inputmode="decimal" min="0" step="any" placeholder="0">
       <button type="button" class="chip" data-action="entry-dir" data-key="${key}" data-dir="R" aria-pressed="${ui.entry.dir[key] === 'R'}" aria-label="${label} right">R</button></div></div>`;
     return `
-      <div class="field"><label>Club <span class="req">*</span></label>
+      <div class="field"><span class="label">Club <span class="req">*</span></span>
         <div class="chips" id="entryClubs">${clubs.map((c) => `<button type="button" class="chip" data-action="entry-club" data-club="${esc(c)}" aria-pressed="${c === ui.entry.club}">${esc(c)}</button>`).join('')}
           <button type="button" class="chip" data-action="entry-other" aria-pressed="${ui.entry.other}">Other…</button></div>
-        <select id="entryOther" data-change="entry-other-club" style="margin-top:8px"${ui.entry.other ? '' : ' hidden'}><option value="">Pick another club</option>
+        <select id="entryOther" data-change="entry-other-club" style="margin-top:10px"${ui.entry.other ? '' : ' hidden'} aria-label="Another club"><option value="">Pick another club</option>
           ${C.STANDARD_CLUBS.filter((c) => clubs.indexOf(c) < 0).map((c) => `<option value="${c}">${esc(C.clubName(c))} (${c})</option>`).join('')}</select>
       </div>
-      <div class="grid3">${ENTRY_FIELDS.map((f) => `<div class="field"><label for="e_${f.key}">${f.label}${f.req ? ' <span class="req">*</span>' : ''}</label><input id="e_${f.key}" type="number" inputmode="decimal" step="any"></div>`).join('')}</div>
-      <div class="grid2">${dirField('curve_ft', 'Curve (ft)')}${dirField('offline_ft', 'Offline (ft)')}</div>
+      <div class="grid2">${ENTRY_FIELDS.map((f) => `<div class="field"><label for="e_${f.key}">${f.label}${f.req ? ' <span class="req">*</span>' : ''}</label><input id="e_${f.key}" type="number" inputmode="decimal" step="any"></div>`).join('')}</div>
+      ${dirField('curve_ft', 'Curve (ft)')}${dirField('offline_ft', 'Offline (ft)')}
       <div class="grid2"><div class="field"><label for="e_time">Time</label><input id="e_time" type="time" value="${nowHHMM()}"></div>
         <div class="field"><label for="e_note">Note</label><input id="e_note" type="text" placeholder="optional"></div></div>
       <button class="btn block" data-action="save-shot">Save shot</button>
-      <p class="hint">Only club and carry are required. Leave anything you don’t have blank.</p>`;
+      <p class="hint">Only the club and carry are needed. Leave anything you don’t have blank.</p>`;
   }
   function nextShotId(s) {
     const shots = (s.shots || []).filter(Boolean);
@@ -755,13 +885,13 @@
       src[f.key] = raw === '' ? null : parseFloat(raw);
       if (src[f.key] != null && !isFinite(src[f.key])) src[f.key] = null;
     }
-    for (const key of ['curve_ft', 'offline_ft']) {
-      const raw = $('#e_' + key).value.trim();
+    for (const k of ['curve_ft', 'offline_ft']) {
+      const raw = $('#e_' + k).value.trim();
       let v = raw === '' ? null : parseFloat(raw);
       if (v != null && !isFinite(v)) v = null;
-      const d = ui.entry.dir[key];
-      if (v != null && v !== 0 && !d) { toast(`Tap L or R for ${key === 'curve_ft' ? 'curve' : 'offline'}`); return; }
-      src[key] = v == null ? null : Math.abs(v) * (d === 'L' ? -1 : 1) || 0;
+      const d = ui.entry.dir[k];
+      if (v != null && v !== 0 && !d) { toast(`Tap L or R for ${k === 'curve_ft' ? 'curve' : 'offline'}`); return; }
+      src[k] = v == null ? null : Math.abs(v) * (d === 'L' ? -1 : 1) || 0;
     }
     if (!C.isNum(src.carry_yds) || src.carry_yds <= 0) { toast('Enter the carry distance'); $('#e_carry_yds').focus(); return; }
     const note = $('#e_note').value.trim();
@@ -776,21 +906,23 @@
     if (c) c.focus();
   }
 
-  // ----- Paste rows (the preview is source-agnostic: it renders ui.imp.parsed) -----
+  // ----- Paste rows. The preview only looks at ui.imp.parsed (rows of cells),
+  // so another importer (a photo/OCR reader, say) can feed it the same way. -----
   function pasteForm() {
     const imp = ui.imp;
-    const clubs = knownClubs().concat(C.STANDARD_CLUBS.filter((c) => knownClubs().indexOf(c) < 0));
+    const kc = knownClubs();
+    const clubs = kc.concat(C.STANDARD_CLUBS.filter((c) => kc.indexOf(c) < 0));
     const seg = (k, v, label) => `<button data-action="imp-unit" data-k="${k}" data-v="${v}" aria-pressed="${imp[k] === v}">${label}</button>`;
     return `
       <div class="field"><label for="pasteText">Rows from a Toptracer screen or a Rapsodo CSV export</label>
         <textarea id="pasteText" rows="6" data-input="paste-text" spellcheck="false" autocapitalize="off" placeholder="12:52 PM 5w 136 150 106 11 41 30 47 ▶ 76 ▶&#10;or paste a Rapsodo CSV with its header row">${esc(imp.text)}</textarea>
-        <p class="hint">One shot per line. Without a header row, numbers are read in Toptracer order: carry, total, ball speed, launch, apex, landing, (hang time), curve, offline. ◀ before a number means left, ▶ after it means right. A line with only a club (e.g. “7 iron”) sets the club for the rows under it. Newest-first lists are put back in order.</p>
+        <p class="hint">One shot per line. Without a header row, numbers are read in Toptracer order: carry, total, ball speed, launch, apex, landing, (hang time), curve, offline. ◀ before a number means left; ▶ after it means right. A line with only a club (like “7 iron”) sets the club for the rows under it. Newest-first lists are put back in order.</p>
       </div>
-      <div class="grid3">
-        <div class="field"><label for="impClub">Club for rows without one</label><select id="impClub" data-change="imp-club"><option value="">None</option>
-          ${clubs.map((c) => `<option value="${esc(c)}"${c === imp.defaultClub ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
-        <div class="field"><label>Curve and offline in</label><div class="seg">${seg('lateralUnit', 'ft', 'ft')}${seg('lateralUnit', 'yd', 'yds')}</div></div>
-        <div class="field"><label>Apex in</label><div class="seg">${seg('apexUnit', 'ft', 'ft')}${seg('apexUnit', 'yd', 'yds')}</div></div>
+      <div class="field"><label for="impClub">Club for rows without one</label><select id="impClub" data-change="imp-club"><option value="">None</option>
+        ${clubs.map((c) => `<option value="${esc(c)}"${c === imp.defaultClub ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
+      <div class="grid2">
+        <div class="field"><span class="label">Curve and offline in</span><div class="seg">${seg('lateralUnit', 'ft', 'ft')}${seg('lateralUnit', 'yd', 'yds')}</div></div>
+        <div class="field"><span class="label">Apex in</span><div class="seg">${seg('apexUnit', 'ft', 'ft')}${seg('apexUnit', 'yd', 'yds')}</div></div>
       </div>
       <div id="impPreview" aria-live="polite"></div>`;
   }
@@ -819,8 +951,7 @@
     if (f === 'ignore') return `<td class="muted">${esc(cell || '')}</td>`;
     if (f === 'club') return `<td>${esc(b.shot.club || '—')}</td>`;
     if (f === 'time') return `<td>${esc(b.shot.time || '—')}</td>`;
-    const v = b.shot[f];
-    const m = C.METRIC[f];
+    const v = b.shot[f], m = C.METRIC[f];
     const shown = C.isNum(v) ? (m.dir ? C.fmtRawDir(v) : C.fmtRaw(v)) : '—';
     if (m.dir && C.isNum(v) && v !== 0) {
       return `<td class="${b.bad[f] ? 'bad' : ''}"><button type="button" class="flip" data-action="imp-flip" data-i="${i}" data-f="${f}" title="Tap to flip left/right" aria-label="${esc(m.label)} ${esc(shown)}, tap to flip left or right">${esc(shown)}</button></td>`;
@@ -837,20 +968,17 @@
     const built = importRows();
     const included = built.filter((b) => b.include);
     const cols = imp.columns;
-    const facts = [C.plural(built.length, 'row'), p.hasHeader ? 'header row found' : 'no header: Toptracer order', p.reversed ? 'newest-first list put back in order' : ''].filter(Boolean).join(' · ');
+    const facts = [plural(built.length, 'row'), p.hasHeader ? 'header row found' : 'no header: Toptracer order', p.reversed ? 'newest-first list put back in order' : ''].filter(Boolean).join(' · ');
     box.innerHTML = `
       <p class="hint">${esc(facts)}. Check the columns, untick rows you don’t want, and tap a curve or offline value to flip L/R.</p>
       <div class="table-wrap"><table class="preview">
         <thead><tr><th>Add</th><th>Club</th>${cols.map((f, j) => `<th><select data-change="imp-col" data-j="${j}" aria-label="Column ${j + 1}">${fieldOptions(f)}</select>${p.headerLabels && p.headerLabels[j] ? `<span class="raw-h">${esc(p.headerLabels[j])}</span>` : ''}</th>`).join('')}<th>Check</th></tr></thead>
         <tbody>${built.map((b, i) => `<tr class="${b.include ? '' : 'off'}"><td><input type="checkbox" data-change="imp-inc" data-i="${i}"${b.include ? ' checked' : ''} aria-label="Add row ${i + 1}"></td><td>${esc(b.shot.club || '—')}</td>${cols.map((f, j) => previewCell(b, f, p.rows[i].cells[j], i)).join('')}<td class="warn">${esc(b.warn.join('; '))}</td></tr>`).join('')}</tbody>
       </table></div>
-      <div class="row-actions"><button class="btn" data-action="imp-add"${included.length ? '' : ' disabled'}>Add ${C.plural(included.length, 'shot')}</button><button class="btn ghost" data-action="imp-clear">Clear</button></div>`;
+      <div class="row-actions"><button class="btn" data-action="imp-add"${included.length ? '' : ' disabled'}>Add ${plural(included.length, 'shot')}</button><button class="btn ghost" data-action="imp-clear">Clear</button></div>`;
   }
-  function resetImport(keepText) {
-    const imp = ui.imp;
-    if (!keepText) imp.text = '';
-    imp.parsed = imp.text ? C.parsePaste(imp.text) : null;
-    imp.include = {}; imp.flips = {}; imp.sig = ''; imp.columns = null;
+  function resetImport() {
+    Object.assign(ui.imp, { text: '', parsed: null, include: {}, flips: {}, sig: '', columns: null });
   }
   function addImported() {
     const rows = importRows().filter((b) => b.include);
@@ -859,46 +987,48 @@
       if (x.shot_level_data === false) x.shot_level_data = true;
       rows.forEach((b) => x.shots.push(finalizeShot(x, b.shot)));
     });
-    resetImport(false);
+    resetImport();
     renderSessions();
-    toast(`Added ${C.plural(rows.length, 'shot')}`);
+    toast(`Added ${plural(rows.length, 'shot')}`);
   }
 
-  // ----- Data tab -----
+  // ----- Data & backup (inside Sessions) -----
   function localCounts() {
     const added = local.sessions.filter((s) => !fileSession(s.id)).length;
     const edited = local.sessions.length - added;
-    return { added, edited, hidden: local.hidden.length, other: (local.player ? 1 : 0) + (local.baselineSessionId ? 1 : 0), total: local.sessions.length + local.hidden.length + (local.player ? 1 : 0) + (local.baselineSessionId ? 1 : 0) };
+    const other = (local.player ? 1 : 0) + (local.baselineSessionId != null ? 1 : 0);
+    return { added, edited, hidden: local.hidden.length, other, total: local.sessions.length + local.hidden.length + other };
   }
-  function renderData() {
-    const el = $('#view-data');
+  function renderData(el) {
     const c = localCounts();
+    const file = playerInfo().file;
     const status = { fresh: 'Loaded', offline: 'Offline, using the last downloaded copy of', missing: 'Couldn’t load', loading: 'Loading' }[bundleStatus];
     const parts = [];
     if (c.added) parts.push(`${c.added} added`);
     if (c.edited) parts.push(`${c.edited} edited`);
     if (c.hidden) parts.push(`${c.hidden} deleted`);
     el.innerHTML = `
-      <h2>Player</h2>
-      <div class="card"><div class="grid2">
+      <button class="back" data-action="close-data">← Sessions</button>
+      <h2 style="margin-top:6px">Data &amp; backup</h2>
+      <p class="lead">For ${esc(playerName())}. Each person’s data and backups are separate.</p>
+      <div class="card"><h3 class="card-title">Player</h3><div class="grid2">
         <div class="field"><label for="pName">Name</label><input id="pName" type="text" data-change="player" data-k="name" value="${esc(data.player.name || '')}"></div>
         <div class="field"><label for="pLevel">Level</label><input id="pLevel" type="text" data-change="player" data-k="level" value="${esc(data.player.level || '')}"></div>
       </div></div>
-      <h2>Progress baseline</h2>
-      <div class="card"><div class="field"><label for="baseSel">Baseline session</label>
-        <select id="baseSel" data-change="baseline">${data.sessions.slice().reverse().map((s) => `<option value="${esc(s.id)}"${s.id === data.baseline_session_id ? ' selected' : ''}>${esc(C.fmtDate(s.date))} · ${esc(C.shortDevice(s.device))}</option>`).join('')}</select></div>
-        <p class="hint">Progress compares each club with this session. A club it doesn’t include uses its own first session instead.</p></div>
-      <h2>Data</h2>
-      <div class="card">
-        <p class="note">${esc(status)} <code>data/dad_golf_data.json</code>${bundle && bundleStatus !== 'missing' ? ` (${C.plural(fileSessions().length, 'session')})` : ''}.</p>
-        <p class="note" style="margin-top:6px">On this device: ${parts.length ? esc(parts.join(', ')) + (parts.length === 1 && (c.added + c.edited + c.hidden) === 1 ? ' session' : ' sessions') : 'no session changes'}${c.other ? `, plus ${c.other === 1 ? 'one setting' : c.other + ' settings'}` : ''}.</p>
+      <div class="card"><h3 class="card-title">Progress baseline</h3>
+        ${data.sessions.length ? `<div class="field"><label for="baseSel">Baseline session</label>
+          <select id="baseSel" data-change="baseline"><option value="">First session for each club</option>${data.sessions.slice().reverse().map((s) => `<option value="${esc(s.id)}"${s.id === data.baseline_session_id ? ' selected' : ''}>${esc(C.fmtDate(s.date))} · ${esc(C.shortDevice(s.device))}</option>`).join('')}</select></div>` : '<p class="empty">No sessions yet.</p>'}
+        <p class="hint">Progress compares each club with this session. A club it doesn’t include uses its own first session.</p></div>
+      <div class="card"><h3 class="card-title">Backup</h3>
+        <p class="note">${esc(status)} <code>${esc(file)}</code>${bundle && bundleStatus !== 'missing' ? ` (${plural(fileSessions().length, 'session')})` : ''}.</p>
+        <p class="note" style="margin-top:8px">On this device: ${parts.length ? esc(parts.join(', ')) + (c.added + c.edited + c.hidden === 1 ? ' session' : ' sessions') : 'no session changes'}${c.other ? `, plus ${c.other === 1 ? 'one setting' : c.other + ' settings'}` : ''}.</p>
         <div class="row-actions">
           <button class="btn small" data-action="export-json">Export JSON</button>
           <button class="btn small" data-action="export-csv">Export CSV</button>
           <button class="btn small ghost" data-action="import-json">Import JSON</button>
-          <button class="btn small ghost danger" data-action="reset-local"${c.total ? '' : ' disabled'}>Reset local changes</button>
+          <button class="btn small danger" data-action="reset-local"${c.total ? '' : ' disabled'}>Reset local changes</button>
         </div>
-        <p class="hint">Sessions you add or edit are saved in this browser only. To share them, export the JSON and replace <code>data/dad_golf_data.json</code> in the repo; every device then picks them up. Import merges sessions by id.</p>
+        <p class="hint">Sessions added or edited here are saved in this browser only. To share them, export the JSON and replace <code>${esc(file)}</code> in the repo; every device then picks them up. Import merges sessions by id.</p>
       </div>`;
   }
   function exportObject() {
@@ -913,14 +1043,18 @@
     out.sessions = data.sessions.map(stripUI);
     return out;
   }
+  function exportName(ext) { return (playerInfo().file.split('/').pop() || playerId + '_golf_data.json').replace(/\.json$/, '') + ext; }
   function exportCSV() {
-    const cols = ['session_id', 'date', 'device', 'shot_id', 'time', 'club'].concat(C.METRICS.map((m) => m.key), ['note']);
+    const cols = ['session_id', 'date', 'device', 'shot_id', 'time', 'club'].concat(C.METRICS.map((m) => m.key), ['likely_mishit', 'note']);
     const q = (v) => v == null ? '' : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
     const lines = [cols.join(',')];
-    data.sessions.forEach((s) => C.sessionShots(s).forEach((x) => {
-      lines.push([s.id, s.date, s.device, x.id, x.time, x.club].concat(C.METRICS.map((m) => C.metricValue(x, m.key)), [x.note]).map(q).join(','));
-    }));
-    download('golf_shots.csv', lines.join('\n'), 'text/csv');
+    data.sessions.forEach((s) => {
+      const mis = C.sessionMishits([s]);
+      C.sessionShots(s).forEach((x) => {
+        lines.push([s.id, s.date, s.device, x.id, x.time, x.club].concat(C.METRICS.map((m) => C.metricValue(x, m.key)), [mis.has(x) ? 'yes' : '', x.note]).map(q).join(','));
+      });
+    });
+    download(exportName('.csv'), lines.join('\n'), 'text/csv');
   }
   function importData(d) {
     const sessions = Array.isArray(d) ? d : d && d.sessions;
@@ -934,7 +1068,7 @@
     });
     const existing = new Set(data.sessions.map((s) => s.id));
     const nNew = clean.filter((s) => !existing.has(s.id)).length;
-    if (!confirm(`Import ${C.plural(clean.length, 'session')}? ${nNew} new, ${clean.length - nNew} replacing a session with the same id.`)) return false;
+    if (!confirm(`Import ${plural(clean.length, 'session')} into ${playerName()}’s data? ${nNew} new, ${clean.length - nNew} replacing a session with the same id.`)) return false;
     clean.forEach((s) => {
       local.sessions = local.sessions.filter((x) => x.id !== s.id);
       local.hidden = local.hidden.filter((id) => id !== s.id);
@@ -961,13 +1095,16 @@
   // ---------------------------------------------------------------------------
   const actions = {
     tab(b) { ui.tab = b.dataset.tab; hideTip(); render(); window.scrollTo(0, 0); },
+    player(b) { if (b.dataset.id !== playerId) switchPlayer(b.dataset.id); },
     'disp-club'(b) { ui.dispClub = b.dataset.club; renderStats(); },
     'prog-club'(b) { ui.progClub = b.dataset.club; renderProgress(); },
-    'goto-notes'(b) { ui.tab = 'sessions'; ui.sessionId = b.dataset.id; ui.editNotes = true; ui.addMode = null; render(); window.scrollTo(0, 0); },
+    'goto-notes'(b) { Object.assign(ui, { tab: 'sessions', sessionsView: 'list', sessionId: b.dataset.id, editNotes: true, addMode: null }); render(); window.scrollTo(0, 0); },
+    'open-data'() { ui.sessionsView = 'data'; ui.sessionId = null; renderSessions(); window.scrollTo(0, 0); },
+    'close-data'() { ui.sessionsView = 'list'; renderSessions(); window.scrollTo(0, 0); },
     'new-session'() { ui.newSession = true; renderSessions(); const d = $('#nsDate'); if (d) d.focus(); },
     'cancel-new-session'() { ui.newSession = false; renderSessions(); },
     'create-session'() { createSession(); },
-    'open-session'(b) { ui.sessionId = b.dataset.id; ui.editNotes = false; ui.addMode = null; resetImport(false); renderSessions(); window.scrollTo(0, 0); },
+    'open-session'(b) { Object.assign(ui, { sessionsView: 'list', sessionId: b.dataset.id, editNotes: false, addMode: null }); resetImport(); renderSessions(); window.scrollTo(0, 0); },
     'close-session'() { ui.sessionId = null; ui.editNotes = false; renderSessions(); window.scrollTo(0, 0); },
     'revert-session'() {
       if (confirm('Discard this device’s changes to this session and go back to the version in the data file?')) { revertSession(ui.sessionId); toast('Reverted to the file version'); }
@@ -976,7 +1113,7 @@
       const s = getSession(ui.sessionId);
       if (!s) return;
       const inFile = !!fileSession(s.id);
-      if (!confirm(`Delete the ${C.fmtDate(s.date)} session${shotCount(s) ? ` and its ${C.plural(shotCount(s), 'shot')}` : ''}?${inFile ? ' It stays in the data file; this hides it on this device (Reset local changes brings it back).' : ''}`)) return;
+      if (!confirm(`Delete the ${C.fmtDate(s.date)} session${shotCount(s) ? ` and its ${plural(shotCount(s), 'shot')}` : ''}?${inFile ? ' It stays in the data file; this hides it on this device (Reset local changes brings it back).' : ''}`)) return;
       ui.sessionId = null;
       deleteSession(s.id);
       toast('Session deleted');
@@ -1019,18 +1156,14 @@
       $$(`[data-action="imp-unit"][data-k="${b.dataset.k}"]`).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.v === b.dataset.v)));
       renderImportPreview();
     },
-    'imp-flip'(b) {
-      const key = b.dataset.i + ':' + b.dataset.f;
-      ui.imp.flips[key] = !ui.imp.flips[key];
-      renderImportPreview();
-    },
+    'imp-flip'(b) { const k = b.dataset.i + ':' + b.dataset.f; ui.imp.flips[k] = !ui.imp.flips[k]; renderImportPreview(); },
     'imp-add'() { addImported(); },
-    'imp-clear'() { resetImport(false); renderSessions(); },
-    'export-json'() { download('dad_golf_data.json', JSON.stringify(exportObject(), null, 2), 'application/json'); },
+    'imp-clear'() { resetImport(); renderSessions(); },
+    'export-json'() { download(exportName('.json'), JSON.stringify(exportObject(), null, 2), 'application/json'); },
     'export-csv'() { exportCSV(); },
     'import-json'() { $('#importFile').click(); },
     'reset-local'() {
-      if (!confirm('Discard every change made on this device (added, edited and deleted sessions, and settings) and go back to the data file?')) return;
+      if (!confirm(`Discard every change made on this device to ${playerName()}’s data (added, edited and deleted sessions, and settings) and go back to the data file?`)) return;
       local = emptyLocal(); saveLocal(); ui.sessionId = null; refresh(); toast('Local changes reset');
     }
   };
@@ -1049,10 +1182,11 @@
       const p = Object.assign({}, data.player);
       p[el.dataset.k] = el.value.trim();
       local.player = bundle && JSON.stringify(bundle.player) === JSON.stringify(p) ? null : p;
-      saveLocal(); data = merge(); renderWho(); toast('Saved');
+      saveLocal(); data = merge(); renderHeader(); toast('Saved');
     },
     baseline(el) {
-      local.baselineSessionId = bundle && bundle.baseline_session_id === el.value ? null : el.value;
+      const fileBase = bundle ? bundle.baseline_session_id || '' : '';
+      local.baselineSessionId = el.value === fileBase ? null : el.value;
       saveLocal(); refresh(); toast('Baseline updated');
     }
   };
@@ -1083,9 +1217,8 @@
     s.shots = [];
     local.sessions.push(s);
     saveLocal();
-    ui.newSession = false; ui.sessionId = id; ui.editNotes = false;
-    ui.addMode = /toptracer|rapsodo/i.test(dev) ? 'paste' : 'enter';
-    resetImport(false);
+    Object.assign(ui, { newSession: false, sessionId: id, editNotes: false, addMode: /toptracer|rapsodo/i.test(dev) ? 'paste' : 'enter' });
+    resetImport();
     refresh();
     window.scrollTo(0, 0);
     toast('Session created');
@@ -1103,8 +1236,8 @@
     const r = target.getBoundingClientRect();
     const tw = tip.offsetWidth, th = tip.offsetHeight;
     const left = Math.max(8, Math.min(window.innerWidth - tw - 8, r.left + r.width / 2 - tw / 2));
-    let top = r.top - th - 8;
-    if (top < 8) top = r.bottom + 8;
+    let top = r.top - th - 10;
+    if (top < 8) top = r.bottom + 10;
     tip.style.left = left + 'px';
     tip.style.top = top + 'px';
     tipFor = target;
@@ -1146,8 +1279,7 @@
     }
   });
 
-  // Charts are drawn at the real pixel width, so redraw when the width changes,
-  // and redraw on a light/dark switch (colours come from CSS, but keep it fresh).
+  // Charts are drawn at the real pixel width, so redraw when the width changes.
   let lastW = window.innerWidth, resizeTimer;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
@@ -1158,25 +1290,47 @@
       if (ui.tab === 'stats') renderStats(); else if (ui.tab === 'progress') renderProgress();
     }, 150);
   });
-  const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-  if (mq) {
-    const onScheme = () => { if (ui.tab === 'stats') renderStats(); else if (ui.tab === 'progress') renderProgress(); };
-    if (mq.addEventListener) mq.addEventListener('change', onScheme); else if (mq.addListener) mq.addListener(onScheme);
-  }
 
   // ---------------------------------------------------------------------------
-  // Start: draw from the cached copy right away, then refresh from the file.
+  // Start: draw from cached copies right away, then refresh from the files.
   // ---------------------------------------------------------------------------
+  function fetchBundle() {
+    const id = playerId, file = playerInfo().file;
+    fetch(file, { cache: 'no-cache' })
+      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then((d) => {
+        if (id !== playerId) return;
+        if (!d || !Array.isArray(d.sessions)) throw new Error('Unexpected data file');
+        const changed = JSON.stringify(d) !== JSON.stringify(bundle);
+        bundle = d;
+        bundleStatus = 'fresh';
+        saveJSON(key('bundle'), d);
+        if (changed || !data.sessions.length) refresh(); else renderBanner();
+      })
+      .catch(() => {
+        if (id !== playerId) return;
+        bundleStatus = bundle ? 'offline' : 'missing';
+        refresh();
+      });
+  }
+  function fetchPlayers() {
+    fetch(REGISTRY_URL, { cache: 'no-cache' })
+      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then((d) => {
+        const list = validPlayers(d && d.players);
+        if (!list) return;
+        players = list;
+        saveJSON(LS + '.players', list);
+        const want = C.resolvePlayer(players, urlPlayer(), lastPlayer());
+        if (want !== playerId) switchPlayer(want); else renderHeader();
+      })
+      .catch(() => { /* keep the cached or built-in list */ });
+  }
+
+  loadPlayerState();
+  setURL();
+  try { localStorage.setItem(LS + '.lastPlayer', playerId); } catch (e) { /* ignore */ }
   render();
-  fetch(DATA_URL, { cache: 'no-cache' })
-    .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then((d) => {
-      if (!d || !Array.isArray(d.sessions)) throw new Error('Unexpected data file');
-      const changed = JSON.stringify(d) !== JSON.stringify(bundle);
-      bundle = d;
-      bundleStatus = 'fresh';
-      try { localStorage.setItem(LS_BUNDLE, JSON.stringify(d)); } catch (e) { /* storage full or blocked */ }
-      if (changed) refresh(); else { renderBanner(); if (ui.tab === 'data') renderData(); }
-    })
-    .catch(() => { bundleStatus = bundle ? 'offline' : 'missing'; refresh(); });
+  fetchBundle();
+  fetchPlayers();
 })();

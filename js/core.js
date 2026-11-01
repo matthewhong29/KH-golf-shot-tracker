@@ -212,7 +212,8 @@
     return { PW: 'Pitching wedge', GW: 'Gap wedge', SW: 'Sand wedge', LW: 'Lob wedge' }[c] || String(c);
   }
   var STANDARD_CLUBS = ['Driver', '3w', '5w', '7w', '3hy', '4hy', '5hy', '6hy', '4i', '5i', '6i', '7i', '8i', '9i', 'PW', 'GW', 'SW', 'LW'];
-  function launchFloor(club) { return clubRank(club) >= 30 && clubRank(club) < 100 ? 5 : 10; }
+  // Mis-hit launch floor: under 5° for woods, hybrids and driver; under 10° for irons and wedges.
+  function launchFloor(club) { return /^(Driver|\d+w|\d+hy)$/.test(String(club)) ? 5 : 10; }
 
   // ---------------------------------------------------------------------------
   // Sessions
@@ -231,12 +232,27 @@
     return (Array.isArray(v) ? v : [v]).map(String).filter(function (x) { return x.trim(); });
   }
 
-  // { club: { club, shots: [...], ranges: { metric: {min,max,avg?} } } }
+  // Likely mis-hits, judged within each session, so a shot's status doesn't
+  // change with whatever other sessions it's pooled with.
+  function sessionMishits(sessions) {
+    var set = new Set();
+    (sessions || []).forEach(function (s) { mishits(sessionShots(s)).forEach(function (m) { set.add(m.shot); }); });
+    return set;
+  }
+
+  // { club: { club, shots: [all], solid: [...], mis: [...], ranges: { metric: {min,max,avg?} } } }
+  // Every computed number uses the solid shots; mis-hits stay in `shots` for the charts.
   function clubData(sessions) {
     var out = {};
-    function get(c) { return out[c] || (out[c] = { club: c, shots: [], ranges: {} }); }
+    var mis = sessionMishits(sessions);
+    function get(c) { return out[c] || (out[c] = { club: c, shots: [], solid: [], mis: [], ranges: {} }); }
     (sessions || []).forEach(function (s) {
-      sessionShots(s).forEach(function (shot) { if (shot.club) get(shot.club).shots.push(shot); });
+      sessionShots(s).forEach(function (shot) {
+        if (!shot.club) return;
+        var e = get(shot.club);
+        e.shots.push(shot);
+        (mis.has(shot) ? e.mis : e.solid).push(shot);
+      });
       if (hasSummary(s)) {
         Object.keys(s.summary).forEach(function (club) {
           var e = get(club), metrics = s.summary[club] || {};
@@ -250,13 +266,21 @@
     return out;
   }
   function entryHasData(e) { return !!e && (e.shots.length > 0 || Object.keys(e.ranges).length > 0); }
+  function solidPct(entry) { return entry && entry.shots && entry.shots.length ? 100 * entry.solid.length / entry.shots.length : null; }
+  var SOLID_METRIC = { key: 'solid_pct', label: 'Solid contact', unit: '%', dec: 0 };
 
-  // Shot-level summary when the club has shots with this metric, else the
-  // session's recorded range (summary-only sessions), else null.
+  // Summary of a metric over the club's solid shots ("n of N" counts solid
+  // shots); { allMis: true } when every shot was a mis-hit; the recorded range
+  // for summary-only sessions; else null.
   function metricStat(entry, key) {
     if (!entry) return null;
-    var s = summarize(entry.shots, key);
+    var solid = entry.solid || entry.shots;
+    var s = summarize(solid, key);
     if (s.n) return s;
+    var mis = entry.mis || [];
+    if (!solid.length && mis.some(function (x) { return metricValue(x, key) != null; })) {
+      return { n: 0, of: 0, avg: null, min: null, max: null, sd: null, values: [], allMis: true, total: entry.shots.length };
+    }
     var r = entry.ranges && entry.ranges[key];
     if (r) {
       return { n: 0, of: 0, avg: isNum(r.avg) ? r.avg : null, min: isNum(r.min) ? r.min : null,
@@ -265,10 +289,10 @@
     return null;
   }
 
-  // A likely thin, topped or fat shot: launch under 10° (5° for woods/driver),
-  // or carry under 60% of that club's upper-quartile carry. The upper quartile
-  // stays sensible even when most of a club's shots were mis-hit, where the
-  // median would not.
+  // A likely thin, topped or fat shot: launch under 10° (5° for woods, hybrids
+  // and driver), or carry under 60% of that club's upper-quartile carry. The
+  // upper quartile stays sensible even when most of a club's shots were
+  // mis-hit, where the median would not.
   function mishits(shots) {
     var by = {};
     (shots || []).forEach(function (s) { if (s && s.club) (by[s.club] || (by[s.club] = [])).push(s); });
@@ -286,6 +310,7 @@
   }
   function joinList(a) { return a.length < 3 ? a.join(' and ') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
   function minOf(arr) { var a = arr.filter(isNum); return a.length ? Math.min.apply(null, a) : null; }
+  function pct(n, of) { return roundHalfEven(100 * n / of, 0) + '%'; }
 
   function contactText(bad) {
     var clubs = sortClubs(bad.map(function (b) { return b.shot.club; }).filter(function (c, i, a) { return a.indexOf(c) === i; }));
@@ -301,21 +326,24 @@
     return plural(bad.length, 'likely thin or topped shot') + who + (detail.length ? ' (' + detail.join(', ') + ')' : '') + '.';
   }
 
-  // Plain-language highlights for the sessions in scope.
+  // Plain-language highlights for the sessions in scope. Numbers use solid shots.
   function buildHighlights(scope, baseline) {
     var out = [];
     scope = scope || [];
-    var shots = [];
-    scope.forEach(function (s) { sessionShots(s).forEach(function (x) { shots.push(x); }); });
+    var shots = [], bad = [];
+    scope.forEach(function (s) {
+      sessionShots(s).forEach(function (x) { shots.push(x); });
+      mishits(sessionShots(s)).forEach(function (m) { bad.push(m); });
+    });
     var data = clubData(scope);
     var clubs = sortClubs(Object.keys(data));
     if (shots.length) {
       var shotClubs = clubs.filter(function (c) { return data[c].shots.length; });
       out.push({ id: 'count', text: plural(shots.length, 'shot') + ' with ' + plural(shotClubs.length, 'club') + ' (' + shotClubs.join(', ') + ').' });
+      out.push({ id: 'solid', text: 'Solid contact: ' + (shots.length - bad.length) + ' of ' + plural(shots.length, 'shot') + ' (' + pct(shots.length - bad.length, shots.length) + ').' });
 
-      var bad = mishits(shots);
-      var launch = summarize(shots, 'launch_deg');
       if (!bad.length) {
+        var launch = summarize(shots, 'launch_deg');
         var lowClubs = [];
         if (launch.n) shots.forEach(function (s) { if (s.launch_deg === launch.min && lowClubs.indexOf(s.club) < 0) lowClubs.push(s.club); });
         out.push({ id: 'contact', text: 'No thin or topped shots' + (launch.n ? ', lowest launch ' + fmtRaw(launch.min) + '° (' + sortClubs(lowClubs).join(', ') + ')' : '') + '.' });
@@ -323,7 +351,7 @@
         out.push({ id: 'contact', text: contactText(bad) });
       }
 
-      var miss = shotClubs.map(function (c) { return { club: c, st: summarize(data[c].shots, 'offline_ft') }; })
+      var miss = shotClubs.map(function (c) { return { club: c, st: summarize(data[c].solid, 'offline_ft') }; })
         .filter(function (x) { return x.st.n; });
       if (miss.length >= 2) {
         var text = 'Average miss: ' + miss.map(function (x) { return x.club + ' ' + fmtDir(x.st.avg / 3, 1); }).join(' · ') + ' yds.';
@@ -332,15 +360,7 @@
           if (a.every(function (v, i) { return !i || v > a[i - 1]; })) text += ' The miss moves farther right as the clubs get longer.';
           else if (a.every(function (v, i) { return !i || v < a[i - 1]; })) text += ' The miss moves farther left as the clubs get longer.';
         }
-        var mhClubs = miss.map(function (x) { return x.club; }).filter(function (c) {
-          return bad.some(function (b) { return b.shot.club === c && isNum(b.shot.offline_ft); });
-        });
-        if (mhClubs.length === 1) {
-          var k = bad.filter(function (b) { return b.shot.club === mhClubs[0] && isNum(b.shot.offline_ft); }).length;
-          text += ' The ' + mhClubs[0] + ' average includes its ' + plural(k, 'thin or topped shot') + '.';
-        } else if (mhClubs.length > 1) {
-          text += ' The ' + joinList(mhClubs) + ' averages include thin or topped shots.';
-        }
+        if (bad.length) text += ' Mis-hits are left out.';
         out.push({ id: 'miss', text: text });
       }
     } else if (clubs.length) {
@@ -398,6 +418,58 @@
     function spread(s) { return isNum(s.min) && isNum(s.max) ? s.max - s.min : null; }
     return { dMin: d(a.min, b.min), dMax: d(a.max, b.max), dAvg: d(a.avg, b.avg), spreadA: spread(a), spreadB: spread(b) };
   }
+
+  // ---------------------------------------------------------------------------
+  // Tips & players
+  // ---------------------------------------------------------------------------
+  function latestShotSession(sessions) {
+    var withShots = (sessions || []).filter(function (s) { return sessionShots(s).length; }).sort(compareSessions);
+    return withShots.length ? withShots[withShots.length - 1] : null;
+  }
+  // "From your last session" line for a tip; null when there's no shot data.
+  // kind: mishits | launch | miss | carry
+  function sessionCallout(kind, sessions) {
+    var s = latestShotSession(sessions);
+    if (!s) return null;
+    var shots = sessionShots(s);
+    var data = clubData([s]);
+    var clubs = sortClubs(Object.keys(data)).filter(function (c) { return data[c].shots.length; });
+    var bad = mishits(shots);
+    var note = bad.length ? ' Mis-hits are left out.' : '';
+    function per(key, fmt) {
+      return clubs.map(function (c) { var st = summarize(data[c].solid, key); return st.n ? c + ' ' + fmt(st.avg) : null; }).filter(Boolean);
+    }
+    var text = null, list;
+    if (kind === 'mishits') {
+      text = bad.length
+        ? contactText(bad) + ' Solid contact: ' + (shots.length - bad.length) + ' of ' + plural(shots.length, 'shot') + ' (' + pct(shots.length - bad.length, shots.length) + ').'
+        : 'No thin or topped shots in ' + plural(shots.length, 'shot') + '.';
+    } else if (kind === 'launch') {
+      list = per('launch_deg', function (v) { return fmtNum(v, 1) + '°'; });
+      if (list.length) text = 'Average launch: ' + list.join(' · ') + '.' + note;
+    } else if (kind === 'miss') {
+      list = per('offline_ft', function (v) { return fmtDir(v / 3, 1); });
+      if (list.length) text = 'Average miss: ' + list.join(' · ') + ' yds.' + note;
+    } else if (kind === 'carry') {
+      list = per('carry_yds', function (v) { return fmtNum(v, 1); });
+      if (list.length) text = 'Average carry: ' + list.join(' · ') + ' yds.' + note;
+    }
+    return text ? { sessionId: s.id, title: 'From your last session (' + fmtDate(s.date) + ')', text: text } : null;
+  }
+  // Which player to show: the ?player= value, else the last one used, else the first.
+  function resolvePlayer(players, requested, last) {
+    var ids = (players || []).map(function (p) { return p && p.id; }).filter(Boolean);
+    if (requested && ids.indexOf(requested) >= 0) return requested;
+    if (last && ids.indexOf(last) >= 0) return last;
+    return ids[0] || null;
+  }
+  function fmtHeight(inches) {
+    if (!isNum(inches) || inches <= 0) return '';
+    var ft = Math.floor(inches / 12), inch = Math.round(inches - ft * 12);
+    if (inch === 12) { ft++; inch = 0; }
+    return ft + '′' + inch + '″';
+  }
+  function youtubeSearchUrl(query) { return 'https://www.youtube.com/results?search_query=' + encodeURIComponent(String(query || '')); }
 
   // ---------------------------------------------------------------------------
   // Paste parser
@@ -835,6 +907,8 @@
     normClub: normClub, clubRank: clubRank, sortClubs: sortClubs, clubName: clubName, launchFloor: launchFloor,
     sessionShots: sessionShots, hasSummary: hasSummary, isSummaryOnly: isSummaryOnly, compareSessions: compareSessions,
     asList: asList, clubData: clubData, entryHasData: entryHasData, metricStat: metricStat, mishits: mishits,
+    sessionMishits: sessionMishits, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
+    sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf
   };

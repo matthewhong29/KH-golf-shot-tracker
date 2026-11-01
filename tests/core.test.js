@@ -20,7 +20,7 @@ const aug = data.sessions.find((s) => s.id === '2026-08-rapsodo');
 const nov = data.sessions.find((s) => s.id === '2026-11-01-toptracer');
 
 // ---------------------------------------------------------------------------
-section('Expected averages from the brief (Nov 1 Toptracer)');
+section('Expected averages from the brief (shots 001–036; unchanged in the full session)');
 // Club: shots, carry avg (range), total, ball speed, launch, apex, landing, curve, offline
 const EXPECTED = {
   PW: [9, '83.4', '69–96', '85.7', '71.8', '34.1', '62.1', '47.7', '5.0 R', '1.9 L'],
@@ -29,43 +29,51 @@ const EXPECTED = {
   '5hy': [4, '141.0', '131–152', '147.2', '101.8', '20.8', '71.2', '40.0', '27.0 R', '85.0 R'],
 };
 const AVG_KEYS = ['total_yds', 'ball_speed_mph', 'launch_deg', 'apex_ft', 'landing_deg', 'curve_ft', 'offline_ft'];
+const nov36 = Object.assign({}, nov, { shots: nov.shots.slice(0, 36) });
+const byClub36 = C.clubData([nov36]);
 const byClub = C.clubData([nov]);
 eq(C.sessionShots(nov).length, 48, 'Nov 1 has 48 shots');
-eq(C.sortClubs(Object.keys(byClub)), ['SW', 'PW', '9i', '7i', '5hy', '5w'], 'clubs sorted short to long');
-for (const club of Object.keys(EXPECTED)) {
-  const [shots, carryAvg, carryRange, ...rest] = EXPECTED[club];
-  const e = byClub[club];
-  eq(e.shots.length, shots, `${club} shot count`);
-  const carry = C.metricStat(e, 'carry_yds');
-  eq(C.fmtAvg('carry_yds', carry.avg), carryAvg, `${club} carry avg`);
-  eq(C.fmtRange(carry.min, carry.max), carryRange, `${club} carry range`);
-  AVG_KEYS.forEach((key, i) => {
-    const st = C.metricStat(e, key);
-    eq(C.fmtAvg(key, st.avg), rest[i], `${club} ${key} avg`);
-    eq(st.n, shots, `${club} ${key} n`);
-    // Ranges for the other metrics, checked against an independent min/max of the raw data.
-    const vals = e.shots.map((s) => s[key]);
-    eq(C.fmtRange(st.min, st.max, C.METRIC[key].dir), C.fmtRange(Math.min(...vals), Math.max(...vals), C.METRIC[key].dir), `${club} ${key} range`);
-  });
+eq(C.sortClubs(Object.keys(byClub36)), ['PW', '9i', '7i', '5hy'], 'shots 001–036: four clubs');
+eq(C.sortClubs(Object.keys(byClub)), ['SW', 'PW', '9i', '7i', '5hy', '5w'], 'full session: clubs sorted short to long');
+for (const [label, entries] of [['001–036', byClub36], ['full session', byClub]]) {
+  for (const club of Object.keys(EXPECTED)) {
+    const [shots, carryAvg, carryRange, ...rest] = EXPECTED[club];
+    const e = entries[club];
+    eq([e.shots.length, e.solid.length, e.mis.length], [shots, shots, 0], `${label} ${club}: shots, all solid`);
+    const carry = C.metricStat(e, 'carry_yds');
+    eq(C.fmtAvg('carry_yds', carry.avg), carryAvg, `${label} ${club} carry avg`);
+    eq(C.fmtRange(carry.min, carry.max), carryRange, `${label} ${club} carry range`);
+    AVG_KEYS.forEach((key, i) => {
+      const st = C.metricStat(e, key);
+      eq(C.fmtAvg(key, st.avg), rest[i], `${label} ${club} ${key} avg`);
+      eq(st.n, shots, `${label} ${club} ${key} n`);
+      // Ranges for the other metrics, checked against an independent min/max of the raw data.
+      const vals = e.shots.map((s) => s[key]);
+      eq(C.fmtRange(st.min, st.max, C.METRIC[key].dir), C.fmtRange(Math.min(...vals), Math.max(...vals), C.METRIC[key].dir), `${label} ${club} ${key} range`);
+    });
+  }
 }
 eq(C.fmtRange(-31, 54, true), '31 L – 54 R', 'directional range format');
 
-section('Second screenshot: SW and 5w (avg and range, half-even)');
+section('Second screenshot: SW, and the 5w without its mis-hits (solid shots 040–041)');
 const EXPECTED_NEW = {
-  SW: { n: 7, carry_yds: ['67.7', '54–88'], total_yds: ['70.3', '56–95'], ball_speed_mph: ['63.7', '55–77'], launch_deg: ['40.0', '22–51'],
+  SW: { n: 7, total: 7, carry_yds: ['67.7', '54–88'], total_yds: ['70.3', '56–95'], ball_speed_mph: ['63.7', '55–77'], launch_deg: ['40.0', '22–51'],
     apex_ft: ['54.7', '40–66'], landing_deg: ['50.0', '37–58'], curve_ft: ['10.4 R', '2 L – 26 R'], offline_ft: ['9.7 R', '17 L – 37 R'] },
-  '5w': { n: 5, carry_yds: ['77.8', '21–138'], total_yds: ['112.6', '35–157'], ball_speed_mph: ['89.8', '44–108'], launch_deg: ['11.8', '2–30'],
-    apex_ft: ['18.4', '2–41'], landing_deg: ['20.4', '4–34'], curve_ft: ['13.4 R', '2 L – 47 R'], offline_ft: ['27.2 L', '102 L – 76 R'] },
+  '5w': { n: 2, total: 5, carry_yds: ['137.0', '136–138'], total_yds: ['153.5', '150–157'], ball_speed_mph: ['107.0', '106–108'], launch_deg: ['10.0', '9–11'],
+    apex_ft: ['38.0', '35–41'], landing_deg: ['28.0', '26–30'], curve_ft: ['35.5 R', '24 R – 47 R'], offline_ft: ['48.5 R', '21 R – 76 R'] },
 };
 for (const club of Object.keys(EXPECTED_NEW)) {
   const exp = EXPECTED_NEW[club];
-  eq(byClub[club].shots.length, exp.n, `${club} shot count`);
+  eq([byClub[club].shots.length, byClub[club].solid.length], [exp.total, exp.n], `${club}: ${exp.n} solid of ${exp.total}`);
   for (const key of Object.keys(exp)) {
-    if (key === 'n') continue;
+    if (key === 'n' || key === 'total') continue;
     const st = C.metricStat(byClub[club], key);
-    eq([C.fmtAvg(key, st.avg), C.fmtRange(st.min, st.max, C.METRIC[key].dir)], exp[key], `${club} ${key} avg and range`);
+    eq([C.fmtAvg(key, st.avg), C.fmtRange(st.min, st.max, C.METRIC[key].dir), st.n, st.of], exp[key].concat([exp.n, exp.n]), `${club} ${key} avg, range, n of N`);
   }
 }
+eq(byClub['5w'].mis.map((s) => s.id), ['2026-11-01-037', '2026-11-01-038', '2026-11-01-039'], '5w mis-hits kept for the charts');
+eq([C.solidPct(byClub['5w']), C.solidPct(byClub.PW)], [40, 100], 'solid contact % by club');
+eq(C.fmtSigned(C.metricStat(byClub['5w'], 'carry_yds').avg - C.metricStat(byClub['5hy'], 'carry_yds').avg, 1), '−4.0', 'gap 5hy → 5w');
 
 section('Partial and missing metrics');
 const hang = C.metricStat(byClub.PW, 'hang_time_s');
@@ -87,6 +95,7 @@ const augCarry = C.metricStat(augData.PW, 'carry_yds');
 eq([augCarry.summaryOnly, augCarry.avg, C.fmtRange(augCarry.min, augCarry.max)], [true, null, '9–95'], 'Aug carry range');
 eq(C.fmtRange(C.metricStat(augData.PW, 'launch_deg').min, C.metricStat(augData.PW, 'launch_deg').max), '1.7–32.4', 'Aug launch range');
 eq(C.fmtRange(C.metricStat(augData.PW, 'club_speed_mph').min, C.metricStat(augData.PW, 'club_speed_mph').max), '60–67', 'Aug club speed range');
+eq(C.solidPct(augData.PW), null, 'Aug solid contact % is unknown');
 ok(C.isSummaryOnly(aug) && !C.isSummaryOnly(nov), 'isSummaryOnly');
 
 section('Rounding & formatting');
@@ -113,6 +122,9 @@ eq(C.sortClubs(['5hy', 'PW', '7i', '9i', 'Driver', '3w', '5i', 'SW']), ['SW', 'P
 
 section('Mis-hits & highlights');
 eq(C.mishits(C.sessionShots(nov)).map((m) => m.shot.id), ['2026-11-01-037', '2026-11-01-038', '2026-11-01-039'], 'mis-hits on Nov 1: exactly the three topped 5w shots');
+eq(C.sessionMishits(data.sessions).size, 3, 'mis-hits across all sessions');
+eq(['5hy', '4hy', '5w', '3w', 'Driver', '7i', '4i', 'PW', 'SW'].map(C.launchFloor), [5, 5, 5, 5, 5, 10, 10, 10, 10], 'launch floor: 5° woods/hybrids/driver, 10° irons/wedges');
+eq(C.mishits([{ club: '5hy', carry_yds: 138, launch_deg: 9 }, { club: '5hy', carry_yds: 140, launch_deg: 18 }]).length, 0, 'a 9° hybrid shot is not a mis-hit');
 eq(C.quantile([21, 26, 68, 136, 138], 0.75), 136, '5w upper quartile');
 eq(C.quantile([54, 55, 63, 64, 70, 80, 88], 0.75), 75, 'SW upper quartile (interpolated)');
 eq(C.median([21, 26, 68, 136, 138]), 68, 'median (why it was replaced: 60% of 68 misses the 68-yd top)');
@@ -122,17 +134,18 @@ eq(C.mishits([{ club: 'Driver', carry_yds: 200, launch_deg: 7 }]).length, 0, 'dr
 const hlNov = C.buildHighlights([nov], aug).map((h) => h.text);
 eq(hlNov, [
   '48 shots with 6 clubs (SW, PW, 9i, 7i, 5hy, 5w).',
+  'Solid contact: 45 of 48 shots (94%).',
   '3 likely thin or topped shots, all with the 5w (launch as low as 2°, carry as short as 21 yds).',
-  'Average miss: SW 3.2 R · PW 0.6 L · 9i 2.4 R · 7i 4.6 R · 5hy 28.3 R · 5w 9.1 L yds. The 5w average includes its 3 thin or topped shots.',
+  'Average miss: SW 3.2 R · PW 0.6 L · 9i 2.4 R · 7i 4.6 R · 5hy 28.3 R · 5w 16.2 R yds. Mis-hits are left out.',
   'Since Aug 9, 2026 (baseline): PW shortest carry 9 → 69 yds, lowest launch 1.7° → 26°.',
 ], 'Nov 1 highlights');
 // The first 36 shots alone (the brief's original data) still give the clean-contact line and the rightward trend.
-const nov36 = Object.assign({}, nov, { shots: nov.shots.slice(0, 36) });
-eq(C.buildHighlights([nov36], aug).map((h) => h.text).slice(1, 3), [
+eq(C.buildHighlights([nov36], aug).map((h) => h.text).slice(1, 4), [
+  'Solid contact: 36 of 36 shots (100%).',
   'No thin or topped shots, lowest launch 18° (9i, 5hy).',
   'Average miss: PW 0.6 L · 9i 2.4 R · 7i 4.6 R · 5hy 28.3 R yds. The miss moves farther right as the clubs get longer.',
 ], 'first 36 shots: clean contact and rightward miss trend');
-eq(C.buildHighlights([{ id: 'x', shots: [{ club: 'SW', carry_yds: 70, launch_deg: 40 }, { club: 'SW', carry_yds: 72, launch_deg: 41 }, { club: 'SW', carry_yds: 20, launch_deg: 30 }, { club: '5w', carry_yds: 140, launch_deg: 10 }, { club: '5w', carry_yds: 60, launch_deg: 3 }] }], null)[1].text,
+eq(C.buildHighlights([{ id: 'x', shots: [{ club: 'SW', carry_yds: 70, launch_deg: 40 }, { club: 'SW', carry_yds: 72, launch_deg: 41 }, { club: 'SW', carry_yds: 20, launch_deg: 30 }, { club: '5w', carry_yds: 140, launch_deg: 10 }, { club: '5w', carry_yds: 60, launch_deg: 3 }] }], null)[2].text,
   '2 likely thin or topped shots: SW ×1, 5w ×1 (launch as low as 3°, carry as short as 20 yds).', 'contact text across clubs');
 eq(C.buildHighlights([aug], aug).map((h) => h.text), [
   'Ranges only; individual shots weren’t recorded.',
@@ -140,14 +153,72 @@ eq(C.buildHighlights([aug], aug).map((h) => h.text), [
   'This is the baseline session that progress is measured from.',
 ], 'Aug highlights');
 eq(C.buildHighlights([], null), [], 'no sessions -> no highlights');
+// A club whose shots were all mis-hits: no numbers, nothing breaks.
+const allMis = { id: 'am', date: '2026-12-01', shots: [
+  { id: 'a1', club: '7i', carry_yds: 60, launch_deg: 4, offline_ft: 10 }, { id: 'a2', club: '7i', carry_yds: 62, launch_deg: 5, offline_ft: -5 },
+  { id: 'a3', club: 'PW', carry_yds: 80, launch_deg: 30, offline_ft: 0 }] };
+const am = C.clubData([allMis]);
+const amSt = C.metricStat(am['7i'], 'carry_yds');
+eq([amSt.allMis, amSt.total, amSt.avg, amSt.min, am['7i'].solid.length, C.solidPct(am['7i'])], [true, 2, null, null, 0, 0], 'a club whose shots were all mis-hits');
+eq(C.metricStat(am['7i'], 'spin_rpm'), null, 'all-mis club: a metric no shot has stays null');
+eq(C.buildHighlights([allMis], null).map((h) => h.text), [
+  '3 shots with 2 clubs (PW, 7i).',
+  'Solid contact: 1 of 3 shots (33%).',
+  '2 likely thin or topped shots, all with the 7i (launch as low as 4°, carry as short as 60 yds).',
+], 'highlights with an all-mis club');
+eq(C.progressFor([allMis], '7i', null).rows.length, 1, 'progress still lists an all-mis club');
 
 section('Progress');
 const pPW = C.progressFor(data.sessions, 'PW', data.baseline_session_id);
 eq([pPW.rows.length, pPW.baseline.session.id, pPW.latest.session.id, pPW.fallback], [2, '2026-08-rapsodo', '2026-11-01-toptracer', false], 'PW progress uses the Aug baseline');
+eq(pPW.rows.map((r) => C.solidPct(r.entry)), [null, 100], 'PW solid contact: unknown in Aug, 100% on Nov 1');
 const p9 = C.progressFor(data.sessions, '9i', data.baseline_session_id);
 eq([p9.rows.length, p9.baseline.session.id, p9.fallback], [1, '2026-11-01-toptracer', true], '9i falls back to its first session');
 const cmp = C.compareStats(C.metricStat(pPW.baseline.entry, 'carry_yds'), C.metricStat(pPW.latest.entry, 'carry_yds'));
 eq([cmp.dMin, cmp.dMax, cmp.dAvg], [60, 1, null], 'PW carry change since baseline');
+eq(C.solidPct(C.progressFor(data.sessions, '5w', null).latest.entry), 40, '5w solid contact 40% in progress');
+
+section('Tips callouts (from the last session)');
+const callTitle = 'From your last session (Nov 1, 2026)';
+eq(C.sessionCallout('mishits', data.sessions), { sessionId: '2026-11-01-toptracer', title: callTitle,
+  text: '3 likely thin or topped shots, all with the 5w (launch as low as 2°, carry as short as 21 yds). Solid contact: 45 of 48 shots (94%).' }, 'mis-hits callout');
+eq(C.sessionCallout('launch', data.sessions).text, 'Average launch: SW 40.0° · PW 34.1° · 9i 31.7° · 7i 26.0° · 5hy 20.8° · 5w 10.0°. Mis-hits are left out.', 'launch callout');
+eq(C.sessionCallout('miss', data.sessions).text, 'Average miss: SW 3.2 R · PW 0.6 L · 9i 2.4 R · 7i 4.6 R · 5hy 28.3 R · 5w 16.2 R yds. Mis-hits are left out.', 'miss callout');
+eq(C.sessionCallout('carry', data.sessions).text, 'Average carry: SW 67.7 · PW 83.4 · 9i 100.7 · 7i 114.5 · 5hy 141.0 · 5w 137.0 yds. Mis-hits are left out.', 'carry callout');
+eq(C.sessionCallout('mishits', [nov36]).text, 'No thin or topped shots in 36 shots.', 'clean-session callout');
+eq([C.sessionCallout('mishits', [aug]), C.sessionCallout('launch', []), C.sessionCallout('nope', data.sessions)], [null, null, null], 'no callout without shot data');
+
+section('Players and tips content');
+const root = path.join(__dirname, '..');
+const players = JSON.parse(fs.readFileSync(path.join(root, 'data', 'players.json'), 'utf8')).players;
+eq(players.map((p) => [p.id, p.name, p.file]), [['dad', 'Dad', 'data/dad_golf_data.json'], ['brother', 'M3', 'data/brother_golf_data.json']], 'players.json');
+for (const p of players) {
+  const d = JSON.parse(fs.readFileSync(path.join(root, p.file), 'utf8'));
+  eq([d.player.name, Array.isArray(d.sessions)], [p.name, true], `${p.id}: data file name matches and has sessions`);
+}
+const bro = JSON.parse(fs.readFileSync(path.join(root, 'data', 'brother_golf_data.json'), 'utf8'));
+eq([bro.player.relationship, bro.player.level, bro.player.age, bro.player.height_in, bro.baseline_session_id, bro.sessions.length, Object.keys(bro.clubs).length],
+  ["Matthew's brother", 'beginner', 14, 60, null, 0, 0], 'brother file: empty, same schema');
+eq(Object.keys(bro), Object.keys(data), 'brother file has the same top-level keys as Dad’s');
+eq([data.player.age, data.player.height_in], [56, 73], 'Dad: age and height');
+eq([C.buildHighlights(bro.sessions, null), C.sessionCallout('carry', bro.sessions), C.progressFor(bro.sessions, 'PW', null).rows.length], [[], null, 0], 'no data: no highlights, callouts or progress rows');
+eq([C.resolvePlayer(players, 'brother', 'dad'), C.resolvePlayer(players, 'nobody', 'brother'), C.resolvePlayer(players, null, null), C.resolvePlayer([], 'x', 'y')],
+  ['brother', 'brother', 'dad', null], 'resolvePlayer: URL, then last used, then first');
+eq([C.fmtHeight(73), C.fmtHeight(60), C.fmtHeight(null)], ['6′1″', '5′0″', ''], 'fmtHeight');
+eq(C.youtubeSearchUrl('golf towel drill'), 'https://www.youtube.com/results?search_query=golf%20towel%20drill', 'YouTube search link');
+const TIPS = require('../js/tips.js');
+eq(TIPS.dad.focus.map((f) => f.id), ['contact', 'turn', 'hands', 'straight', 'fit', 'plan'], 'Dad focus areas');
+eq(TIPS.brother.focus.map((f) => f.id), ['clubs', 'basics', 'short', 'speed', 'games', 'plan'], 'M3 focus areas');
+for (const p of players) {
+  const t = TIPS[p.id];
+  ok(t && t.intro && /coach/i.test(t.lesson || ''), `${p.id}: intro and a coach line`);
+  ok(!/brother/i.test(JSON.stringify(t)), `${p.id}: tips don't say "brother" (names come from the data)`);
+  t.focus.forEach((f) => {
+    ok(f.title && f.why && f.drills.length >= 2 && f.drills.length <= 4, `${p.id}/${f.id}: title, why, 2–4 drills`);
+    ok(!f.callout || ['mishits', 'launch', 'miss', 'carry'].indexOf(f.callout) >= 0, `${p.id}/${f.id}: known callout`);
+    f.drills.forEach((d) => ok(d.name && d.reps && d.search && d.steps.length >= 2, `${p.id}/${f.id}/${d.name}: steps, reps, search`));
+  });
+}
 
 // ---------------------------------------------------------------------------
 section('Paste parser');

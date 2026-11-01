@@ -1,23 +1,14 @@
 #!/usr/bin/env node
-// Checks data/dad_golf_data.json before it's committed.
+// Checks the data files before they're committed.
 // Errors fail the check (exit code 1); warnings are printed for a human to look at.
-// Usage: node scripts/check-data.js [path/to/data.json]
+// Usage:
+//   node scripts/check-data.js                    checks data/players.json and every player file it lists
+//   node scripts/check-data.js path/to/data.json  checks one player file
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
-const file = process.argv[2] || path.join(__dirname, '..', 'data', 'dad_golf_data.json');
-const errors = [];
-const warnings = [];
-
-let data;
-try {
-  data = JSON.parse(fs.readFileSync(file, 'utf8'));
-} catch (e) {
-  console.error(`✗ ${file} is not valid JSON: ${e.message}`);
-  process.exit(1);
-}
-
+const ROOT = path.join(__dirname, '..');
 const CLUB_RE = /^(Driver|[2-9]w|[2-7]hy|[2-9]i|PW|GW|SW|LW|\d{2}°)$/;
 const CORE_KEYS = ['carry_yds', 'total_yds', 'ball_speed_mph', 'launch_deg', 'apex_ft', 'landing_deg', 'hang_time_s', 'curve_ft', 'offline_ft'];
 // Loose plausibility ranges: outside them is a warning (likely a misread), not an error.
@@ -27,65 +18,133 @@ const RANGES = {
   offline_ft: [-700, 700], club_speed_mph: [0, 160], smash_factor: [0, 1.8], spin_rpm: [0, 15000],
 };
 
-if (!Array.isArray(data.sessions)) errors.push('top level: "sessions" must be an array');
-const clubs = data.clubs || {};
-const sessionIds = new Set();
-const shotIds = new Set();
-
-(data.sessions || []).forEach((s, i) => {
-  const where = `session ${s.id || '#' + (i + 1)}`;
-  if (!s.id) errors.push(`${where}: missing id`);
-  else if (sessionIds.has(s.id)) errors.push(`${where}: duplicate session id`);
-  sessionIds.add(s.id);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s.date || '')) errors.push(`${where}: date must be YYYY-MM-DD`);
-  if (!s.device) warnings.push(`${where}: no device`);
-  if (!Array.isArray(s.shots)) {
-    errors.push(`${where}: "shots" must be an array (use [] for a summary-only session)`);
-    return;
+function readJSON(file, errors) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    errors.push(`not valid JSON, or can't be read: ${e.message}`);
+    return null;
   }
-
-  let prevTime = null;
-  s.shots.forEach((shot, j) => {
-    const w = `${where}, shot ${shot.id || '#' + (j + 1)}`;
-    if (!shot.id) errors.push(`${w}: missing id`);
-    else if (shotIds.has(shot.id)) errors.push(`${w}: duplicate shot id`);
-    shotIds.add(shot.id);
-
-    if (!CLUB_RE.test(shot.club || '')) errors.push(`${w}: club "${shot.club}" isn't a standard name (PW, SW, 9i, 5hy, 5w, Driver…)`);
-    else if (!clubs[shot.club]) warnings.push(`${w}: club ${shot.club} is missing from the top-level "clubs" map`);
-
-    if (shot.time != null) {
-      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(shot.time)) {
-        errors.push(`${w}: time "${shot.time}" must be 24-hour HH:MM`);
-      } else {
-        if (prevTime && shot.time < prevTime) errors.push(`${w}: ${shot.time} comes before the previous shot's ${prevTime}; keep shots in time order`);
-        prevTime = shot.time;
-      }
-    }
-
-    for (const k of CORE_KEYS) {
-      if (!(k in shot)) warnings.push(`${w}: missing key ${k} (use null when the screen doesn't show it)`);
-    }
-    for (const [k, [lo, hi]] of Object.entries(RANGES)) {
-      const v = shot[k];
-      if (v == null) continue;
-      if (typeof v !== 'number' || !Number.isFinite(v)) { errors.push(`${w}: ${k} must be a number or null`); continue; }
-      if (v < lo || v > hi) warnings.push(`${w}: ${k} = ${v} looks out of range; check the photo`);
-    }
-    if (shot.carry_yds == null) warnings.push(`${w}: no carry distance`);
-    if (typeof shot.carry_yds === 'number' && typeof shot.total_yds === 'number' && shot.total_yds < shot.carry_yds - 5) {
-      warnings.push(`${w}: total (${shot.total_yds}) is well short of carry (${shot.carry_yds}); check the photo`);
-    }
-  });
-});
-
-if (data.baseline_session_id && !sessionIds.has(data.baseline_session_id)) {
-  errors.push(`baseline_session_id "${data.baseline_session_id}" doesn't match any session`);
 }
 
-for (const w of warnings) console.log(`⚠ ${w}`);
-for (const e of errors) console.log(`✗ ${e}`);
-console.log(errors.length
-  ? `\n${errors.length} error(s) in ${file}`
-  : `✓ ${path.basename(file)}: ${sessionIds.size} sessions, ${shotIds.size} shots${warnings.length ? `, ${warnings.length} warning(s)` : ''}`);
-process.exit(errors.length ? 1 : 0);
+// Checks one player data file. Returns { errors, warnings, sessions, shots, name }.
+function checkPlayerFile(file) {
+  const errors = [];
+  const warnings = [];
+  const data = readJSON(file, errors);
+  if (!data) return { errors, warnings, sessions: 0, shots: 0 };
+
+  if (!data.player || typeof data.player !== 'object' || !data.player.name) errors.push('top level: "player" needs a "name"');
+  if (!Array.isArray(data.sessions)) errors.push('top level: "sessions" must be an array');
+  const clubs = data.clubs || {};
+  const sessionIds = new Set();
+  const shotIds = new Set();
+
+  (data.sessions || []).forEach((s, i) => {
+    const where = `session ${s.id || '#' + (i + 1)}`;
+    if (!s.id) errors.push(`${where}: missing id`);
+    else if (sessionIds.has(s.id)) errors.push(`${where}: duplicate session id`);
+    sessionIds.add(s.id);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s.date || '')) errors.push(`${where}: date must be YYYY-MM-DD`);
+    if (!s.device) warnings.push(`${where}: no device`);
+    if (!Array.isArray(s.shots)) {
+      errors.push(`${where}: "shots" must be an array (use [] for a summary-only session)`);
+      return;
+    }
+
+    let prevTime = null;
+    s.shots.forEach((shot, j) => {
+      const w = `${where}, shot ${shot.id || '#' + (j + 1)}`;
+      if (!shot.id) errors.push(`${w}: missing id`);
+      else if (shotIds.has(shot.id)) errors.push(`${w}: duplicate shot id`);
+      shotIds.add(shot.id);
+
+      if (!CLUB_RE.test(shot.club || '')) errors.push(`${w}: club "${shot.club}" isn't a standard name (PW, SW, 9i, 5hy, 5w, Driver…)`);
+      else if (!clubs[shot.club]) warnings.push(`${w}: club ${shot.club} is missing from the top-level "clubs" map`);
+
+      if (shot.time != null) {
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(shot.time)) {
+          errors.push(`${w}: time "${shot.time}" must be 24-hour HH:MM`);
+        } else {
+          if (prevTime && shot.time < prevTime) errors.push(`${w}: ${shot.time} comes before the previous shot's ${prevTime}; keep shots in time order`);
+          prevTime = shot.time;
+        }
+      }
+
+      for (const k of CORE_KEYS) {
+        if (!(k in shot)) warnings.push(`${w}: missing key ${k} (use null when the screen doesn't show it)`);
+      }
+      for (const [k, [lo, hi]] of Object.entries(RANGES)) {
+        const v = shot[k];
+        if (v == null) continue;
+        if (typeof v !== 'number' || !Number.isFinite(v)) { errors.push(`${w}: ${k} must be a number or null`); continue; }
+        if (v < lo || v > hi) warnings.push(`${w}: ${k} = ${v} looks out of range; check the photo`);
+      }
+      if (shot.carry_yds == null) warnings.push(`${w}: no carry distance`);
+      if (typeof shot.carry_yds === 'number' && typeof shot.total_yds === 'number' && shot.total_yds < shot.carry_yds - 5) {
+        warnings.push(`${w}: total (${shot.total_yds}) is well short of carry (${shot.carry_yds}); check the photo`);
+      }
+    });
+  });
+
+  if (data.baseline_session_id && !sessionIds.has(data.baseline_session_id)) {
+    errors.push(`baseline_session_id "${data.baseline_session_id}" doesn't match any session`);
+  }
+  return { errors, warnings, sessions: sessionIds.size, shots: shotIds.size, name: data.player && data.player.name };
+}
+
+// Checks data/players.json. Returns { errors, warnings, files: [{ id, name, file }] }.
+function checkRegistry(file) {
+  const errors = [];
+  const files = [];
+  const reg = readJSON(file, errors);
+  if (!reg) return { errors, warnings: [], files };
+  if (!Array.isArray(reg.players) || !reg.players.length) {
+    errors.push('"players" must be a non-empty array');
+    return { errors, warnings: [], files };
+  }
+  const ids = new Set();
+  reg.players.forEach((p, i) => {
+    const where = `player ${p && p.id ? p.id : '#' + (i + 1)}`;
+    if (!p || typeof p !== 'object') { errors.push(`${where}: must be an object`); return; }
+    if (!/^[a-z0-9-]+$/.test(p.id || '')) errors.push(`${where}: id must be lowercase letters, digits or dashes (it's used in ?player=)`);
+    else if (ids.has(p.id)) errors.push(`${where}: duplicate id`);
+    ids.add(p.id);
+    if (!p.name) errors.push(`${where}: missing name`);
+    if (!/^data\/[\w.-]+\.json$/.test(p.file || '')) errors.push(`${where}: file must look like data/<name>.json`);
+    else if (!fs.existsSync(path.join(ROOT, p.file))) errors.push(`${where}: ${p.file} doesn't exist`);
+    else files.push({ id: p.id, name: p.name, file: p.file });
+  });
+  return { errors, warnings: [], files };
+}
+
+function report(label, res) {
+  for (const w of res.warnings) console.log(`⚠ ${label}: ${w}`);
+  for (const e of res.errors) console.log(`✗ ${label}: ${e}`);
+}
+function summary(res) {
+  return `${res.sessions} sessions, ${res.shots} shots${res.warnings.length ? `, ${res.warnings.length} warning(s)` : ''}`;
+}
+
+let failed = 0;
+const arg = process.argv[2];
+if (arg) {
+  const res = checkPlayerFile(arg);
+  report(path.basename(arg), res);
+  failed += res.errors.length;
+  if (!res.errors.length) console.log(`✓ ${path.basename(arg)}: ${summary(res)}`);
+} else {
+  const reg = checkRegistry(path.join(ROOT, 'data', 'players.json'));
+  report('data/players.json', reg);
+  failed += reg.errors.length;
+  if (!reg.errors.length) console.log(`✓ data/players.json: ${reg.files.length} players`);
+  for (const p of reg.files) {
+    const res = checkPlayerFile(path.join(ROOT, p.file));
+    if (res.name && res.name !== p.name) res.warnings.push(`player.name "${res.name}" differs from the name in players.json ("${p.name}")`);
+    report(p.file, res);
+    failed += res.errors.length;
+    if (!res.errors.length) console.log(`✓ ${p.file} (${p.name}): ${summary(res)}`);
+  }
+}
+if (failed) console.log(`\n${failed} error(s)`);
+process.exit(failed ? 1 : 0);

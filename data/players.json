@@ -1,0 +1,14 @@
+{
+  "players": [
+    {
+      "id": "dad",
+      "name": "Dad",
+      "file": "data/dad_golf_data.json"
+    },
+    {
+      "id": "brother",
+      "name": "M3",
+      "file": "data/brother_golf_data.json"
+    }
+  ]
+}

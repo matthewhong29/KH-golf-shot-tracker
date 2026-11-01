@@ -2,6 +2,8 @@
   "player": {
     "name": "Dad",
     "relationship": "Matthew's father",
+    "age": 56,
+    "height_in": 73,
     "level": "beginner"
   },
   "units": {
