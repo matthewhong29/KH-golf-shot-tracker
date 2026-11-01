@@ -391,7 +391,8 @@
     const rows = P.rows.map((r) => ({ r, st: solidMode ? null : C.metricStat(r.entry, metricKey), p: solidMode ? C.solidPct(r.entry) : null }))
       .filter((x) => solidMode || x.st);
     if (!rows.length) { el.innerHTML = '<p class="empty">No data for this metric.</p>'; return; }
-    const W = chartWidth(el), rowH = 100, top = 2, axisH = 32, padL = 16, padR = 20;
+    // On very narrow charts (small phones, or zoomed-in text) the right-hand note gets its own line.
+    const W = chartWidth(el), narrow = W < 300, rowH = narrow ? 120 : 100, top = 2, axisH = 32, padL = 16, padR = 20;
     const H = top + rows.length * rowH + axisH;
     let t;
     if (solidMode) t = { lo: 0, hi: 100, ticks: [0, 25, 50, 75, 100] };
@@ -407,7 +408,7 @@
     t.ticks.forEach((v) => { g.push(line(m.dir && v === 0 ? 'axis' : 'grid', x(v), top, x(v), H - axisH)); g.push(text('tick', x(v), H - 10, fmtT(v), 'middle')); });
     rows.forEach((row, i) => {
       const s = row.r.session, e = row.r.entry, st = row.st;
-      const y0 = top + i * rowH, ty1 = y0 + 22, ty2 = y0 + 44, cy = y0 + 74;
+      const y0 = top + i * rowH, ty1 = y0 + 22, ty2 = y0 + 44, ty3 = narrow ? y0 + 66 : ty2, cy = narrow ? y0 + 94 : y0 + 74;
       const isBase = P.baseline && P.baseline.session.id === s.id;
       g.push(text('rowlbl', padL, ty1, C.fmtDate(s.date)));
       g.push(text('rowsub', padL, ty2, C.shortDevice(s.device) + (isBase ? ' · baseline' : '')));
@@ -429,7 +430,7 @@
         if (C.isNum(st.avg)) g.push(dotMark(x(st.avg), cy, 6, tipAttr([withUnit(m, st.avg) + ' average', `${C.fmtDate(s.date)} · ${plural(st.n, 'solid shot')}`]), false));
       }
       g.push(text('val', W - padR, ty1, value, 'end'));
-      g.push(text('sub', W - padR, ty2, sub, 'end'));
+      g.push(text('sub', W - padR, ty3, sub, 'end'));
     });
     el.innerHTML = svg(W, H, `${m.label} by session`, g.join(''));
   }

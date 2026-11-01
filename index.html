@@ -83,9 +83,9 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .btn.ghost:hover{background:var(--accent-soft)}
 .btn.small{font-size:1rem;padding:8px 14px;min-height:48px}
 .btn.danger{border-color:var(--warn);color:var(--warn);background:var(--bg)}
-.btn:disabled{opacity:.5;cursor:default}
+.btn:disabled,.btn.ghost:disabled,.btn.danger:disabled{opacity:1;cursor:default;background:#f2f3f4;border-color:#b9bec5;color:#5b616a}
 .back{background:none;border:0;color:var(--accent);font-weight:700;font-size:1.05rem;padding:10px 0;min-height:48px;cursor:pointer;margin-top:12px}
-.badge{display:inline-block;font-size:15px;font-weight:700;padding:3px 10px;border-radius:999px;border:1.5px solid var(--border-strong);color:var(--ink-2);background:var(--soft)}
+.badge{display:inline-block;font-size:16px;font-weight:700;padding:3px 10px;border-radius:999px;border:1.5px solid var(--border-strong);color:var(--ink-2);background:var(--soft)}
 .badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 ul.plain{list-style:none}
 ul.plain li{padding:8px 0;border-bottom:1px solid var(--grid)}
@@ -102,11 +102,11 @@ table{border-collapse:collapse;font-variant-numeric:tabular-nums}
 .matrix thead th{font-weight:700;font-size:1.05rem;border-bottom:2px solid var(--border-strong)}
 .matrix th:first-child{text-align:left;position:sticky;left:0;background:var(--surface);z-index:1;box-shadow:1px 0 0 var(--grid)}
 .matrix tbody th{font-weight:700}
-.matrix .u{display:block;font-size:15px;color:var(--muted);font-weight:400}
+.matrix .u{display:block;font-size:16px;color:var(--muted);font-weight:400}
 .matrix .v{display:block;font-weight:700;font-size:1.1rem}
 .matrix .r{display:block;font-size:16px;color:var(--ink-2)}
-.matrix .n{display:block;font-size:15px;color:var(--muted)}
-.matrix .chg{display:block;font-size:15px;color:var(--muted);white-space:normal}
+.matrix .n{display:block;font-size:16px;color:var(--muted)}
+.matrix .chg{display:block;font-size:16px;color:var(--muted);white-space:normal}
 .matrix tr:last-child th,.matrix tr:last-child td{border-bottom:0}
 .matrix.cmp{table-layout:fixed}
 .matrix.cmp th,.matrix.cmp td{white-space:normal;overflow-wrap:anywhere}
@@ -115,29 +115,29 @@ table{border-collapse:collapse;font-variant-numeric:tabular-nums}
 .preview th,.preview td{padding:8px;text-align:right;border-bottom:1px solid var(--grid);white-space:nowrap;vertical-align:top}
 .preview th{font-weight:700}
 .preview th:nth-child(-n+2),.preview td:nth-child(-n+2){text-align:left}
-.preview select{width:auto;min-height:48px;padding:4px 6px;font-size:15px}
-.preview .raw-h{display:block;font-size:15px;color:var(--muted);font-weight:400;margin-top:2px}
+.preview select{width:auto;min-height:48px;padding:4px 6px;font-size:16px}
+.preview .raw-h{display:block;font-size:16px;color:var(--muted);font-weight:400;margin-top:2px}
 .preview tr.off td{opacity:.5}
 .preview td.bad{color:var(--warn);font-weight:700}
 .preview td.warn{color:var(--warn);text-align:left;white-space:normal;min-width:12em}
 .preview input[type=checkbox]{width:26px;height:26px;min-height:0;accent-color:var(--accent)}
 .preview .flip{background:none;border:0;border-bottom:2px dashed var(--muted);padding:4px 0;min-height:44px;cursor:pointer;color:inherit;font:inherit;font-variant-numeric:tabular-nums}
-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85em;background:var(--soft);padding:1px 5px;border-radius:5px;overflow-wrap:anywhere}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;background:var(--soft);padding:1px 5px;border-radius:5px;overflow-wrap:anywhere}
 /* stat tiles */
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
 @media (min-width:640px){.tiles{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .tile{background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px 12px;min-width:0}
-.tile .k{font-size:15px;color:var(--muted);font-weight:700}
+.tile .k{font-size:16px;color:var(--muted);font-weight:700}
 .tile .v{font-size:1.4rem;font-weight:700;line-height:1.3}
 .tile .s{font-size:16px;color:var(--ink-2)}
 /* charts are drawn at their real pixel width, so these sizes are what you see */
 .chart{width:100%;min-width:0;margin-top:6px}
 .chart svg{display:block}
-.chart text{font-family:var(--font);font-size:14px;fill:var(--muted);font-variant-numeric:tabular-nums}
+.chart text{font-family:var(--font);font-size:15px;fill:var(--muted);font-variant-numeric:tabular-nums}
 .chart .rowlbl{fill:var(--ink);font-size:16px;font-weight:700}
-.chart .rowsub{fill:var(--muted);font-size:14px}
+.chart .rowsub{fill:var(--muted);font-size:15px}
 .chart .val{fill:var(--ink);font-size:16px;font-weight:700}
-.chart .sub{fill:var(--muted);font-size:14px;font-weight:400}
+.chart .sub{fill:var(--muted);font-size:15px;font-weight:400}
 .chart .grid{stroke:var(--grid);stroke-width:1;shape-rendering:crispEdges}
 .chart .axis{stroke:var(--axis);stroke-width:2}
 .chart .target{stroke:var(--ink-2);stroke-width:2}
