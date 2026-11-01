@@ -25,8 +25,8 @@ Shots can also be typed or pasted into the page itself (see [Pasting rows](#past
 The player buttons at the top (Dad | M3) switch everything below them. The four tabs are:
 
 - **Stats** for one session, or all sessions pooled:
-  - Highlights: shot count, solid-contact rate, thin or topped shots, average miss per club, and change since the baseline.
-  - Averages and ranges for every metric per club, plus each club's shot and mis-hit count.
+  - Highlights: a "Needs work" box listing clubs to practise (tap one to jump to it), then shot count, solid-contact rate, thin or topped shots, average miss per club, and change since the baseline.
+  - Club by club, one club at a time: its "Needs work" notes, **Goals** for the range (a focus, a carry zone, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
   - A carry gapping chart.
   - Dispersion: offline vs. carry. All clubs show as one panel each on the same scale, or pick one club.
   - Average miss by club.
@@ -124,6 +124,16 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
   - Sessions with ranges only, like the Aug 2026 Rapsodo one, can't be split this way. Their recorded ranges include any topped shots, and their solid-contact rate shows as unknown.
 - Averages are rounded half to even. An exact 147.25 shows as 147.2, matching the numbers checked from the Toptracer screen.
 - The dispersion plots convert offline from feet to yards, so both axes share one scale.
+- **Needs work** (a soft yellow highlight, always labelled) marks a club when any of these is true (`needsWork` in `js/core.js`):
+  - fewer than 80% of its shots were solid;
+  - its average solid shot finishes 10 yds or more left or right of the target, a third of a 30-yard fairway;
+  - its carry varies a lot: the standard deviation is over 15% of the average carry, with at least 4 solid shots.
+- **Goals** for each club come from the player's own shots, so they move as he improves (`clubGoals`):
+  - **Carry zone:** centred on the club's upper-quartile solid carry, which is what his better shots already do. The window is 25% tighter than his current spread, but never under ±5 yds for wedges, ±6 for irons or ±8 for hybrids, woods and driver. Met when 7 of 10 shots land in it.
+  - **On line:** met when 8 of 10 shots finish within 10 yds (30 ft) of the target line.
+  - **Launch:** the solid shots' average launch sits inside a ballpark window for the club at a modest swing speed (`LAUNCH_WINDOWS`, e.g. PW 26–30°, 7i 19–23°). These sit a few degrees above tour averages because slower swings launch higher; a coach can fine-tune them.
+  - **Solid contact:** met when 9 of 10 swings are solid.
+  - **Focus** names one thing to work on first: contact, then direction, then launch, then distance. Its "See drills" button opens the matching Tips section.
 
 ## Tests
 

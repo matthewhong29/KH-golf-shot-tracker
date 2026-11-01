@@ -269,6 +269,101 @@
   function solidPct(entry) { return entry && entry.shots && entry.shots.length ? 100 * entry.solid.length / entry.shots.length : null; }
   var SOLID_METRIC = { key: 'solid_pct', label: 'Solid contact', unit: '%', dec: 0 };
 
+  // "Needs work" flags for one club, from its solid shots. Three simple rules a
+  // beginner can act on:
+  //   contact:   fewer than 80% of the club's shots were solid
+  //   direction: the average shot finishes 10+ yds left or right of the target
+  //              (a third of a 30-yard fairway)
+  //   distance:  carry varies a lot: standard deviation over 15% of the average
+  //              carry, judged only with 4+ solid shots
+  // Each flag names the stat it belongs to (`key`) so the page can highlight it.
+  var NEEDS_WORK = { solidPct: 80, missYds: 10, carryCv: 0.15, minCvShots: 4 };
+  function needsWork(entry) {
+    var out = [];
+    if (!entry || !entry.shots || !entry.shots.length) return out;
+    var sp = solidPct(entry);
+    if (sp != null && sp < NEEDS_WORK.solidPct) {
+      out.push({ kind: 'contact', key: 'solid_pct', text: entry.mis.length + ' of ' + plural(entry.shots.length, 'shot') + ' were mis-hits' });
+    }
+    var off = summarize(entry.solid, 'offline_ft');
+    if (off.n && Math.abs(off.avg) / 3 >= NEEDS_WORK.missYds) {
+      out.push({ kind: 'direction', key: 'offline_ft', text: 'misses about ' + fmtNum(Math.abs(off.avg) / 3, 0) + ' yds ' + (off.avg < 0 ? 'left' : 'right') + ' on average' });
+    }
+    var car = summarize(entry.solid, 'carry_yds');
+    if (car.n >= NEEDS_WORK.minCvShots && car.avg > 0 && isNum(car.sd) && car.sd / car.avg > NEEDS_WORK.carryCv) {
+      out.push({ kind: 'distance', key: 'carry_yds', text: 'carry varies a lot, ' + fmtRaw(car.min) + ' to ' + fmtRaw(car.max) + ' yds' });
+    }
+    return out;
+  }
+
+  // Ballpark launch windows (degrees) for a modest swing speed. Slower swings
+  // launch a little higher than tour players, so these sit a few degrees above
+  // tour averages. They're targets to aim at, not hard rules.
+  var LAUNCH_WINDOWS = {
+    LW: [32, 36], SW: [30, 34], GW: [28, 32], PW: [26, 30],
+    '9i': [23, 27], '8i': [21, 25], '7i': [19, 23], '6i': [17, 21], '5i': [15, 19], '4i': [14, 18], '3i': [13, 17],
+    '6hy': [16, 20], '5hy': [15, 19], '4hy': [14, 18], '3hy': [13, 17],
+    '7w': [13, 17], '5w': [12, 16], '4w': [11, 15], '3w': [11, 15], Driver: [12, 16]
+  };
+  // Smallest carry window (± yds) worth aiming at for each kind of club.
+  function minCarryWindow(club) {
+    var c = String(club);
+    if (/^(LW|SW|GW|AW|PW|\d{2}°)$/.test(c)) return 5;
+    if (/^\d+i$/.test(c)) return 6;
+    return 8;
+  }
+  var GOALS = { inZone: 0.7, onLine: 0.8, lineFt: 30, solidPct: 90 };
+
+  // Range goals for one club, built from the player's own shots:
+  //   carry zone: centred on the club's upper-quartile solid carry (what his
+  //               better shots already do), ± a window 25% tighter than his
+  //               current spread (never tighter than minCarryWindow); met when
+  //               7 of 10 shots land in it
+  //   on line:    8 of 10 shots finish within 10 yds (30 ft) of the target line
+  //   launch:     average launch of solid shots inside LAUNCH_WINDOWS
+  //   contact:    9 of 10 swings solid
+  // `focus` picks the one thing to work on first: contact, then direction, then
+  // launch, then distance.
+  function clubGoals(entry, club) {
+    if (!entry || !entry.shots || !entry.shots.length) return null;
+    var goals = [], g = {};
+    function add(x) { goals.push(x); g[x.id] = x; }
+    var solidCarry = entry.solid.map(function (s) { return s.carry_yds; }).filter(isNum);
+    if (solidCarry.length) {
+      var center = roundHalfEven(quantile(solidCarry, 0.75), 0);
+      var half = minCarryWindow(club);
+      var car = summarize(entry.solid, 'carry_yds');
+      if (car.n >= NEEDS_WORK.minCvShots && isNum(car.sd)) half = Math.max(half, roundHalfEven(0.75 * car.sd, 0));
+      var withCarry = entry.shots.filter(function (s) { return isNum(s.carry_yds); });
+      var inZone = withCarry.filter(function (s) { return s.carry_yds >= center - half && s.carry_yds <= center + half; }).length;
+      add({ id: 'carry', label: 'Carry zone', lo: center - half, hi: center + half, center: center, n: inZone, of: withCarry.length,
+        met: inZone / withCarry.length >= GOALS.inZone });
+    }
+    var offShots = entry.shots.filter(function (s) { return isNum(s.offline_ft); });
+    if (offShots.length) {
+      var within = offShots.filter(function (s) { return Math.abs(s.offline_ft) <= GOALS.lineFt; }).length;
+      add({ id: 'line', label: 'On line', n: within, of: offShots.length, met: within / offShots.length >= GOALS.onLine });
+    }
+    var win = LAUNCH_WINDOWS[club], la = summarize(entry.solid, 'launch_deg');
+    if (win && la.n) {
+      var status = la.avg > win[1] ? 'high' : la.avg < win[0] ? 'low' : 'ok';
+      add({ id: 'launch', label: 'Launch', lo: win[0], hi: win[1], avg: la.avg, status: status, met: status === 'ok' });
+    }
+    add({ id: 'contact', label: 'Solid contact', n: entry.solid.length, of: entry.shots.length, met: solidPct(entry) >= GOALS.solidPct });
+
+    var flags = needsWork(entry);
+    var focus;
+    if (!g.contact.met) focus = { kind: 'contact', text: 'Solid contact first: hit the ball, then the ground.' };
+    else if (g.line && !g.line.met && (g.line.n / g.line.of < 0.5 || flags.some(function (f) { return f.kind === 'direction'; }))) {
+      focus = { kind: 'direction', text: 'Start it on line: check your aim and grip before every shot.' };
+    } else if (g.launch && g.launch.status === 'high') focus = { kind: 'launch', text: 'Lower launch: keep your hands ahead of the ball at impact.' };
+    else if (g.launch && g.launch.status === 'low') focus = { kind: 'launch', text: 'A little more height: let the club’s loft do the work.' };
+    else if (g.carry && !g.carry.met) focus = { kind: 'distance', text: 'Same distance every time: pick one target and land it in your carry zone.' };
+    else if (g.line && !g.line.met) focus = { kind: 'direction', text: 'Start it on line: check your aim and grip before every shot.' };
+    else focus = { kind: null, text: 'Keep it going: every goal here is on target.' };
+    return { focus: focus, goals: goals };
+  }
+
   // Summary of a metric over the club's solid shots ("n of N" counts solid
   // shots); { allMis: true } when every shot was a mis-hit; the recorded range
   // for summary-only sessions; else null.
@@ -362,6 +457,14 @@
         }
         if (bad.length) text += ' Mis-hits are left out.';
         out.push({ id: 'miss', text: text });
+      }
+
+      var work = shotClubs.map(function (c) { return { club: c, flags: needsWork(data[c]) }; })
+        .filter(function (w) { return w.flags.length; });
+      if (work.length) {
+        out.push({ id: 'work', clubs: work, text: 'Needs work: ' + work.map(function (w) {
+          return w.club + ' (' + w.flags.map(function (f) { return f.text; }).join('; ') + ')';
+        }).join(', ') + '.' });
       }
     } else if (clubs.length) {
       out.push({ id: 'count', text: 'Ranges only; individual shots weren’t recorded.' });
@@ -908,6 +1011,7 @@
     sessionShots: sessionShots, hasSummary: hasSummary, isSummaryOnly: isSummaryOnly, compareSessions: compareSessions,
     asList: asList, clubData: clubData, entryHasData: entryHasData, metricStat: metricStat, mishits: mishits,
     sessionMishits: sessionMishits, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
+    needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf

@@ -137,6 +137,7 @@ eq(hlNov, [
   'Solid contact: 45 of 48 shots (94%).',
   '3 likely thin or topped shots, all with the 5w (launch as low as 2°, carry as short as 21 yds).',
   'Average miss: SW 3.2 R · PW 0.6 L · 9i 2.4 R · 7i 4.6 R · 5hy 28.3 R · 5w 16.2 R yds. Mis-hits are left out.',
+  'Needs work: SW (carry varies a lot, 54 to 88 yds), 5hy (misses about 28 yds right on average), 5w (3 of 5 shots were mis-hits; misses about 16 yds right on average).',
   'Since Aug 9, 2026 (baseline): PW shortest carry 9 → 69 yds, lowest launch 1.7° → 26°.',
 ], 'Nov 1 highlights');
 // The first 36 shots alone (the brief's original data) still give the clean-contact line and the rightward trend.
@@ -165,8 +166,32 @@ eq(C.buildHighlights([allMis], null).map((h) => h.text), [
   '3 shots with 2 clubs (PW, 7i).',
   'Solid contact: 1 of 3 shots (33%).',
   '2 likely thin or topped shots, all with the 7i (launch as low as 4°, carry as short as 60 yds).',
+  'Needs work: 7i (2 of 2 shots were mis-hits).',
 ], 'highlights with an all-mis club');
 eq(C.progressFor([allMis], '7i', null).rows.length, 1, 'progress still lists an all-mis club');
+
+section('Needs work and per-club goals');
+const novE = C.clubData([nov]);
+eq(C.sortClubs(Object.keys(novE)).map((c) => [c, C.needsWork(novE[c]).map((f) => f.kind)]),
+  [['SW', ['distance']], ['PW', []], ['9i', []], ['7i', []], ['5hy', ['direction']], ['5w', ['contact', 'direction']]], 'needs-work flags on Nov 1');
+eq(C.needsWork(novE['5hy'])[0].text, 'misses about 28 yds right on average', '5hy direction text');
+eq(C.needsWork(novE['5w']).map((f) => f.key), ['solid_pct', 'offline_ft'], '5w flags point at solid contact and offline');
+eq(C.needsWork(novE.SW)[0].key, 'carry_yds', 'SW flag points at carry');
+eq(C.needsWork(null), [], 'no entry, no flags');
+const goalsOf = (c) => {
+  const G = C.clubGoals(novE[c], c), o = {};
+  G.goals.forEach((g) => { o[g.id] = g.id === 'carry' ? [g.lo, g.hi, g.n, g.of, g.met] : g.id === 'launch' ? [g.lo, g.hi, g.status] : [g.n, g.of, g.met]; });
+  return [G.focus.kind, o];
+};
+eq(goalsOf('PW'), ['launch', { carry: [81, 93, 6, 9, false], line: [6, 9, false], launch: [26, 30, 'high'], contact: [9, 9, true] }], 'PW goals: focus on launch');
+eq(goalsOf('5hy'), ['direction', { carry: [137, 153, 3, 4, true], line: [1, 4, false], launch: [15, 19, 'high'], contact: [4, 4, true] }], '5hy goals: focus on direction');
+eq(goalsOf('5w'), ['contact', { carry: [130, 146, 2, 5, false], line: [1, 5, false], launch: [12, 16, 'low'], contact: [2, 5, false] }], '5w goals: focus on contact');
+eq(goalsOf('SW'), ['launch', { carry: [66, 84, 2, 7, false], line: [6, 7, true], launch: [30, 34, 'high'], contact: [7, 7, true] }], 'SW goals');
+eq(goalsOf('9i')[0], 'direction', '9i focus: direction (7 of 15 within 10 yds)');
+eq(C.clubGoals(null, 'PW'), null, 'no shots, no goals');
+const w56 = { club: '56°', shots: [{ club: '56°', carry_yds: 60, launch_deg: 33 }], mis: [], ranges: {} };
+w56.solid = w56.shots;
+eq(C.clubGoals(w56, '56°').goals.map((g) => g.id), ['carry', 'contact'], 'no launch window or offline data: carry and contact goals only');
 
 section('Progress');
 const pPW = C.progressFor(data.sessions, 'PW', data.baseline_session_id);

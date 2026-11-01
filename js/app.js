@@ -41,7 +41,7 @@
 
   function freshUI() {
     return {
-      tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds',
+      tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
       sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
       entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
       imp: { text: '', parsed: null, columns: null, sig: '', include: {}, flips: {}, defaultClub: '', lateralUnit: 'ft', apexUnit: 'ft' }
@@ -352,13 +352,17 @@
   }
 
   // Average miss by club: bars grow left or right from the target line; values in a column.
-  function drawMiss(el, rows) {
-    const W = chartWidth(el), rowH = 54, top = 4, axisH = 32, padL = 62, padR = 88;
+  // Clubs in `flagged` (average miss 10+ yds) sit on a soft "needs work" band.
+  function drawMiss(el, rows, flagged) {
+    flagged = flagged || new Set();
+    const anyFlag = rows.some((r) => flagged.has(r.club));
+    const W = chartWidth(el), rowH = anyFlag ? 66 : 54, top = 4, axisH = 32, padL = 62, padR = 88;
     const H = top + rows.length * rowH + axisH;
     const vals = rows.map((r) => r.st.avg / 3);
     const D = Math.max(5, ...vals.map(Math.abs)) * 1.08;
     const x = lin(-D, D, padL, W - padR), cx = x(0);
     const g = [];
+    rows.forEach((r, i) => { if (flagged.has(r.club)) g.push(`<rect class="nwband" x="1" y="${f1(top + i * rowH + 3)}" width="${f1(W - 2)}" height="${rowH - 6}" rx="10"/>`); });
     const t = ticksFor(-D, D, W < 420 ? 3 : 5);
     t.ticks.filter((v) => Math.abs(v) <= D + 1e-6 && v !== 0).forEach((v) => {
       g.push(line('grid', x(v), top, x(v), H - axisH));
@@ -379,7 +383,12 @@
         `Range ${C.fmtRange(r.st.min, r.st.max, true)} ft`, nm ? `Leaves out ${plural(nm, 'mis-hit')}` : '']);
       g.push(text('rowlbl', padL - 12, cy + 6, r.club, 'end'));
       g.push(`<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}">${path ? `<path class="bar" d="${path}"/>` : ''}<rect class="hit" x="${f1(Math.min(cx, x1) - 6)}" y="${f1(cy - 15)}" width="${f1(w + 12)}" height="30"/></g>`);
-      g.push(text('val', W - 6, cy + 6, C.fmtDir(v, 1), 'end'));
+      if (flagged.has(r.club)) {
+        g.push(text('val', W - 10, cy - 2, C.fmtDir(v, 1), 'end'));
+        g.push(text('nwtext', W - 10, cy + 19, 'needs work', 'end'));
+      } else {
+        g.push(text('val', W - 6, cy + 6, C.fmtDir(v, 1), 'end'));
+      }
     });
     el.innerHTML = svg(W, H, 'Average miss by club, in yards left or right of the target line', g.join(''));
   }
@@ -523,6 +532,99 @@
     return `${swipe}<div class="table-wrap"><table class="matrix">${head}<tbody>${rows.join('')}</tbody></table></div>
       <p class="hint">Each cell shows the average, then lowest–highest. ${anyMis ? 'Averages and ranges leave out likely mis-hits (the hollow dots on the charts). ' : ''}“3 of 9” means only some ${anyMis ? 'solid ' : ''}shots had that number. Curve and offline are in feet; L = left, R = right.${missing.length ? ' Not measured: ' + esc(missing.join(', ')) + '.' : ''}</p>`;
   }
+  // ----- One club at a time: goals, "needs work" and plain-language numbers -----
+  const PLAIN = {
+    solid_pct: ['Solid contact', 'Shots without a thin or topped miss'],
+    carry_yds: ['Carry', 'How far it flies in the air'],
+    total_yds: ['Total', 'Carry plus roll'],
+    ball_speed_mph: ['Ball speed', 'How fast the ball leaves the club'],
+    launch_deg: ['Launch', 'How steeply it starts climbing'],
+    apex_ft: ['Peak height', 'Highest point of the flight'],
+    landing_deg: ['Landing angle', 'How steeply it comes down'],
+    hang_time_s: ['Hang time', 'Seconds in the air'],
+    curve_ft: ['Curve', 'How much it bends in the air'],
+    offline_ft: ['Offline', 'Where it finishes, left or right of the target'],
+    club_speed_mph: ['Club speed', 'How fast the club head is moving'],
+    smash_factor: ['Smash factor', 'Ball speed ÷ club speed; higher means better contact'],
+    spin_rpm: ['Spin', 'Backspin, in revolutions per minute']
+  };
+  // The Tips section that helps with each kind of focus (first one the player has).
+  const TIP_FOR = { contact: ['contact', 'basics'], direction: ['straight', 'basics'], launch: ['hands', 'basics'], distance: ['plan', 'speed'] };
+  function tipIdFor(kind) {
+    const t = TIPS[playerId];
+    if (!t || !kind) return null;
+    return (TIP_FOR[kind] || []).find((id) => t.focus.some((f) => f.id === id)) || null;
+  }
+  const NW_PILL = '<span class="nw-pill">Needs work</span>';
+  function yds(n) { return n === '1' ? n + ' yd' : n + ' yds'; }
+  function goalRow(g) {
+    let target, now;
+    if (g.id === 'carry') { target = `${g.lo}–${g.hi} yds`; now = `${g.n} of ${plural(g.of, 'shot')} landed in it`; }
+    else if (g.id === 'line') { target = 'Within 10 yds of your target'; now = `${g.n} of ${plural(g.of, 'shot')} (goal: 8 of 10)`; }
+    else if (g.id === 'launch') { target = `${g.lo}–${g.hi}°`; now = `${C.fmtNum(g.avg, 1)}° average${g.status === 'high' ? ', a bit high' : g.status === 'low' ? ', a bit low' : ''}`; }
+    else { target = '9 of 10 swings'; now = `${g.n} of ${g.of} solid`; }
+    const note = g.id === 'carry' ? `<span class="g-note">Your better shots already fly about ${g.center} yds.</span>` : '';
+    return `<li class="goal${g.met ? ' met' : ''}"><div class="g-main"><span class="g-label">${esc(g.label)}</span><span class="g-target">${esc(target)}</span>${note}</div>
+      <div class="g-now"><span class="g-state">${g.met ? '✓ On target' : 'Keep working'}</span><span>${esc(now)}</span></div></li>`;
+  }
+  function statRow(label, desc, value, sub, flagged) {
+    return `<div class="stat-row${flagged ? ' work' : ''}"><dt><span class="sl">${esc(label)}</span><span class="sd">${esc(desc)}</span>${flagged ? NW_PILL : ''}</dt>
+      <dd><span class="sv">${esc(value)}</span>${sub ? `<span class="sr">${esc(sub)}</span>` : ''}</dd></div>`;
+  }
+  function clubCard(entries, club, scopeAll) {
+    const e = entries[club];
+    const flags = C.needsWork(e);
+    const flagKeys = new Set(flags.map((f) => f.key));
+    const G = C.clubGoals(e, club);
+    const shotsLine = !e.shots.length ? 'Ranges only; individual shots weren’t recorded.'
+      : e.mis.length ? `${plural(e.shots.length, 'shot')}: ${e.solid.length} solid, ${plural(e.mis.length, 'likely mis-hit')} (left out of the numbers)`
+        : `${plural(e.shots.length, 'shot')}, all solid`;
+    const rows = [];
+    if (e.shots.length) {
+      rows.push(statRow(PLAIN.solid_pct[0], PLAIN.solid_pct[1], C.roundHalfEven(C.solidPct(e), 0) + '%',
+        `${e.solid.length} of ${plural(e.shots.length, 'shot')}`, flagKeys.has('solid_pct')));
+    }
+    C.METRICS.forEach((m) => {
+      const s = C.metricStat(e, m.key);
+      if (!s) return;
+      const [label, desc] = PLAIN[m.key] || [m.label, ''];
+      let value, sub;
+      if (s.allMis) { value = '—'; sub = `all ${s.total} were mis-hits`; }
+      else {
+        value = C.isNum(s.avg) ? withUnit(m, s.avg) : '—';
+        const unit = m.dir ? ' ft' : m.unit === '°' ? '°' : m.unit ? ' ' + m.unit : '';
+        const range = C.isNum(s.min) && C.isNum(s.max) ? (s.summaryOnly ? 'recorded range ' : 'range ') + C.fmtRange(s.min, s.max, m.dir) + unit : '';
+        const asYds = m.key === 'offline_ft' && C.isNum(s.avg) && Math.abs(s.avg) >= 1.5 ? `about ${yds(C.fmtNum(Math.abs(s.avg) / 3, 0))} ${s.avg < 0 ? 'left' : 'right'}` : '';
+        const part = s.n && s.n < s.of ? `${s.n} of ${s.of} shots` : '';
+        sub = [asYds, range, part].filter(Boolean).join(' · ');
+      }
+      rows.push(statRow(label, desc, value, sub, flagKeys.has(m.key)));
+    });
+    const tip = G ? tipIdFor(G.focus.kind) : null;
+    const goals = G ? `<div class="goals">
+        <h4 class="goals-title">Goals for your ${esc(club)}</h4>
+        <div class="focus-line"><span class="fl-label">Focus</span><span class="fl-text">${esc(G.focus.text)}</span>
+          ${tip ? `<button class="btn ghost small" data-action="goto-tip" data-tip="${esc(tip)}">See drills →</button>` : ''}</div>
+        <ul class="goal-list">${G.goals.map(goalRow).join('')}</ul>
+        <p class="hint">Goals come from ${scopeAll ? 'all of your sessions' : 'your shots in this session'} and move as you improve. Launch windows are ballpark targets for your swing speed.</p>
+      </div>` : '';
+    return `<div class="club-card">
+      <div class="cc-head"><span class="cc-name">${esc(club)}</span><span class="cc-full">${esc(C.clubName(club, data.clubs))}</span></div>
+      <p class="cc-shots">${esc(shotsLine)}</p>
+      ${flags.length ? `<div class="work-box">${NW_PILL}<ul>${flags.map((f) => `<li>${esc(cap(f.text))}.</li>`).join('')}</ul></div>` : ''}
+      ${goals}
+      <h4 class="cc-sub">The numbers</h4>
+      <dl class="stat-list">${rows.join('')}</dl>
+      <p class="hint">Averages and ranges leave out likely mis-hits. Curve and offline are in feet; L = left, R = right.</p>
+    </div>`;
+  }
+  function workBox(work) {
+    if (!work) return '';
+    return `<div class="work-box">${NW_PILL}<div class="work-list">${work.clubs.map((w) =>
+      `<button class="work-row" data-action="focus-club" data-club="${esc(w.club)}"><span class="wr-club">${esc(w.club)}</span><span class="wr-text">${esc(w.flags.map((f) => cap(f.text)).join('. '))}.</span><span class="wr-go" aria-hidden="true">›</span></button>`).join('')}</div>
+      <p class="wr-hint">Tap a club to see its goals.</p></div>`;
+  }
+
   function renderStats() {
     const el = $('#view-stats');
     if (!data.sessions.length) { el.innerHTML = emptyState(); return; }
@@ -536,6 +638,15 @@
     const missRows = clubs.map((c) => ({ club: c, e: entries[c], st: C.summarize(entries[c].solid, 'offline_ft') })).filter((r) => r.st.n);
     const notes = sc.session ? C.asList(sc.session.coaching_notes) : [];
     const hasMis = clubs.some((c) => entries[c].mis.length);
+    const flagsBy = {};
+    clubs.forEach((c) => { flagsBy[c] = C.needsWork(entries[c]); });
+    if (!ui.statClub || clubs.indexOf(ui.statClub) < 0) ui.statClub = clubs[0];
+    const dirFlagged = new Set(clubs.filter((c) => flagsBy[c].some((f) => f.kind === 'direction')));
+    const work = hl.find((h) => h.id === 'work');
+    const clubChips = clubs.map((c) => {
+      const nw = flagsBy[c].length;
+      return `<button class="chip${nw ? ' nw' : ''}" data-action="stat-club" data-club="${esc(c)}" aria-pressed="${c === ui.statClub}"${nw ? ` aria-label="${esc(c)}, needs work"` : ''}>${esc(c)}${nw ? '<span class="nw-dot" aria-hidden="true"></span>' : ''}</button>`;
+    }).join('');
 
     let disp = '';
     if (dispClubs.length) {
@@ -566,21 +677,26 @@
     el.innerHTML = `
       <div class="filters"><label for="scope">Session</label><select id="scope" data-change="scope">${scopeOptions(sc.id)}</select></div>
       ${sc.id === 'all' && data.sessions.some((s) => C.isSummaryOnly(s)) ? '<p class="note" style="margin-bottom:14px">“All sessions” pools sessions with individual shots. Sessions with ranges only are left out; pick one in the menu to see its ranges.</p>' : ''}
-      <div class="card"><h3 class="card-title">Highlights</h3><ul class="hl">${hl.map((h) => `<li>${esc(h.text)}</li>`).join('')}</ul></div>
-      <h2>Averages and ranges</h2>
-      <div class="card">${matrixTable(entries, clubs)}</div>
+      <div class="card"><h3 class="card-title">Highlights</h3>${workBox(work)}<ul class="hl">${hl.filter((h) => h.id !== 'work').map((h) => `<li>${esc(h.text)}</li>`).join('')}</ul></div>
+      ${clubs.length ? `<h2 id="clubSection">Club by club</h2>
+      <div class="card">
+        <div class="chips" role="group" aria-label="Club">${clubChips}</div>
+        ${clubs.some((c) => flagsBy[c].length) ? '<p class="nw-key"><span class="nw-dot" aria-hidden="true"></span> marks a club that needs work</p>' : ''}
+        ${clubCard(entries, ui.statClub, sc.id === 'all')}
+        <details class="more"><summary>Compare all clubs in one table</summary>${matrixTable(entries, clubs)}</details>
+      </div>` : ''}
       <h2>Carry gapping</h2>
       <div class="card"><div class="chart" id="gapChart"></div>
         <p class="hint">Carry in yards. Bar: shortest to longest solid shot. Black line and number: average of solid shots. Dots: every shot${hasMis ? ' (hollow = likely mis-hit, left out of the numbers)' : ''}. “Gap” is the change from the next-shorter club.</p></div>
       ${disp}
-      ${missRows.length >= 2 ? `<h2>Average miss by club</h2><div class="card"><div class="chart" id="missChart"></div><p class="hint">Average offline of solid shots, in yards. Bars to the right are misses right of the target line.</p></div>` : ''}
+      ${missRows.length >= 2 ? `<h2>Average miss by club</h2><div class="card"><div class="chart" id="missChart"></div><p class="hint">Average offline of solid shots, in yards. Bars to the right are misses right of the target line.${missRows.some((r) => dirFlagged.has(r.club)) ? ` Clubs marked “needs work” average ${C.NEEDS_WORK.missYds} yds or more off line.` : ''}</p></div>` : ''}
       ${sc.session ? `<h2>Coaching notes</h2><div class="card">${notes.length ? `<ul class="plain">${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '<p class="empty">No coaching notes for this session.</p>'}
         <div class="row-actions"><button class="btn small ghost" data-action="goto-notes" data-id="${esc(sc.session.id)}">${notes.length ? 'Edit notes' : 'Add notes'}</button></div></div>` : ''}
     `;
     drawGap($('#gapChart'), entries, clubs);
     if ($('#dispChart')) drawDispersion($('#dispChart'), entries[single], single);
     if ($('#facets')) drawFacets($('#facets'), entries, dispClubs);
-    if ($('#missChart')) drawMiss($('#missChart'), missRows);
+    if ($('#missChart')) drawMiss($('#missChart'), missRows, dirFlagged);
   }
   function shotTable(shots, misSet) {
     const rows = C.sortClubs(Array.from(new Set(shots.map((s) => s.club)))).map((c) => shots.filter((s) => s.club === c))
@@ -675,7 +791,8 @@
         <p class="reps"><strong>Reps:</strong> ${esc(fillText(d.reps))}</p>
         <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(d.search))}" target="_blank" rel="noopener">Look it up on YouTube <span aria-hidden="true">↗</span></a>
       </div>`).join('');
-    return `<details class="card focus" data-focus="${esc(f.id)}"${i === 0 ? ' open' : ''}>
+    const open = ui.openTip ? f.id === ui.openTip : i === 0;
+    return `<details class="card focus" data-focus="${esc(f.id)}"${open ? ' open' : ''}>
       <summary><span class="fnum" aria-hidden="true">${i + 1}</span><span>${esc(fillText(f.title))}</span></summary>
       <div class="focus-body">
         <p class="why"><strong>Why it matters:</strong> ${esc(fillText(f.why))}</p>
@@ -1095,9 +1212,19 @@
   // Events
   // ---------------------------------------------------------------------------
   const actions = {
-    tab(b) { ui.tab = b.dataset.tab; hideTip(); render(); window.scrollTo(0, 0); },
+    tab(b) { ui.tab = b.dataset.tab; ui.openTip = null; hideTip(); render(); window.scrollTo(0, 0); },
     player(b) { if (b.dataset.id !== playerId) switchPlayer(b.dataset.id); },
     'disp-club'(b) { ui.dispClub = b.dataset.club; renderStats(); },
+    'stat-club'(b) { ui.statClub = b.dataset.club; renderStats(); },
+    'focus-club'(b) {
+      ui.statClub = b.dataset.club; renderStats();
+      const sec = $('#clubSection'); if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+    'goto-tip'(b) {
+      ui.tab = 'tips'; ui.openTip = b.dataset.tip; hideTip(); render();
+      const d = $(`details[data-focus="${b.dataset.tip}"]`);
+      if (d) d.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
+    },
     'prog-club'(b) { ui.progClub = b.dataset.club; renderProgress(); },
     'goto-notes'(b) { Object.assign(ui, { tab: 'sessions', sessionsView: 'list', sessionId: b.dataset.id, editNotes: true, addMode: null }); render(); window.scrollTo(0, 0); },
     'open-data'() { ui.sessionsView = 'data'; ui.sessionId = null; renderSessions(); window.scrollTo(0, 0); },
