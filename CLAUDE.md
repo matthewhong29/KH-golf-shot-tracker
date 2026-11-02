@@ -33,7 +33,7 @@ Dad or M3 takes photos of the Toptracer or Rapsodo screen and texts them to Matt
 3. **Write the shots in time order.** Screens list the newest shot first, so reverse them. In an existing session, ids continue its sequence (e.g. `2026-11-01-049` after `2026-11-01-048`). A new session numbers its shots `{session id}-001`, `-002`, … (e.g. `2026-11-15-toptracer-001`), the same as the page does, so two sessions on one day never share an id. Use the same keys as the existing shots: `id, time, club, carry_yds, total_yds, ball_speed_mph, launch_deg, apex_ft, landing_deg, hang_time_s, curve_ft, offline_ft`. Add `club_speed_mph`, `spin_rpm` or `smash_factor` only when the device shows them. Add any new club to that player's top-level `clubs` map. If the photo cuts off rows, add a line to the session's `notes`.
 4. **Check before committing.** Re-read your rows against the photo one more time. Then `node scripts/check-data.js` (it checks every player's file) and `node tests/core.test.js` must both pass.
 5. **Commit and push to `main`.** Matthew, the repo owner, approved pushing data updates straight to `main`, because that branch is what the website serves. If your session requires a different branch, ask once whether to push to `main`. Use a commit message like "Add 12 shots for Dad from 2026-11-01 (SW, 5w)". The site updates about a minute after the push.
-6. **End with a short summary Matthew can forward:** shots per club, average carry per club (solid shots), how many likely mis-hits there were, which clubs the page now marks "Needs work" (and any that dropped off the list), and anything notable, such as misses to one side or a club that went farther than last time. Use plain words, short and encouraging. Dad is a beginner; for M3, keep it fun.
+6. **End with a short summary Matthew can forward:** shots per club, average carry per club (solid shots), each club's new pure-strike carry from the Practice tab's "Your yardages", how many likely mis-hits there were, which clubs the page now marks "Needs work" (and any that dropped off the list), and anything notable, such as misses to one side or a club that went farther than last time. Use plain words, short and encouraging. Dad is a beginner; for M3, keep it fun.
 
 ## Adding or updating goals
 
@@ -48,6 +48,6 @@ Don't change `coaching_notes` or the tips in `js/tips.js` unless asked. Don't co
 
 ## Code
 
-- `index.html`: markup and styles. `js/app.js`: the UI. `js/core.js`: stats, mis-hit rule, rounding and the paste parser; the node tests load it too. `js/tips.js`: the Tips & drills content for each player.
+- `index.html`: markup and styles. `js/app.js`: the UI. `js/core.js`: stats, mis-hit rule, rounding and the paste parser; the node tests load it too. `js/tips.js`: the Tips & drills content for each player, shown under the Practice tab (the tab's internal id is still `tips`).
 - Tests: `node tests/core.test.js`. Data check: `node scripts/check-data.js`.
 - Preview: run `python3 -m http.server 8000` in the repo root and open http://localhost:8000 (add `?player=brother` for M3).

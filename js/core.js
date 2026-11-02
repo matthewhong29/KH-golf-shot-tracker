@@ -345,6 +345,41 @@
     '6hy': [16, 20], '5hy': [15, 19], '4hy': [14, 18], '3hy': [13, 17],
     '7w': [13, 17], '5w': [12, 16], '4w': [11, 15], '3w': [11, 15], Driver: [12, 16]
   };
+  // ----- Pure strikes: what a well-struck shot does for this player -----
+  // His best-struck shots with a club: solid shots that weren't launched more
+  // than 4° below the club's launch window (those are usually thin), then the top
+  // quarter by ball speed, ties included and at least 2 shots. Ball speed is the
+  // best sign of a centred strike that Toptracer shows. Without ball speed the
+  // top quarter by carry is used instead.
+  function topQuarter(pool, key) {
+    var sorted = pool.slice().sort(function (a, b) { return b[key] - a[key]; });
+    var k = Math.max(Math.min(2, sorted.length), Math.ceil(sorted.length / 4));
+    var cut = sorted[k - 1][key];
+    return sorted.filter(function (s) { return s[key] >= cut; });
+  }
+  function bestStrikes(entry, club) {
+    if (!entry || !entry.solid) return { shots: [], by: null };
+    var win = LAUNCH_WINDOWS[club], floor = win ? win[0] - 4 : -Infinity;
+    var normal = entry.solid.filter(function (s) { return isNum(s.carry_yds) && !(isNum(s.launch_deg) && s.launch_deg < floor); });
+    var withSpeed = normal.filter(function (s) { return isNum(s.ball_speed_mph); });
+    if (withSpeed.length) return { shots: topQuarter(withSpeed, 'ball_speed_mph'), by: 'ball_speed_mph' };
+    if (normal.length) return { shots: topQuarter(normal, 'carry_yds'), by: 'carry_yds' };
+    return { shots: [], by: null };
+  }
+  var REF_KEYS = ['carry_yds', 'total_yds', 'ball_speed_mph', 'launch_deg', 'apex_ft', 'landing_deg'];
+  // Reference numbers for a pure strike with this club: averages and ranges of
+  // the best strikes, plus the pure-strike carry rounded to a yard.
+  function strikeReference(entry, club) {
+    var b = bestStrikes(entry, club);
+    if (!b.shots.length) return null;
+    var m = {};
+    REF_KEYS.forEach(function (k) {
+      var s = summarize(b.shots, k);
+      if (s.n) m[k] = { avg: s.avg, min: s.min, max: s.max, n: s.n };
+    });
+    return { club: club, n: b.shots.length, solid: entry.solid.length, by: b.by, carry: roundHalfEven(m.carry_yds.avg, 0), metrics: m };
+  }
+
   // Smallest carry window (± yds) worth aiming at for each kind of club.
   function minCarryWindow(club) {
     var c = String(club);
@@ -355,10 +390,10 @@
   var GOALS = { inZone: 0.7, onLine: 0.8, lineFt: 30, solidPct: 90 };
 
   // Range goals for one club, built from the player's own shots:
-  //   carry zone: centred on the club's upper-quartile solid carry (what his
-  //               better shots already do), ± a window 25% tighter than his
-  //               current spread (never tighter than minCarryWindow); met when
-  //               7 of 10 shots land in it
+  //   distance:   a carry zone centred on the club's pure-strike carry (see
+  //               strikeReference), ± a window 25% tighter than his current
+  //               spread (never tighter than minCarryWindow); met when 7 of 10
+  //               shots land in it
   //   on line:    8 of 10 shots finish within 10 yds (30 ft) of the target line
   //   launch:     average launch of solid shots inside LAUNCH_WINDOWS
   //   contact:    9 of 10 swings solid
@@ -368,15 +403,17 @@
     if (!entry || !entry.shots || !entry.shots.length) return null;
     var goals = [], g = {};
     function add(x) { goals.push(x); g[x.id] = x; }
+    var ref = strikeReference(entry, club);
     var solidCarry = entry.solid.map(function (s) { return s.carry_yds; }).filter(isNum);
     if (solidCarry.length) {
-      var center = roundHalfEven(quantile(solidCarry, 0.75), 0);
+      // Centred on the pure-strike carry (falls back to the upper-quartile carry).
+      var center = ref ? ref.carry : roundHalfEven(quantile(solidCarry, 0.75), 0);
       var half = minCarryWindow(club);
       var car = summarize(entry.solid, 'carry_yds');
       if (car.n >= NEEDS_WORK.minCvShots && isNum(car.sd)) half = Math.max(half, roundHalfEven(0.75 * car.sd, 0));
       var withCarry = entry.shots.filter(function (s) { return isNum(s.carry_yds); });
       var inZone = withCarry.filter(function (s) { return s.carry_yds >= center - half && s.carry_yds <= center + half; }).length;
-      add({ id: 'carry', label: 'Carry zone', lo: center - half, hi: center + half, center: center, n: inZone, of: withCarry.length,
+      add({ id: 'carry', label: 'Distance', lo: center - half, hi: center + half, center: center, pure: !!ref, n: inZone, of: withCarry.length,
         met: inZone / withCarry.length >= GOALS.inZone });
     }
     var offShots = entry.shots.filter(function (s) { return isNum(s.offline_ft); });
@@ -401,7 +438,49 @@
     else if (g.carry && !g.carry.met) focus = { kind: 'distance', text: 'Same distance every time: pick one target and land it in your carry zone.' };
     else if (g.line && !g.line.met) focus = { kind: 'direction', text: 'Start it on line: check your aim and grip before every shot.' };
     else focus = { kind: null, text: 'Keep it going: every goal here is on target.' };
-    return { focus: focus, goals: goals };
+    return { focus: focus, goals: goals, ref: ref };
+  }
+
+  // Compare one live shot from the range screen with the player's numbers for
+  // that club. shot: { carry_yds, ball_speed_mph, launch_deg, offline_ft }, any
+  // of them missing. Returns { verdict: 'pure' | 'good' | 'mishit' | 'keep',
+  // title, lines: [{ key, ok: true | false | null, text }] }.
+  function checkShot(entry, club, shot) {
+    var G = clubGoals(entry, club);
+    if (!G) return null;
+    shot = shot || {};
+    var ref = G.ref, lines = [], bad = 0, good = 0;
+    var zone = G.goals.filter(function (g) { return g.id === 'carry'; })[0];
+    var minBs = ref && ref.metrics.ball_speed_mph ? ref.metrics.ball_speed_mph.min : null;
+    var bs = shot.ball_speed_mph, carry = shot.carry_yds, la = shot.launch_deg, off = shot.offline_ft;
+    function line(key, ok, text) { lines.push({ key: key, ok: ok, text: text }); if (ok === true) good++; if (ok === false) bad++; }
+    if (isNum(bs) && isNum(minBs)) {
+      if (bs >= minBs) line('ball', true, 'Ball speed ' + fmtRaw(bs) + ' mph: pure-strike speed (' + fmtRaw(minBs) + '+).');
+      else if (bs >= 0.95 * minBs) line('ball', null, 'Ball speed ' + fmtRaw(bs) + ' mph: close to a pure strike (' + fmtRaw(minBs) + '+).');
+      else line('ball', false, 'Ball speed ' + fmtRaw(bs) + ' mph is low for a pure strike (' + fmtRaw(minBs) + '+), so it was likely off-centre.');
+    }
+    if (isNum(carry) && zone) {
+      if (carry >= zone.lo && carry <= zone.hi) line('carry', true, 'Carry ' + fmtRaw(carry) + ' yds: in your ' + zone.lo + '–' + zone.hi + ' yd zone.');
+      else if (carry < zone.lo) line('carry', false, 'Carry ' + fmtRaw(carry) + ' yds: ' + fmtRaw(roundHalfEven(zone.lo - carry, 1)) + ' short of your ' + zone.lo + '–' + zone.hi + ' yd zone.');
+      else line('carry', null, 'Carry ' + fmtRaw(carry) + ' yds: ' + fmtRaw(roundHalfEven(carry - zone.hi, 1)) + ' past your ' + zone.lo + '–' + zone.hi + ' yd zone.');
+    }
+    var win = LAUNCH_WINDOWS[club];
+    if (isNum(la) && win) {
+      if (la >= win[0] && la <= win[1]) line('launch', true, 'Launch ' + fmtRaw(la) + '°: in the ' + win[0] + '–' + win[1] + '° window.');
+      else if (la > win[1]) line('launch', false, 'Launch ' + fmtRaw(la) + '° is high (aim for ' + win[0] + '–' + win[1] + '°): keep your hands ahead.');
+      else line('launch', false, 'Launch ' + fmtRaw(la) + '° is low (aim for ' + win[0] + '–' + win[1] + '°).');
+    }
+    if (isNum(off)) {
+      var dir = off < 0 ? ' L' : off > 0 ? ' R' : '';
+      if (Math.abs(off) <= GOALS.lineFt) line('line', true, 'On line: ' + fmtRaw(Math.abs(off)) + ' ft' + dir + '.');
+      else line('line', false, fmtRaw(Math.abs(off)) + ' ft' + dir + ' (' + fmtNum(Math.abs(off) / 3, 0) + ' yds): outside the 10-yd target.');
+    }
+    var mis = (isNum(la) && la < launchFloor(club)) || (isNum(carry) && ref && carry < 0.6 * ref.carry);
+    var ballOk = lines.some(function (l) { return l.key === 'ball' && l.ok === true; });
+    var carryOk = lines.some(function (l) { return l.key === 'carry' && l.ok === true; });
+    var verdict = mis ? 'mishit' : ballOk && carryOk ? 'pure' : good && !bad ? 'good' : 'keep';
+    var title = { mishit: 'Looks thin or topped', pure: 'Pure strike!', good: 'Good shot', keep: 'Keep working' }[verdict];
+    return { verdict: verdict, title: title, lines: lines };
   }
 
   // Summary of a metric over the club's solid shots ("n of N" counts solid
@@ -1053,6 +1132,7 @@
     sessionMishits: sessionMishits, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
     mergeGoals: mergeGoals, applyGoals: applyGoals,
+    bestStrikes: bestStrikes, strikeReference: strikeReference, checkShot: checkShot,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf

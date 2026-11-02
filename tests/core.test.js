@@ -183,12 +183,36 @@ const goalsOf = (c) => {
   G.goals.forEach((g) => { o[g.id] = g.id === 'carry' ? [g.lo, g.hi, g.n, g.of, g.met] : g.id === 'launch' ? [g.lo, g.hi, g.status] : [g.n, g.of, g.met]; });
   return [G.focus.kind, o];
 };
-eq(goalsOf('PW'), ['launch', { carry: [81, 93, 6, 9, false], line: [6, 9, false], launch: [26, 30, 'high'], contact: [9, 9, true] }], 'PW goals: focus on launch');
-eq(goalsOf('5hy'), ['direction', { carry: [137, 153, 3, 4, true], line: [1, 4, false], launch: [15, 19, 'high'], contact: [4, 4, true] }], '5hy goals: focus on direction');
-eq(goalsOf('5w'), ['contact', { carry: [130, 146, 2, 5, false], line: [1, 5, false], launch: [12, 16, 'low'], contact: [2, 5, false] }], '5w goals: focus on contact');
+eq(goalsOf('PW'), ['launch', { carry: [85, 97, 4, 9, false], line: [6, 9, false], launch: [26, 30, 'high'], contact: [9, 9, true] }], 'PW goals: focus on launch, zone around the 91-yd pure strike');
+eq(goalsOf('5hy'), ['direction', { carry: [140, 156, 2, 4, false], line: [1, 4, false], launch: [15, 19, 'high'], contact: [4, 4, true] }], '5hy goals: focus on direction');
+eq(goalsOf('5w'), ['contact', { carry: [129, 145, 2, 5, false], line: [1, 5, false], launch: [12, 16, 'low'], contact: [2, 5, false] }], '5w goals: focus on contact');
 eq(goalsOf('SW'), ['launch', { carry: [66, 84, 2, 7, false], line: [6, 7, true], launch: [30, 34, 'high'], contact: [7, 7, true] }], 'SW goals');
 eq(goalsOf('9i')[0], 'direction', '9i focus: direction (7 of 15 within 10 yds)');
 eq(C.clubGoals(null, 'PW'), null, 'no shots, no goals');
+
+section('Pure strikes and checking a live shot');
+const refOf = (c) => { const r = C.strikeReference(novE[c], c); return [r.carry, r.n, r.metrics.ball_speed_mph.min, r.by]; };
+eq(C.sortClubs(Object.keys(novE)).map((c) => [c].concat(refOf(c))), [
+  ['SW', 75, 2, 64, 'ball_speed_mph'], ['PW', 91, 3, 73, 'ball_speed_mph'], ['9i', 109, 5, 84, 'ball_speed_mph'],
+  ['7i', 127, 2, 95, 'ball_speed_mph'], ['5hy', 148, 2, 104, 'ball_speed_mph'], ['5w', 137, 2, 106, 'ball_speed_mph']],
+  'pure-strike carry, shot count and ball speed per club');
+eq(C.bestStrikes(novE.SW, 'SW').shots.some((s) => s.launch_deg === 22), false, 'the 22° sand wedge (a thin strike) is not a pure strike');
+eq(C.bestStrikes(novE['9i'], '9i').shots.some((s) => s.launch_deg === 18), false, 'the 18° low 9i is left out');
+eq(C.bestStrikes(novE['5w'], '5w').shots.map((s) => s.id).sort(), ['2026-11-01-040', '2026-11-01-041'], '5w: its two solid shots');
+const noSpeed = { shots: [{ club: '7i', carry_yds: 100 }, { club: '7i', carry_yds: 120 }, { club: '7i', carry_yds: 110 }], mis: [], ranges: {} };
+noSpeed.solid = noSpeed.shots;
+eq([C.strikeReference(noSpeed, '7i').by, C.strikeReference(noSpeed, '7i').carry], ['carry_yds', 115], 'no ball speed: best quarter by carry');
+eq(C.strikeReference(null, 'PW'), null, 'no data, no reference');
+const pure = C.checkShot(novE.PW, 'PW', { carry_yds: 91, ball_speed_mph: 76, launch_deg: 28, offline_ft: 12 });
+eq([pure.verdict, pure.title, pure.lines.map((l) => l.ok)], ['pure', 'Pure strike!', [true, true, true, true]], 'a pure PW strike');
+eq(C.checkShot(novE.PW, 'PW', { carry_yds: 80, ball_speed_mph: 70, launch_deg: 35, offline_ft: -45 }).lines.map((l) => l.text), [
+  'Ball speed 70 mph: close to a pure strike (73+).',
+  'Carry 80 yds: 5 short of your 85–97 yd zone.',
+  'Launch 35° is high (aim for 26–30°): keep your hands ahead.',
+  '45 ft L (15 yds): outside the 10-yd target.'], 'a so-so PW: what was off');
+eq(C.checkShot(novE.PW, 'PW', { carry_yds: 40, ball_speed_mph: 55, launch_deg: 6 }).verdict, 'mishit', 'a topped PW');
+eq(C.checkShot(novE['5hy'], '5hy', { carry_yds: 150, launch_deg: 17 }).verdict, 'good', 'carry and launch only: good shot');
+eq(C.checkShot(null, 'PW', { carry_yds: 80 }), null, 'no data for the club: nothing to check');
 const w56 = { club: '56°', shots: [{ club: '56°', carry_yds: 60, launch_deg: 33 }], mis: [], ranges: {} };
 w56.solid = w56.shots;
 eq(C.clubGoals(w56, '56°').goals.map((g) => g.id), ['carry', 'contact'], 'no launch window or offline data: carry and contact goals only');

@@ -30,17 +30,18 @@ The four tabs are:
 
 - **Stats** for one session, or all sessions pooled:
   - Highlights: a "Needs work" box listing clubs to practise (tap one to jump to it), then shot count, solid-contact rate, thin or topped shots, average miss per club, and change since the baseline.
-  - Club by club, one club at a time: its "Needs work" notes, **Goals** for the range (a focus, a carry zone, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
+  - Club by club, one club at a time: its "Needs work" notes, **Goals** for the range (a focus, a distance zone around its pure-strike carry, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
   - A carry gapping chart.
   - Dispersion: offline vs. carry. All clubs show as one panel each on the same scale, or pick one club.
   - Average miss by club.
   - The session's coaching notes.
 - **Progress**: pick a club and a metric to see each session's range and average, then a baseline-vs-latest table. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
-- **Tips**: focus areas and drills for that player. Each focus area has:
-  - why it matters for him;
-  - a "from your last session" line computed from his latest session (hidden until he has data);
-  - drills with steps, reps and a "Look it up on YouTube" search link.
-  It ends with a suggestion to check things with a coach. The content is in `js/tips.js`.
+- **Practice**, for use during a range session:
+  - **Your yardages:** each club's pure-strike carry and ball speed at a glance. Tap a club to pick it.
+  - **Aim for:** the club's numbers to hit: a distance zone, the ball speed of a pure strike, the launch window and on line (within 10 yds). It also shows what his pure strikes look like (peak height, landing angle, total) and the club's "Needs work" notes.
+  - **Focus:** one thing to work on with that club, with the matching drill and a "Look it up" link.
+  - **Check a shot:** type the carry, ball speed, launch and offline from the range screen to get "Pure strike!", "Good shot", "Keep working" or "Looks thin or topped", with a line on each number.
+  - **Tips & drills** below: focus areas for that player, each with why it matters, a "from your last session" line, and drills with steps, reps and a YouTube search link. It ends with a suggestion to check things with a coach. The content is in `js/tips.js`.
 - **Sessions**: list, details, coaching notes, screen averages and recorded ranges. Add shots by hand or by pasting rows, delete shots, create or delete sessions. **Data & backup** (a button on this tab) has the player's name and level, baseline session, export JSON and CSV, import JSON, and reset local changes.
 
 The layout is white and high-contrast, using large Atkinson Hyperlegible text (18px body; charts at 14px or more). Every button is at least 48px tall, and it works at phone widths down to 360px.
@@ -134,12 +135,22 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
   - fewer than 80% of its shots were solid;
   - its average solid shot finishes 10 yds or more left or right of the target, a third of a 30-yard fairway;
   - its carry varies a lot: the standard deviation is over 15% of the average carry, with at least 4 solid shots.
+- A **pure strike** is one of his best-struck shots with a club (`strikeReference`):
+  - Take the club's solid shots.
+  - Leave out any launched more than 4° below the club's launch window; those are usually thin, like a skulled wedge that flies low and long.
+  - Of the rest, take the top quarter by ball speed (at least 2 shots, ties included). Ball speed is the best sign of a centred strike that Toptracer shows. Without ball speed, the top quarter by carry is used.
+  - Their average carry is the **pure-strike carry**, the club's distance goal. Their lowest ball speed is the speed a pure strike needs.
+  - On Practice, each club uses its most recent session, so the numbers grow as he improves. On Stats, they come from the session shown.
 - **Goals** for each club come from the player's own shots, so they move as he improves (`clubGoals`):
-  - **Carry zone:** centred on the club's upper-quartile solid carry, which is what his better shots already do. The window is 25% tighter than his current spread, but never under ±5 yds for wedges, ±6 for irons or ±8 for hybrids, woods and driver. Met when 7 of 10 shots land in it.
+  - **Distance:** a zone centred on the club's pure-strike carry. The window is 25% tighter than his current spread, but never under ±5 yds for wedges, ±6 for irons or ±8 for hybrids, woods and driver. Met when 7 of 10 shots land in it.
   - **On line:** met when 8 of 10 shots finish within 10 yds (30 ft) of the target line.
   - **Launch:** the solid shots' average launch sits inside a ballpark window for the club at a modest swing speed (`LAUNCH_WINDOWS`, e.g. PW 26–30°, 7i 19–23°). These sit a few degrees above tour averages because slower swings launch higher; a coach can fine-tune them.
   - **Solid contact:** met when 9 of 10 swings are solid.
-  - **Focus** names one thing to work on first: contact, then direction, then launch, then distance. Its "See drills" button opens the matching Tips section.
+  - **Focus** names one thing to work on first: contact, then direction, then launch, then distance. Its "See drills" button opens the matching Tips section on Practice.
+- **Check a shot** (`checkShot`) compares the numbers typed from the screen with that club's references:
+  - Ball speed at or above the pure-strike speed is a pure strike's speed. Within 5% is "close"; lower is likely an off-centre hit.
+  - Carry is checked against the distance zone, launch against the launch window, and offline against the 10-yd (30 ft) target.
+  - The verdict is "Pure strike!" when the ball speed and the carry both match. It's "Looks thin or topped" when the shot would count as a mis-hit: launch under the floor, or carry under 60% of the pure-strike carry.
 
 ## Tests
 

@@ -46,7 +46,7 @@
   function freshUI() {
     return {
       tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
-      goalsEdit: false, goalsAll: false, goalSrc: 'me',
+      goalsEdit: false, goalsAll: false, goalSrc: 'me', practiceClub: null, check: {},
       sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
       entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
       imp: { text: '', parsed: null, columns: null, sig: '', include: {}, flips: {}, defaultClub: '', lateralUnit: 'ft', apexUnit: 'ft' }
@@ -745,7 +745,7 @@
     else if (g.id === 'line') { target = 'Within 10 yds of your target'; now = `${g.n} of ${plural(g.of, 'shot')} (goal: 8 of 10)`; }
     else if (g.id === 'launch') { target = `${g.lo}–${g.hi}°`; now = `${C.fmtNum(g.avg, 1)}° average${g.status === 'high' ? ', a bit high' : g.status === 'low' ? ', a bit low' : ''}`; }
     else { target = '9 of 10 swings'; now = `${g.n} of ${g.of} solid`; }
-    const note = g.id === 'carry' ? `<span class="g-note">Your better shots already fly about ${g.center} yds.</span>` : '';
+    const note = g.id === 'carry' ? `<span class="g-note">${g.pure ? `A pure strike carries about ${g.center} yds.` : `Your better shots already fly about ${g.center} yds.`}</span>` : '';
     return `<li class="goal${g.met ? ' met' : ''}"><div class="g-main"><span class="g-label">${esc(g.label)}</span><span class="g-target">${esc(target)}</span>${note}</div>
       <div class="g-now"><span class="g-state">${g.met ? '✓ On target' : 'Keep working'}</span><span>${esc(now)}</span></div></li>`;
   }
@@ -954,18 +954,113 @@
       <p class="hint">Each cell shows the average (when individual shots exist), then lowest–highest, from solid shots. Changes are latest minus baseline.</p>`;
   }
 
-  // ----- Tips -----
+  // ----- Practice (the "tips" tab): numbers to aim for at the range, a live shot check, then tips -----
+  // Each club uses its most recent session with shots, so the numbers move as he improves.
+  function practiceClubs() {
+    const out = {};
+    data.sessions.slice().sort(C.compareSessions).reverse().forEach((s) => {
+      if (!C.sessionShots(s).length) return;
+      const e = C.clubData([s]);
+      Object.keys(e).forEach((c) => { if (!out[c] && e[c].shots.length) out[c] = { entry: e[c], session: s }; });
+    });
+    return out;
+  }
+  function numOrNull(id) { const el = $('#' + id); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : null; }
+  function readCheckInputs() {
+    ui.check = Object.assign({}, ui.check, { carry: numOrNull('ckCarry'), ball: numOrNull('ckBall'), launch: numOrNull('ckLaunch'), off: numOrNull('ckOff') });
+  }
+  function runCheck() {
+    readCheckInputs();
+    const ck = ui.check, c = ui.practiceClub, sel = practiceClubs()[c];
+    if (!sel) return;
+    if (ck.carry == null && ck.ball == null && ck.launch == null && ck.off == null) { toast('Type at least one number from the screen'); const f = $('#ckCarry'); if (f) f.focus(); return; }
+    if (ck.off && !ck.dir) { toast('Tap Left or Right for the offline number'); return; }
+    const off = ck.off == null ? null : (ck.dir === 'L' ? -Math.abs(ck.off) : Math.abs(ck.off));
+    ck.result = C.checkShot(sel.entry, c, { carry_yds: ck.carry, ball_speed_mph: ck.ball, launch_deg: ck.launch, offline_ft: off });
+    renderTips();
+    const r = $('#checkResult'); if (r) r.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  function checkResultHtml(r) {
+    return `<div class="check-result ${esc(r.verdict)}" role="status" id="checkResult"><p class="check-title">${esc(r.title)}</p>
+      <ul class="check-lines">${r.lines.map((l) => `<li><span class="ck ${l.ok === true ? 'ok' : l.ok === false ? 'bad' : ''}" aria-hidden="true">${l.ok === true ? '✓' : l.ok === false ? '✗' : '~'}</span><span>${esc(l.text)}</span></li>`).join('')}</ul></div>`;
+  }
+  function practiceCard(c, sel, t) {
+    const e = sel.entry, G = C.clubGoals(e, c), r = G.ref, m = r ? r.metrics : {};
+    const zone = G.goals.find((g) => g.id === 'carry');
+    const win = C.LAUNCH_WINDOWS[c];
+    const flags = C.needsWork(e);
+    const aim = [];
+    if (zone) aim.push(['Distance', 'Carry in this zone', `${zone.lo}–${zone.hi} yds`, r ? `pure strike about ${r.carry} yds` : '']);
+    if (m.ball_speed_mph) aim.push(['Ball speed', 'Shows a centred strike', `${C.fmtRaw(m.ball_speed_mph.min)}+ mph`, `your pure strikes: ${C.fmtRange(m.ball_speed_mph.min, m.ball_speed_mph.max)} mph`]);
+    if (win) aim.push(['Launch', 'How steeply it starts', `${win[0]}–${win[1]}°`, m.launch_deg ? `your pure strikes: about ${C.fmtNum(m.launch_deg.avg, 0)}°` : '']);
+    aim.push(['On line', 'Left or right of target', 'within 10 yds', '30 ft or less on the screen']);
+    const look = [];
+    if (m.apex_ft) look.push(`peak height about ${C.fmtNum(m.apex_ft.avg, 0)} ft`);
+    if (m.landing_deg) look.push(`landing about ${C.fmtNum(m.landing_deg.avg, 0)}°`);
+    if (m.total_yds) look.push(`total about ${C.fmtNum(m.total_yds.avg, 0)} yds`);
+    const tipId = tipIdFor(G.focus.kind);
+    const area = tipId && t ? t.focus.find((f) => f.id === tipId) : null;
+    const drill = area && area.drills && area.drills[0];
+    const ck = ui.check || {};
+    const val = (v) => (v == null ? '' : esc(String(v)));
+    return `
+      <div class="cc-head"><span class="cc-name">${esc(c)}</span><span class="cc-full">${esc(C.clubName(c, data.clubs))}</span></div>
+      <p class="cc-shots">From your ${esc(C.fmtDate(sel.session.date))} session${r ? `: ${plural(r.n, 'best-struck shot')} of ${plural(e.shots.length, 'shot')}` : ''}</p>
+      ${flags.length ? `<div class="work-box">${NW_PILL}<ul>${flags.map((f) => `<li>${esc(cap(f.text))}.</li>`).join('')}</ul></div>` : ''}
+      <h4 class="cc-sub">Aim for</h4>
+      <ul class="aim-list">${aim.map((a) => `<li><span class="aim-k">${esc(a[0])}<small>${esc(a[1])}</small></span><span class="aim-v">${esc(a[2])}${a[3] ? `<small>${esc(a[3])}</small>` : ''}</span></li>`).join('')}</ul>
+      ${look.length ? `<p class="pure-look">Your pure strikes also show ${esc(look.join(', '))}.</p>` : ''}
+      <div class="focus-line" style="margin-top:14px"><span class="fl-label">Focus</span><span class="fl-text">${esc(G.focus.text)}</span></div>
+      ${drill ? `<details class="focus-drill"><summary>Drill: ${esc(fillText(drill.name))}</summary>
+        <ol>${drill.steps.map((s) => `<li>${esc(fillText(s))}</li>`).join('')}</ol>
+        <p class="reps"><strong>Reps:</strong> ${esc(fillText(drill.reps))}</p>
+        <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(drill.search))}" target="_blank" rel="noopener">Look it up on YouTube <span aria-hidden="true">↗</span></a></details>` : ''}
+      <h4 class="cc-sub">Check a shot</h4>
+      <p class="note">Type the numbers from the range screen to see how this ${esc(c)} shot compares.</p>
+      <div class="check-grid" style="margin-top:10px">
+        <div class="field"><label for="ckCarry">Carry (yds)</label><input id="ckCarry" type="number" inputmode="decimal" value="${val(ck.carry)}"></div>
+        <div class="field"><label for="ckBall">Ball speed (mph)</label><input id="ckBall" type="number" inputmode="decimal" value="${val(ck.ball)}"></div>
+        <div class="field"><label for="ckLaunch">Launch (°)</label><input id="ckLaunch" type="number" inputmode="decimal" value="${val(ck.launch)}"></div>
+        <div class="field"><label for="ckOff">Offline (ft)</label><input id="ckOff" type="number" inputmode="decimal" value="${val(ck.off)}"></div>
+      </div>
+      <div class="seg" role="group" aria-label="Offline direction">
+        <button type="button" data-action="check-dir" data-dir="L" aria-pressed="${ck.dir === 'L'}">◀ Left</button>
+        <button type="button" data-action="check-dir" data-dir="R" aria-pressed="${ck.dir === 'R'}">Right ▶</button>
+      </div>
+      <div class="row-actions"><button class="btn" data-action="check-shot">Check this shot</button>${ck.result ? '<button class="btn ghost" data-action="check-clear">Clear</button>' : ''}</div>
+      ${ck.result ? checkResultHtml(ck.result) : ''}`;
+  }
   function renderTips() {
     const el = $('#view-tips');
     const t = TIPS[playerId];
-    if (!t) { el.innerHTML = '<div class="card" style="margin-top:22px"><p>No tips for this player yet.</p></div>'; return; }
+    const pc = practiceClubs();
+    const clubs = C.sortClubs(Object.keys(pc));
+    if (clubs.length && (!ui.practiceClub || !pc[ui.practiceClub])) ui.practiceClub = clubs[0];
+    const rows = clubs.map((c) => {
+      const e = pc[c].entry, r = C.strikeReference(e, c), nw = C.needsWork(e).length;
+      const sub = [r && r.metrics.ball_speed_mph ? `${C.fmtRaw(r.metrics.ball_speed_mph.min)}+ mph ball speed` : '',
+        r && r.solid < 4 ? `only ${plural(r.solid, 'solid shot')} so far` : ''].filter(Boolean).join(' · ');
+      return `<li><button class="yard-row" data-action="practice-club" data-club="${esc(c)}" aria-pressed="${c === ui.practiceClub}">
+        <span class="yr-club">${esc(c)}</span>
+        <span class="yr-main"><span class="yr-carry">${r ? r.carry + ' yds' : '—'}</span>${sub ? `<span class="yr-sub">${esc(sub)}</span>` : ''}</span>
+        ${nw ? NW_PILL : ''}</button></li>`;
+    }).join('');
     el.innerHTML = `
-      <h2>Tips &amp; drills</h2>
-      <p class="lead">${esc(fillText(t.intro))}</p>
-      ${t.focus.map((f, i) => focusCard(f, i)).join('')}
-      <div class="card lesson"><h3>Check it with a coach</h3><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>`;
+      <h2>Practice</h2>
+      <p class="lead">At the range, pick the club you’re hitting, aim for its numbers, and check a shot against them.</p>
+      ${clubs.length ? `
+        <div class="card"><h3 class="card-title">Your yardages</h3>
+          <p class="note">How far a pure strike carries with each club. Tap a club for its numbers.</p>
+          <ul class="yard-list">${rows}</ul>
+          <p class="hint">A pure strike is one of your best-struck shots: solid contact with your highest ball speeds, launched at a normal height. Each club uses its most recent session, so these grow as you improve.</p></div>
+        <div class="card" id="practiceCard">${practiceCard(ui.practiceClub, pc[ui.practiceClub], t)}</div>`
+      : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>`}
+      ${t ? `<h2 class="lib-title">Tips &amp; drills</h2>
+        <p class="lead">${esc(fillText(t.intro))}</p>
+        ${t.focus.map((f, i) => focusCard(f, i, !clubs.length)).join('')}
+        <div class="card lesson"><h3>Check it with a coach</h3><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>` : ''}`;
   }
-  function focusCard(f, i) {
+  function focusCard(f, i, openFirst) {
     const call = f.callout ? C.sessionCallout(f.callout, data.sessions) : null;
     const drills = f.drills.map((d) => `<div class="drill">
         <h4>${esc(fillText(d.name))}</h4>
@@ -973,7 +1068,7 @@
         <p class="reps"><strong>Reps:</strong> ${esc(fillText(d.reps))}</p>
         <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(d.search))}" target="_blank" rel="noopener">Look it up on YouTube <span aria-hidden="true">↗</span></a>
       </div>`).join('');
-    const open = ui.openTip ? f.id === ui.openTip : i === 0;
+    const open = ui.openTip ? f.id === ui.openTip : !!openFirst && i === 0;
     return `<details class="card focus" data-focus="${esc(f.id)}"${open ? ' open' : ''}>
       <summary><span class="fnum" aria-hidden="true">${i + 1}</span><span>${esc(fillText(f.title))}</span></summary>
       <div class="focus-body">
@@ -1436,6 +1531,17 @@
       $$('[data-action="goal-src"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.src === ui.goalSrc)));
     },
     'goal-add'() { addGoal(); },
+    'practice-club'(b) {
+      ui.practiceClub = b.dataset.club; ui.check = {}; renderTips();
+      const card = $('#practiceCard'); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+    'check-dir'(b) {
+      // Update in place so typed numbers stay put.
+      ui.check = Object.assign({}, ui.check, { dir: ui.check && ui.check.dir === b.dataset.dir ? null : b.dataset.dir });
+      $$('[data-action="check-dir"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.dir === ui.check.dir)));
+    },
+    'check-shot'() { runCheck(); },
+    'check-clear'() { ui.check = {}; renderTips(); const f = $('#ckCarry'); if (f) f.focus(); },
     'gh-retry'() { ghError = ''; syncGoals(); },
     'open-gh'() {
       ui.tab = 'sessions'; ui.sessionsView = 'data'; ui.sessionId = null; ui.goalsEdit = false; render();
@@ -1636,6 +1742,7 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target && e.target.id === 'goalText') { e.preventDefault(); addGoal(); }
+    if (e.key === 'Enter' && e.target && /^ck(Carry|Ball|Launch|Off)$/.test(e.target.id)) { e.preventDefault(); runCheck(); }
   });
   document.addEventListener('change', (e) => {
     const el = e.target.closest ? e.target.closest('[data-change]') : null;
