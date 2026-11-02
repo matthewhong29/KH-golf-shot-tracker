@@ -13,6 +13,8 @@ A phone-first web page that tracks golf shots for Matthew's family. GitHub Pages
 
 If it isn't clear whose photos they are, ask Matthew before adding anything.
 
+The page itself also commits to `main`: on a phone with a GitHub key, every goal change is saved straight into that player's data file ("Update Dad’s goals from the tracker"). So run `git pull origin main` before editing any data file, and pull again if a push is rejected.
+
 ## Adding shots from a photo of a range screen
 
 Dad or M3 takes photos of the Toptracer or Rapsodo screen and texts them to Matthew, who sends them here and asks for them to be added. Follow these steps.

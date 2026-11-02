@@ -316,6 +316,26 @@
     return out;
   }
 
+  // Apply this device's goal changes to a parsed data file, for saving it back to
+  // the repo. Returns a new object with the same key order (personal_goals goes
+  // before sessions if it wasn't there), or null when nothing would change.
+  function applyGoals(fileObj, localGoals) {
+    if (!fileObj || typeof fileObj !== 'object') return null;
+    var before = Array.isArray(fileObj.personal_goals) ? fileObj.personal_goals : [];
+    var merged = mergeGoals(before, localGoals).map(function (g) {
+      return { id: g.id, text: g.text, source: g.source, added: g.added, done: g.done };
+    });
+    if (JSON.stringify(merged) === JSON.stringify(before)) return null;
+    var out = {}, placed = false;
+    Object.keys(fileObj).forEach(function (k) {
+      if (k === 'personal_goals') { out.personal_goals = merged; placed = true; return; }
+      if (k === 'sessions' && !placed) { out.personal_goals = merged; placed = true; }
+      out[k] = fileObj[k];
+    });
+    if (!placed) out.personal_goals = merged;
+    return out;
+  }
+
   // Ballpark launch windows (degrees) for a modest swing speed. Slower swings
   // launch a little higher than tour players, so these sit a few degrees above
   // tour averages. They're targets to aim at, not hard rules.
@@ -1032,7 +1052,7 @@
     asList: asList, clubData: clubData, entryHasData: entryHasData, metricStat: metricStat, mishits: mishits,
     sessionMishits: sessionMishits, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
-    mergeGoals: mergeGoals,
+    mergeGoals: mergeGoals, applyGoals: applyGoals,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf

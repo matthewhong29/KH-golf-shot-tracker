@@ -10,5 +10,9 @@
       "name": "M3",
       "file": "data/brother_golf_data.json"
     }
-  ]
+  ],
+  "github": {
+    "repo": "matthewhong29/KH-golf-shot-tracker",
+    "branch": "main"
+  }
 }

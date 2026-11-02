@@ -11,6 +11,9 @@
     { id: 'dad', name: 'Dad', file: 'data/dad_golf_data.json' },
     { id: 'brother', name: 'M3', file: 'data/brother_golf_data.json' }
   ];
+  // Where goals are saved when a phone has a GitHub key (players.json "github" overrides this).
+  const DEFAULT_GITHUB = { repo: 'matthewhong29/KH-golf-shot-tracker', branch: 'main' };
+  function validGithub(g) { return g && /^[\w.-]+\/[\w.-]+$/.test(g.repo || '') ? { repo: g.repo, branch: g.branch || 'main' } : null; }
 
   // ---------------------------------------------------------------------------
   // Players and per-player state
@@ -32,6 +35,7 @@
   })();
 
   let players = validPlayers(loadJSON(LS + '.players')) || DEFAULT_PLAYERS;
+  let github = validGithub(loadJSON(LS + '.github')) || DEFAULT_GITHUB;
   let playerId = C.resolvePlayer(players, urlPlayer(), lastPlayer());
   let bundle = null;            // this player's data file
   let bundleStatus = 'loading'; // loading | fresh | offline | missing
@@ -497,7 +501,9 @@
         </div>
         ${active.length ? `<h4 class="gb-sub">On the list</h4><ul class="gb-edit-list">${active.map(row).join('')}</ul>` : ''}
         ${done.length ? `<h4 class="gb-sub">Done</h4><ul class="gb-edit-list">${done.map(row).join('')}</ul>` : ''}
-        <p class="hint">Goals added here are saved on this phone. To show them on every phone, ask Claude to add them to the data file, or export from Sessions → Data &amp; backup.</p>
+        ${goalSyncNote()}
+        <p class="hint">${ghReady() ? 'Goals save straight to GitHub, so they show on every phone.'
+          : 'Goals added here are saved on this phone. To keep them on every phone, add a GitHub key once in Sessions → Data &amp; backup.'}</p>
       </div>`;
       return;
     }
@@ -514,6 +520,7 @@
           <div class="gb-body"><span class="gb-text">${esc(g.text)}</span>${goalBadge(g)}</div></li>`).join('')}</ul>`
         : `<p class="gb-alldone">Every goal is done. Nice work! Tap Edit to add the next one.</p>`}
       ${active.length > GOALS_SHOWN ? `<button class="gb-more" data-action="goals-all">${ui.goalsAll ? 'Show fewer' : `Show all ${active.length} goals`}</button>` : ''}
+      ${goalSyncNote()}
     </div>`;
   }
   function addGoal() {
@@ -525,6 +532,7 @@
     saveLocal(); refresh();
     toast('Goal added');
     const again = $('#goalText'); if (again) again.focus();
+    syncGoals();
   }
   function setGoalDone(id) {
     const g = (data.goals || []).find((x) => x.id === id);
@@ -532,6 +540,7 @@
     local.goals.edits[id] = Object.assign({}, local.goals.edits[id], { done: !g.done });
     saveLocal(); refresh();
     toast(g.done ? 'Back on the list' : 'Nice work! Goal done');
+    syncGoals();
   }
   function removeGoal(id) {
     const g = (data.goals || []).find((x) => x.id === id);
@@ -542,6 +551,99 @@
     delete local.goals.edits[id];
     saveLocal(); refresh();
     toast('Goal removed');
+    syncGoals();
+  }
+
+  // ----- Saving goals straight to the GitHub repo -----
+  // A phone with a fine-grained GitHub key (Contents: read and write on this repo
+  // only) writes each goal change into the player's data file, so every phone sees
+  // it. The key stays in this browser; it is never part of the site or the repo.
+  // Without a key, goals stay on the phone as local changes, as before.
+  const GH_TOKEN = LS + '.githubToken';
+  let ghBusy = false;
+  let ghError = '';
+  function ghToken() { try { return localStorage.getItem(GH_TOKEN) || ''; } catch (e) { return ''; } }
+  function ghReady() { return !!(github && ghToken()); }
+  function pendingGoals() { const g = local.goals; return g.added.length + Object.keys(g.edits).length + g.removed.length; }
+  function b64encode(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  function b64decode(b64) {
+    const bin = atob(String(b64).replace(/\s/g, ''));
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  }
+  async function ghRequest(method, path, body, token) {
+    const r = await fetch(`https://api.github.com/repos/${github.repo}/${path}`, {
+      method, cache: 'no-store',
+      headers: Object.assign({ Authorization: 'Bearer ' + (token || ghToken()), Accept: 'application/vnd.github+json' },
+        body ? { 'Content-Type': 'application/json' } : {}),
+      body: body ? JSON.stringify(body) : undefined
+    });
+    if (!r.ok) { const e = new Error('GitHub ' + r.status); e.status = r.status; throw e; }
+    return r.json();
+  }
+  async function ghGetFile(file, token) {
+    const j = await ghRequest('GET', `contents/${file}?ref=${encodeURIComponent(github.branch)}&t=${Date.now()}`, null, token);
+    return { text: b64decode(j.content), sha: j.sha };
+  }
+  function ghErrorText(e) {
+    if (e && e.status === 401) return 'GitHub didn’t accept the key. It may have expired; make a new one in Data & backup.';
+    if (e && (e.status === 403 || e.status === 404)) return 'The key can’t write to the repo. It needs Contents: Read and write for KH-golf-shot-tracker.';
+    if (e && (e.status === 409 || e.status === 422)) return 'Someone else saved at the same moment. Tap Try again.';
+    return navigator.onLine === false ? 'This phone is offline; it will upload next time.' : 'Couldn’t reach GitHub; it will try again next time.';
+  }
+  // Write this phone's goal changes into the player's data file on GitHub. Only the
+  // changes that were sent are cleared, so a goal added mid-save isn't lost.
+  async function syncGoals() {
+    if (!ghReady() || ghBusy || !pendingGoals()) return;
+    const myLocal = local, myKey = key('local'), myBundleKey = key('bundle'), pid = playerId;
+    const file = playerInfo().file, who = playerName();
+    const snap = clone(myLocal.goals);
+    ghBusy = true; ghError = ''; renderGoals();
+    try {
+      let saved = null;
+      for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+        const f = await ghGetFile(file);
+        const obj = JSON.parse(f.text);
+        const next = C.applyGoals(obj, snap);
+        if (!next) { saved = obj; break; }
+        try {
+          await ghRequest('PUT', `contents/${file}`, {
+            message: `Update ${who}’s goals from the tracker`,
+            content: b64encode(JSON.stringify(next, null, 2) + (f.text.endsWith('\n') ? '\n' : '')),
+            sha: f.sha, branch: github.branch
+          });
+          saved = next;
+        } catch (e) { if (e.status !== 409 && e.status !== 422) throw e; }
+      }
+      if (!saved) throw Object.assign(new Error('conflict'), { status: 409 });
+      const g = myLocal.goals;
+      const sentIds = snap.added.map((x) => x.id);
+      g.added = g.added.filter((x) => sentIds.indexOf(x.id) < 0);
+      Object.keys(snap.edits).forEach((id) => { if (JSON.stringify(g.edits[id]) === JSON.stringify(snap.edits[id])) delete g.edits[id]; });
+      g.removed = g.removed.filter((id) => snap.removed.indexOf(id) < 0);
+      saveJSON(myKey, myLocal);
+      saveJSON(myBundleKey, saved);
+      if (pid === playerId) { bundle = saved; refresh(); }
+      toast('Saved to GitHub. It will show on every phone.');
+    } catch (e) {
+      ghError = ghErrorText(e);
+      toast('Saved on this phone. ' + ghError);
+    } finally {
+      ghBusy = false;
+      if (pid === playerId) renderGoals();
+    }
+    if (pid === playerId && !ghError && pendingGoals()) syncGoals();
+  }
+  // Status line under the goals: where the latest change is saved.
+  function goalSyncNote() {
+    if (ghBusy) return '<p class="gb-sync">Saving to GitHub…</p>';
+    if (!pendingGoals()) return ghReady() && (data.goals || []).length ? '<p class="gb-sync ok">✓ Saved for every phone</p>' : '';
+    if (!ghReady()) return '<p class="gb-sync">Saved on this phone only. <button class="link-btn" data-action="open-gh">Save for every phone</button></p>';
+    return `<p class="gb-sync warn">Not on other phones yet. ${esc(ghError)} <button class="link-btn" data-action="gh-retry">Try again</button></p>`;
   }
 
   function renderBanner() {
@@ -1219,6 +1321,20 @@
         ${data.sessions.length ? `<div class="field"><label for="baseSel">Baseline session</label>
           <select id="baseSel" data-change="baseline"><option value="">First session for each club</option>${data.sessions.slice().reverse().map((s) => `<option value="${esc(s.id)}"${s.id === data.baseline_session_id ? ' selected' : ''}>${esc(C.fmtDate(s.date))} · ${esc(C.shortDevice(s.device))}</option>`).join('')}</select></div>` : '<p class="empty">No sessions yet.</p>'}
         <p class="hint">Progress compares each club with this session. A club it doesn’t include uses its own first session.</p></div>
+      <div class="card" id="ghCard"><h3 class="card-title">Save goals to GitHub</h3>
+        ${ghReady() ? `<p class="note"><strong>✓ This phone saves goals to GitHub</strong> (${esc(github.repo)}). Goals added, finished or removed here show on every phone.</p>
+          <div class="row-actions"><button class="btn small danger" data-action="gh-disconnect">Remove the key from this phone</button></div>`
+        : `<p class="note">Right now, goals added on this phone stay on this phone. Add a GitHub key once and they save straight to the repo, so they show on every phone.</p>
+          <ol class="gh-steps">
+            <li>On GitHub, open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Settings → Fine-grained tokens → Generate new token</a>.</li>
+            <li>Name it “Shot tracker”, set an expiration, and under <strong>Repository access</strong> pick <strong>Only select repositories → ${esc(github.repo.split('/')[1])}</strong>.</li>
+            <li>Under <strong>Permissions → Repository permissions</strong>, set <strong>Contents</strong> to <strong>Read and write</strong>. Leave everything else.</li>
+            <li>Generate the token, copy it, and paste it here on each phone.</li>
+          </ol>
+          <div class="field"><label for="ghTokenInput">GitHub key</label><input id="ghTokenInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_…"></div>
+          <button class="btn block" data-action="gh-connect">Save key on this phone</button>
+          <p class="hint">The key stays in this phone’s browser and is never added to the site or the repo. It can only change files in ${esc(github.repo.split('/')[1])}, and you can delete it on GitHub any time.</p>`}
+      </div>
       <div class="card"><h3 class="card-title">Backup</h3>
         <p class="note">${esc(status)} <code>${esc(file)}</code>${bundle && bundleStatus !== 'missing' ? ` (${plural(fileSessions().length, 'session')})` : ''}.</p>
         <p class="note" style="margin-top:8px">On this device: ${parts.length ? esc(parts.join(', ')) + (c.added + c.edited + c.hidden === 1 ? ' session' : ' sessions') : 'no session changes'}${c.other ? `, plus ${c.other === 1 ? 'one setting' : c.other + ' settings'}` : ''}${c.goals ? `, plus ${c.goals === 1 ? 'one goal change' : c.goals + ' goal changes'}` : ''}.</p>
@@ -1320,6 +1436,34 @@
       $$('[data-action="goal-src"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.src === ui.goalSrc)));
     },
     'goal-add'() { addGoal(); },
+    'gh-retry'() { ghError = ''; syncGoals(); },
+    'open-gh'() {
+      ui.tab = 'sessions'; ui.sessionsView = 'data'; ui.sessionId = null; ui.goalsEdit = false; render();
+      const c = $('#ghCard'); if (c) c.scrollIntoView({ block: 'start' });
+    },
+    async 'gh-connect'(b) {
+      const input = $('#ghTokenInput');
+      const token = input ? input.value.trim() : '';
+      if (!token) { toast('Paste the GitHub key first'); if (input) input.focus(); return; }
+      b.disabled = true; b.textContent = 'Checking the key…';
+      try {
+        await ghGetFile(playerInfo().file, token);
+        try { localStorage.setItem(GH_TOKEN, token); } catch (e) { throw new Error('storage'); }
+        ghError = '';
+        toast('Key saved. Goals on this phone now save to GitHub.');
+        renderSessions(); renderGoals();
+        syncGoals();
+      } catch (e) {
+        toast(e.message === 'storage' ? 'This browser won’t save the key (private mode?).' : ghErrorText(e));
+        b.disabled = false; b.textContent = 'Save key on this phone';
+      }
+    },
+    'gh-disconnect'() {
+      if (!confirm('Remove the GitHub key from this phone? Goals added here will stay on this phone until a key is added again.')) return;
+      try { localStorage.removeItem(GH_TOKEN); } catch (e) { /* ignore */ }
+      toast('Key removed from this phone');
+      renderSessions(); renderGoals();
+    },
     'goal-done'(b) { setGoalDone(b.dataset.id); },
     'goal-remove'(b) { removeGoal(b.dataset.id); },
     'goto-tip'(b) {
@@ -1529,8 +1673,12 @@
   // ---------------------------------------------------------------------------
   function fetchBundle() {
     const id = playerId, file = playerInfo().file;
-    fetch(file, { cache: 'no-cache' })
-      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    // With a GitHub key, read the newest file straight from the repo, so a goal saved on
+    // another phone shows up without waiting for the site to rebuild.
+    const fromPages = () => fetch(file, { cache: 'no-cache' })
+      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    const load = ghReady() ? ghGetFile(file).then((f) => JSON.parse(f.text)).catch(fromPages) : fromPages();
+    load
       .then((d) => {
         if (id !== playerId) return;
         if (!d || !Array.isArray(d.sessions)) throw new Error('Unexpected data file');
@@ -1539,6 +1687,7 @@
         bundleStatus = 'fresh';
         saveJSON(key('bundle'), d);
         if (changed || !data.sessions.length) refresh(); else renderBanner();
+        syncGoals(); // upload goal changes made earlier on this phone, if it has a key
       })
       .catch(() => {
         if (id !== playerId) return;
@@ -1554,6 +1703,8 @@
         if (!list) return;
         players = list;
         saveJSON(LS + '.players', list);
+        const gh = validGithub(d.github);
+        if (gh) { github = gh; saveJSON(LS + '.github', gh); }
         const want = C.resolvePlayer(players, urlPlayer(), lastPlayer());
         if (want !== playerId) switchPlayer(want); else renderHeader();
       })

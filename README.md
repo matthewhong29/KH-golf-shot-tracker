@@ -158,6 +158,22 @@ The tests check:
 - the player registry and data files;
 - the paste parser, against the Toptracer screenshot rows (both whitespace and tab-separated) and a Rapsodo CSV.
 
+## Saving goals to GitHub
+
+Goals added in the page save on that phone. To keep them on every phone, add a GitHub key to each phone once, under Sessions → Data & backup → **Save goals to GitHub**:
+
+1. On GitHub, open Settings → Developer settings → **Fine-grained tokens** → Generate new token (https://github.com/settings/personal-access-tokens/new).
+2. Name it "Shot tracker" and set an expiration. Under **Repository access**, choose **Only select repositories → KH-golf-shot-tracker**.
+3. Under **Permissions → Repository permissions**, set **Contents** to **Read and write**.
+4. Generate it, copy it, and paste it into the page on each phone.
+
+With a key, every goal change (add, ✓ done, undo, remove) is committed to that player's data file as "Update Dad’s goals from the tracker". Only `personal_goals` changes; the file keeps its formatting.
+- **Other phones:** phones with a key read the newest file straight from GitHub. Phones without one see the change once Pages rebuilds, about a minute later.
+- **Two phones at once:** if two phones save at the same moment, the second one re-reads the file and tries again.
+- **No connection or expired key:** if GitHub can't be reached or the key has expired, the change stays on the phone and uploads on the next save or reload. The goals box shows **Try again**.
+
+The key is stored only in that phone's browser (`localStorage`), never in the site or this public repository. It can only change files in this one repository; delete it on GitHub to revoke it. The repository and branch come from `"github"` in `data/players.json`.
+
 ## Publish with GitHub Pages
 
 In the repo on GitHub, go to **Settings → Pages**. Under **Build and deployment**, choose **Deploy from a branch**, then pick **main** and **/ (root)** and save. The site appears at `https://<user>.github.io/<repo>/` within a minute or two. `.nojekyll` makes Pages serve the files as they are.

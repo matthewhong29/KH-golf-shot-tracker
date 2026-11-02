@@ -206,6 +206,22 @@ eq(C.mergeGoals([{ id: 'x', text: 'Keep your head still', source: 'Coach Jim' },
   .map((g) => [g.id, g.source, g.text]), [['x', 'coach', 'Keep your head still']], 'bad entries skipped, first id wins, "Coach …" counts as a coach goal');
 eq(C.mergeGoals(null, null), [], 'no goals');
 eq(require('../data/dad_golf_data.json').personal_goals, [], 'Dad starts with an empty goals list');
+// Saving goals back to the repo: only personal_goals changes, key order and formatting are kept.
+const dadText = require('fs').readFileSync(require('path').join(__dirname, '..', 'data', 'dad_golf_data.json'), 'utf8');
+const dadObj = JSON.parse(dadText);
+eq(C.applyGoals(dadObj, { added: [], edits: {}, removed: [] }), null, 'no goal changes: nothing to save');
+const saved = C.applyGoals(dadObj, { added: [{ id: 'goal-2026-11-02-1', text: 'Keep your head still', source: 'coach', added: '2026-11-02' }], edits: {}, removed: [] });
+eq(Object.keys(saved), Object.keys(dadObj), 'key order kept');
+eq(saved.personal_goals, [{ id: 'goal-2026-11-02-1', text: 'Keep your head still', source: 'coach', added: '2026-11-02', done: false }], 'goal written in the file format');
+eq(JSON.stringify(saved.sessions) === JSON.stringify(dadObj.sessions) && saved.player === dadObj.player, true, 'sessions and player untouched');
+const savedText = JSON.stringify(saved, null, 2) + (dadText.endsWith('\n') ? '\n' : '');
+const lineDiff = savedText.split('\n').filter((l, i, a) => dadText.split('\n').indexOf(l) < 0);
+eq(lineDiff.every((l) => /goal-2026-11-02-1|Keep your head still|"source": "coach"|"added": "2026-11-02"|"done": false|"personal_goals": \[|^\s*[{}\]],?$/.test(l)), true, 'rewritten file differs only in the goals lines');
+const done1 = C.applyGoals(saved, { added: [], edits: { 'goal-2026-11-02-1': { done: true } }, removed: [] });
+eq(done1.personal_goals[0].done, true, 'mark done saves to the file');
+eq(C.applyGoals(done1, { added: [], edits: {}, removed: ['goal-2026-11-02-1'] }).personal_goals, [], 'remove saves to the file');
+const noKey = { player: { name: 'X' }, sessions: [] };
+eq(Object.keys(C.applyGoals(noKey, { added: [{ id: 'a', text: 'Hi', source: 'me' }] })), ['player', 'personal_goals', 'sessions'], 'personal_goals added before sessions when missing');
 
 section('Progress');
 const pPW = C.progressFor(data.sessions, 'PW', data.baseline_session_id);
