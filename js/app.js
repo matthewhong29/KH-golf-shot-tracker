@@ -1328,8 +1328,8 @@
           <ol class="gh-steps">
             <li>On GitHub, open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Settings → Fine-grained tokens → Generate new token</a>.</li>
             <li>Name it “Shot tracker”, set an expiration, and under <strong>Repository access</strong> pick <strong>Only select repositories → ${esc(github.repo.split('/')[1])}</strong>.</li>
-            <li>Under <strong>Permissions → Repository permissions</strong>, set <strong>Contents</strong> to <strong>Read and write</strong>. Leave everything else.</li>
-            <li>Generate the token, copy it, and paste it here on each phone.</li>
+            <li>Under <strong>Permissions</strong>, tap <strong>+ Add permissions</strong>, tick <strong>Contents</strong>, then change it from Read-only to <strong>Read and write</strong>. GitHub adds Metadata (read-only) by itself; leave it.</li>
+            <li>Set an expiration, tap <strong>Generate token</strong>, and copy it right away (GitHub shows it only once). Paste it here on each phone.</li>
           </ol>
           <div class="field"><label for="ghTokenInput">GitHub key</label><input id="ghTokenInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_…"></div>
           <button class="btn block" data-action="gh-connect">Save key on this phone</button>

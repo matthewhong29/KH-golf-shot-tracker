@@ -164,8 +164,8 @@ Goals added in the page save on that phone. To keep them on every phone, add a G
 
 1. On GitHub, open Settings → Developer settings → **Fine-grained tokens** → Generate new token (https://github.com/settings/personal-access-tokens/new).
 2. Name it "Shot tracker" and set an expiration. Under **Repository access**, choose **Only select repositories → KH-golf-shot-tracker**.
-3. Under **Permissions → Repository permissions**, set **Contents** to **Read and write**.
-4. Generate it, copy it, and paste it into the page on each phone.
+3. Under **Permissions**, click **+ Add permissions**, tick **Contents**, and change it from Read-only to **Read and write**. GitHub adds Metadata (read-only) automatically; leave it.
+4. Generate it and copy it right away (GitHub shows it only once). Paste it into the page on each phone; never into the repo or a chat.
 
 With a key, every goal change (add, ✓ done, undo, remove) is committed to that player's data file as "Update Dad’s goals from the tracker". Only `personal_goals` changes; the file keeps its formatting.
 - **Other phones:** phones with a key read the newest file straight from GitHub. Phones without one see the change once Pages rebuilds, about a minute later.
