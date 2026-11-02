@@ -42,6 +42,7 @@
   function freshUI() {
     return {
       tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
+      goalsEdit: false, goalsAll: false, goalSrc: 'me',
       sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
       entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
       imp: { text: '', parsed: null, columns: null, sig: '', include: {}, flips: {}, defaultClub: '', lateralUnit: 'ft', apexUnit: 'ft' }
@@ -49,10 +50,14 @@
   }
   function playerInfo() { return players.find((p) => p.id === playerId) || players[0]; }
   function key(kind) { return LS + '.' + playerId + '.' + kind; }
-  function emptyLocal() { return { sessions: [], hidden: [], player: null, baselineSessionId: null }; }
+  // Goals changed on this device: new ones, edits (done/text) and removals of file goals.
+  function emptyGoals() { return { added: [], edits: {}, removed: [] }; }
+  function emptyLocal() { return { sessions: [], hidden: [], player: null, baselineSessionId: null, goals: emptyGoals() }; }
   function loadLocal() {
     const d = loadJSON(key('local'));
-    return d && Array.isArray(d.sessions) ? Object.assign(emptyLocal(), d) : emptyLocal();
+    const l = d && Array.isArray(d.sessions) ? Object.assign(emptyLocal(), d) : emptyLocal();
+    l.goals = Object.assign(emptyGoals(), l.goals || {});
+    return l;
   }
   function saveLocal() { if (!saveJSON(key('local'), local)) toast('Couldn’t save on this device. Export a backup from Data & backup.'); }
   function loadPlayerState() {
@@ -95,6 +100,7 @@
       clubs: Object.assign({}, b.clubs || {}, local.clubs || {}),
       // local.baselineSessionId: null = use the file's; '' = none (first session per club)
       baseline_session_id: local.baselineSessionId != null ? (local.baselineSessionId || null) : (b.baseline_session_id || null),
+      goals: C.mergeGoals(b.personal_goals, local.goals),
       sessions
     };
   }
@@ -449,6 +455,7 @@
   // ---------------------------------------------------------------------------
   function render() {
     renderHeader();
+    renderGoals();
     renderBanner();
     $$('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === ui.tab)));
     $$('section.view').forEach((v) => { v.hidden = v.dataset.view !== ui.tab; });
@@ -464,6 +471,79 @@
     const meta = $('meta[name="apple-mobile-web-app-title"]');
     if (meta) meta.setAttribute('content', playerName() + ' · Golf');
   }
+  // ----- Goals pinned above every tab: personal goals and goals from a coach -----
+  const GOALS_SHOWN = 3;
+  function goalBadge(g) { return `<span class="gb-src ${g.source === 'coach' ? 'coach' : 'me'}">${g.source === 'coach' ? 'From coach' : 'My goal'}</span>`; }
+  function renderGoals() {
+    const el = $('#goalsBar');
+    if (!el) return;
+    const goals = data.goals || [];
+    const active = goals.filter((g) => !g.done), done = goals.filter((g) => g.done);
+    const title = `<span class="gb-title"><span aria-hidden="true">🎯 </span>${esc(playerName())}’s goals</span>`;
+    if (ui.goalsEdit) {
+      const row = (g) => `<li class="${g.done ? 'done' : ''}"><div class="gb-body"><span class="gb-text">${esc(g.text)}</span>${goalBadge(g)}</div>
+        <button class="btn small ghost" data-action="goal-done" data-id="${esc(g.id)}">${g.done ? 'Undo' : 'Done'}</button>
+        <button class="btn small danger" data-action="goal-remove" data-id="${esc(g.id)}" aria-label="Remove “${esc(g.text)}”">Remove</button></li>`;
+      el.innerHTML = `<div class="gb">
+        <div class="gb-head">${title}<button class="btn small" data-action="goals-close">Finish</button></div>
+        <div class="gb-add">
+          <label for="goalText">New goal</label>
+          <input id="goalText" type="text" maxlength="140" placeholder="e.g. Hold your finish for 3 seconds" enterkeyhint="done">
+          <div class="seg" role="group" aria-label="Who set this goal">
+            <button type="button" data-action="goal-src" data-src="coach" aria-pressed="${ui.goalSrc === 'coach'}">From coach</button>
+            <button type="button" data-action="goal-src" data-src="me" aria-pressed="${ui.goalSrc !== 'coach'}">My goal</button>
+          </div>
+          <button class="btn" data-action="goal-add">Add goal</button>
+        </div>
+        ${active.length ? `<h4 class="gb-sub">On the list</h4><ul class="gb-edit-list">${active.map(row).join('')}</ul>` : ''}
+        ${done.length ? `<h4 class="gb-sub">Done</h4><ul class="gb-edit-list">${done.map(row).join('')}</ul>` : ''}
+        <p class="hint">Goals added here are saved on this phone. To show them on every phone, ask Claude to add them to the data file, or export from Sessions → Data &amp; backup.</p>
+      </div>`;
+      return;
+    }
+    if (!goals.length) {
+      el.innerHTML = `<div class="gb gb-empty">${title}<span class="gb-note">Add a goal from a coach, or one of your own, to keep it here as a reminder.</span>
+        <button class="btn small ghost" data-action="goals-edit">+ Add a goal</button></div>`;
+      return;
+    }
+    const shown = ui.goalsAll ? active : active.slice(0, GOALS_SHOWN);
+    el.innerHTML = `<div class="gb">
+      <div class="gb-head">${title}<button class="btn small ghost" data-action="goals-edit">Edit</button></div>
+      ${active.length ? `<ul class="gb-list">${shown.map((g) => `<li class="gb-item">
+          <button class="gb-check" data-action="goal-done" data-id="${esc(g.id)}" aria-label="Mark done: ${esc(g.text)}"><span aria-hidden="true">✓</span></button>
+          <div class="gb-body"><span class="gb-text">${esc(g.text)}</span>${goalBadge(g)}</div></li>`).join('')}</ul>`
+        : `<p class="gb-alldone">Every goal is done. Nice work! Tap Edit to add the next one.</p>`}
+      ${active.length > GOALS_SHOWN ? `<button class="gb-more" data-action="goals-all">${ui.goalsAll ? 'Show fewer' : `Show all ${active.length} goals`}</button>` : ''}
+    </div>`;
+  }
+  function addGoal() {
+    const input = $('#goalText');
+    const text = input ? input.value.trim().replace(/\s+/g, ' ') : '';
+    if (!text) { toast('Type a goal first'); if (input) input.focus(); return; }
+    const g = { id: 'goal-' + todayISO() + '-' + Math.random().toString(36).slice(2, 6), text, source: ui.goalSrc === 'coach' ? 'coach' : 'me', added: todayISO(), done: false };
+    local.goals.added.push(g);
+    saveLocal(); refresh();
+    toast('Goal added');
+    const again = $('#goalText'); if (again) again.focus();
+  }
+  function setGoalDone(id) {
+    const g = (data.goals || []).find((x) => x.id === id);
+    if (!g) return;
+    local.goals.edits[id] = Object.assign({}, local.goals.edits[id], { done: !g.done });
+    saveLocal(); refresh();
+    toast(g.done ? 'Back on the list' : 'Nice work! Goal done');
+  }
+  function removeGoal(id) {
+    const g = (data.goals || []).find((x) => x.id === id);
+    if (!g || !confirm(`Remove this goal?\n\n“${g.text}”`)) return;
+    const before = local.goals.added.length;
+    local.goals.added = local.goals.added.filter((x) => x.id !== id);
+    if (local.goals.added.length === before && local.goals.removed.indexOf(id) < 0) local.goals.removed.push(id);
+    delete local.goals.edits[id];
+    saveLocal(); refresh();
+    toast('Goal removed');
+  }
+
   function renderBanner() {
     const el = $('#banner');
     let msg = '';
@@ -1115,7 +1195,9 @@
     const added = local.sessions.filter((s) => !fileSession(s.id)).length;
     const edited = local.sessions.length - added;
     const other = (local.player ? 1 : 0) + (local.baselineSessionId != null ? 1 : 0);
-    return { added, edited, hidden: local.hidden.length, other, total: local.sessions.length + local.hidden.length + other };
+    const lg = local.goals || emptyGoals();
+    const goals = lg.added.length + Object.keys(lg.edits).length + lg.removed.length;
+    return { added, edited, hidden: local.hidden.length, other, goals, total: local.sessions.length + local.hidden.length + other + goals };
   }
   function renderData(el) {
     const c = localCounts();
@@ -1139,7 +1221,7 @@
         <p class="hint">Progress compares each club with this session. A club it doesn’t include uses its own first session.</p></div>
       <div class="card"><h3 class="card-title">Backup</h3>
         <p class="note">${esc(status)} <code>${esc(file)}</code>${bundle && bundleStatus !== 'missing' ? ` (${plural(fileSessions().length, 'session')})` : ''}.</p>
-        <p class="note" style="margin-top:8px">On this device: ${parts.length ? esc(parts.join(', ')) + (c.added + c.edited + c.hidden === 1 ? ' session' : ' sessions') : 'no session changes'}${c.other ? `, plus ${c.other === 1 ? 'one setting' : c.other + ' settings'}` : ''}.</p>
+        <p class="note" style="margin-top:8px">On this device: ${parts.length ? esc(parts.join(', ')) + (c.added + c.edited + c.hidden === 1 ? ' session' : ' sessions') : 'no session changes'}${c.other ? `, plus ${c.other === 1 ? 'one setting' : c.other + ' settings'}` : ''}${c.goals ? `, plus ${c.goals === 1 ? 'one goal change' : c.goals + ' goal changes'}` : ''}.</p>
         <div class="row-actions">
           <button class="btn small" data-action="export-json">Export JSON</button>
           <button class="btn small" data-action="export-csv">Export CSV</button>
@@ -1158,6 +1240,7 @@
     if (b.sign_convention) out.sign_convention = b.sign_convention;
     out.clubs = clubs;
     out.baseline_session_id = data.baseline_session_id;
+    out.personal_goals = (data.goals || []).map((g) => ({ id: g.id, text: g.text, source: g.source, added: g.added, done: g.done }));
     out.sessions = data.sessions.map(stripUI);
     return out;
   }
@@ -1202,6 +1285,14 @@
         Object.keys(d.clubs).forEach((k) => { if (!b.clubs || b.clubs[k] !== d.clubs[k]) extra[k] = d.clubs[k]; });
         if (Object.keys(extra).length) local.clubs = Object.assign({}, local.clubs, extra);
       }
+      // Goals merge by id: new ones are added; a known goal takes the file's done state.
+      if (Array.isArray(d.personal_goals)) {
+        const have = new Map((data.goals || []).map((g) => [g.id, g]));
+        C.mergeGoals(d.personal_goals).forEach((g) => {
+          if (!have.has(g.id)) local.goals.added.push(g);
+          else if (have.get(g.id).done !== g.done) local.goals.edits[g.id] = Object.assign({}, local.goals.edits[g.id], { done: g.done });
+        });
+      }
     }
     saveLocal();
     refresh();
@@ -1220,6 +1311,17 @@
       ui.statClub = b.dataset.club; renderStats();
       const sec = $('#clubSection'); if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
+    'goals-edit'() { ui.goalsEdit = true; renderGoals(); const t = $('#goalText'); if (t) t.focus(); },
+    'goals-close'() { ui.goalsEdit = false; renderGoals(); },
+    'goals-all'() { ui.goalsAll = !ui.goalsAll; renderGoals(); },
+    'goal-src'(b) {
+      // Update in place so a half-typed goal isn't lost.
+      ui.goalSrc = b.dataset.src;
+      $$('[data-action="goal-src"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.src === ui.goalSrc)));
+    },
+    'goal-add'() { addGoal(); },
+    'goal-done'(b) { setGoalDone(b.dataset.id); },
+    'goal-remove'(b) { removeGoal(b.dataset.id); },
     'goto-tip'(b) {
       ui.tab = 'tips'; ui.openTip = b.dataset.tip; hideTip(); render();
       const d = $(`details[data-focus="${b.dataset.tip}"]`);
@@ -1387,6 +1489,9 @@
     if (t) showTip(t); else if (!e.target.closest('#tip')) hideTip();
     const a = e.target.closest ? e.target.closest('[data-action]') : null;
     if (a && actions[a.dataset.action] && !a.disabled) actions[a.dataset.action](a, e);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target && e.target.id === 'goalText') { e.preventDefault(); addGoal(); }
   });
   document.addEventListener('change', (e) => {
     const el = e.target.closest ? e.target.closest('[data-change]') : null;

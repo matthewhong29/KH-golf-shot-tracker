@@ -22,7 +22,11 @@ Shots can also be typed or pasted into the page itself (see [Pasting rows](#past
 
 ## What it shows
 
-The player buttons at the top (Dad | M3) switch everything below them. The four tabs are:
+The player buttons at the top (Dad | M3) switch everything below them.
+
+Under them, **goals** stay pinned on every tab as a constant reminder: personal goals and goals from a coach, each labelled "From coach" or "My goal". Tap ✓ when one is achieved and it moves to a Done list; **Edit** adds, finishes or removes goals. The first three open goals show, with "Show all" for the rest. Goals added on a phone stay on that phone; to share them with every phone, ask Claude to add them to the data file (see `CLAUDE.md`), or export from Data & backup.
+
+The four tabs are:
 
 - **Stats** for one session, or all sessions pooled:
   - Highlights: a "Needs work" box listing clubs to practise (tap one to jump to it), then shot count, solid-contact rate, thin or topped shots, average miss per club, and change since the baseline.
@@ -85,6 +89,8 @@ Units match the screen. Carry and total are in yards. Apex, curve and offline ar
 ```
 
 A shot can also have `club_speed_mph`, `spin_rpm`, `smash_factor` (derived from ball and club speed when missing) and `note`.
+
+Goals live in a top-level `personal_goals` list: `{ "id": "goal-2026-11-02-1", "text": "Keep your head still through impact", "source": "coach", "added": "2026-11-02", "done": false }`, where `source` is `"coach"` or `"me"`.
 
 A session has `id`, `date` (YYYY-MM-DD), `device`, optional `bay` or `location`, `notes` (data caveats), `coaching_notes`, optional `screen_averages`, and `shots`. A session with only ranges, like the Aug Rapsodo one, uses `"summary": { "PW": { "carry_yds": { "min": 9, "max": 95 } } }` and an empty `shots` array.
 

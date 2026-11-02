@@ -193,6 +193,20 @@ const w56 = { club: '56°', shots: [{ club: '56°', carry_yds: 60, launch_deg: 3
 w56.solid = w56.shots;
 eq(C.clubGoals(w56, '56°').goals.map((g) => g.id), ['carry', 'contact'], 'no launch window or offline data: carry and contact goals only');
 
+section('Personal and coach goals');
+const fileGoals = [
+  { id: 'g1', text: 'Hold your finish for 3 seconds', source: 'coach', added: '2026-11-02', done: false },
+  { id: 'g2', text: 'Break 100 by spring', source: 'me', added: '2026-11-02', done: false },
+  { id: 'g3', text: 'Old goal', source: 'coach', added: '2026-10-01', done: true },
+];
+eq(C.mergeGoals(fileGoals).map((g) => [g.id, g.source, g.done]), [['g1', 'coach', false], ['g2', 'me', false], ['g3', 'coach', true]], 'file goals pass through');
+eq(C.mergeGoals(fileGoals, { added: [{ id: 'g4', text: 'Ball first, then turf', source: 'me', added: '2026-11-03' }], edits: { g1: { done: true }, g3: { done: false } }, removed: ['g2'] })
+  .map((g) => [g.id, g.done]), [['g1', true], ['g3', false], ['g4', false]], 'device changes: add, mark done, undo, remove');
+eq(C.mergeGoals([{ id: 'x', text: 'Keep your head still', source: 'Coach Jim' }, { id: 'x', text: 'dupe', source: 'me' }, { id: 'y', text: '' }, null, 'junk'])
+  .map((g) => [g.id, g.source, g.text]), [['x', 'coach', 'Keep your head still']], 'bad entries skipped, first id wins, "Coach …" counts as a coach goal');
+eq(C.mergeGoals(null, null), [], 'no goals');
+eq(require('../data/dad_golf_data.json').personal_goals, [], 'Dad starts with an empty goals list');
+
 section('Progress');
 const pPW = C.progressFor(data.sessions, 'PW', data.baseline_session_id);
 eq([pPW.rows.length, pPW.baseline.session.id, pPW.latest.session.id, pPW.fallback], [2, '2026-08-rapsodo', '2026-11-01-toptracer', false], 'PW progress uses the Aug baseline');

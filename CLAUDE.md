@@ -33,6 +33,15 @@ Dad or M3 takes photos of the Toptracer or Rapsodo screen and texts them to Matt
 5. **Commit and push to `main`.** Matthew, the repo owner, approved pushing data updates straight to `main`, because that branch is what the website serves. If your session requires a different branch, ask once whether to push to `main`. Use a commit message like "Add 12 shots for Dad from 2026-11-01 (SW, 5w)". The site updates about a minute after the push.
 6. **End with a short summary Matthew can forward:** shots per club, average carry per club (solid shots), how many likely mis-hits there were, which clubs the page now marks "Needs work" (and any that dropped off the list), and anything notable, such as misses to one side or a club that went farther than last time. Use plain words, short and encouraging. Dad is a beginner; for M3, keep it fun.
 
+## Adding or updating goals
+
+Each player file has a `personal_goals` list. The page pins the open ones at the top of every tab as a constant reminder.
+
+- When Matthew asks for a goal ("add a coach goal for Dad: keep your head still"), append `{ "id": "goal-YYYY-MM-DD-N", "text": "...", "source": "coach", "added": "YYYY-MM-DD", "done": false }` to that player's `personal_goals`. Use `"coach"` for anything a coach or teacher gave him and `"me"` for his own goals. Use today's date and the next free N for that day.
+- Keep the text short and in Matthew's words: something the player can read at a glance, ideally under 80 characters (the check warns past 140). Don't reword or merge goals.
+- To mark a goal achieved, set `"done": true` rather than deleting it; the page moves it to a "Done" list. Delete only when asked.
+- Then run the checks, commit (e.g. "Add a coach goal for Dad") and push to `main` as above.
+
 Don't change `coaching_notes` or the tips in `js/tips.js` unless asked. Don't commit the photos themselves unless asked, because the repo is public.
 
 ## Code

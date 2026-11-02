@@ -258,6 +258,35 @@ nav.tabs button[aria-selected="true"]::before{content:"";position:absolute;top:0
 .stat-row .sr{display:block;font-size:16px;color:var(--ink-2)}
 .chart .nwband{fill:var(--nw-bg);stroke:var(--nw-border);stroke-width:1.5}
 .chart .nwtext{fill:var(--nw-ink);font-size:15px;font-weight:700}
+/* Goals pinned at the top of every tab: personal goals and goals from a coach */
+.goals-bar{margin:14px 0 4px}
+.gb{background:#eef4fb;border:2px solid #2f5f9e;border-radius:16px;padding:12px 14px}
+.gb-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.gb-title{font-size:1.2rem;font-weight:700;color:var(--ink)}
+.gb-list{list-style:none;margin-top:4px}
+.gb-item{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-top:1px solid #c5d6ec}
+.gb-item:first-child{border-top:0}
+.gb-check{flex:none;width:44px;height:44px;border-radius:50%;border:2px solid #2f5f9e;background:#fff;color:#2f5f9e;font-size:1.3rem;font-weight:700;line-height:1;cursor:pointer}
+.gb-check:hover{background:#dce8f6}
+.gb-body{flex:1;min-width:0;padding-top:2px}
+.gb-text{display:block;font-size:1.15rem;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.gb-src{display:inline-block;margin-top:4px;font-size:16px;font-weight:700;border-radius:999px;padding:1px 10px;border:1.5px solid;background:#fff}
+.gb-src.coach{color:#1f4b80;border-color:#2f5f9e}
+.gb-src.me{color:#14552c;border-color:#1b6e3a}
+.gb-more{background:none;border:0;color:#1f4b80;font-weight:700;font-size:1.05rem;min-height:48px;padding:0;cursor:pointer}
+.gb-empty{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.gb-empty .gb-note{flex:1 1 180px;font-size:17px;color:var(--ink-2)}
+.gb-alldone{font-size:17px;margin-top:6px}
+.gb-add{margin-top:10px;padding-top:10px;border-top:1px solid #c5d6ec}
+.gb-add .seg{margin:10px 0}
+.gb-add .btn{width:100%}
+.gb-edit-list{list-style:none;margin-top:12px}
+.gb-edit-list li{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #c5d6ec}
+.gb-edit-list .gb-body .gb-text{font-weight:400}
+.gb-edit-list li.done .gb-text{text-decoration:line-through;color:var(--ink-2)}
+.gb-edit-list .btn{flex:none}
+.gb-sub{font-size:1.05rem;font-weight:700;margin-top:14px}
+.gb .hint{margin-top:12px}
 </style>
 </head>
 <body>
@@ -268,6 +297,7 @@ nav.tabs button[aria-selected="true"]::before{content:"";position:absolute;top:0
 </header>
 
 <main>
+  <section class="goals-bar" id="goalsBar" aria-label="Goals"></section>
   <div class="banner" id="banner" role="status" hidden></div>
   <section class="view" id="view-stats" data-view="stats" aria-label="Stats"></section>
   <section class="view" id="view-progress" data-view="progress" aria-label="Progress" hidden></section>

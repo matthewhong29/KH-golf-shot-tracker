@@ -296,6 +296,26 @@
     return out;
   }
 
+  // Personal and coach goals: the shared list from the data file
+  // (`personal_goals`), plus changes made on this device:
+  // { added: [goal], edits: { id: { done, text } }, removed: [id] }.
+  // A goal is { id, text, source: 'coach' | 'me', added: 'YYYY-MM-DD', done }.
+  function mergeGoals(fileGoals, localGoals) {
+    var lg = localGoals || {};
+    var removed = lg.removed || [], edits = lg.edits || {};
+    var out = [], seen = {};
+    (Array.isArray(fileGoals) ? fileGoals : []).concat(Array.isArray(lg.added) ? lg.added : []).forEach(function (g) {
+      if (!g || typeof g !== 'object' || !g.id || !g.text || seen[g.id] || removed.indexOf(g.id) >= 0) return;
+      seen[g.id] = true;
+      var e = edits[g.id] || {};
+      out.push({
+        id: g.id, text: e.text || g.text, source: /coach/i.test(String(g.source || '')) ? 'coach' : 'me',
+        added: g.added || null, done: e.done != null ? !!e.done : !!g.done
+      });
+    });
+    return out;
+  }
+
   // Ballpark launch windows (degrees) for a modest swing speed. Slower swings
   // launch a little higher than tour players, so these sit a few degrees above
   // tour averages. They're targets to aim at, not hard rules.
@@ -1012,6 +1032,7 @@
     asList: asList, clubData: clubData, entryHasData: entryHasData, metricStat: metricStat, mishits: mishits,
     sessionMishits: sessionMishits, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
+    mergeGoals: mergeGoals,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf

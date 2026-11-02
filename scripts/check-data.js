@@ -90,7 +90,30 @@ function checkPlayerFile(file) {
   if (data.baseline_session_id && !sessionIds.has(data.baseline_session_id)) {
     errors.push(`baseline_session_id "${data.baseline_session_id}" doesn't match any session`);
   }
-  return { errors, warnings, sessions: sessionIds.size, shots: shotIds.size, name: data.player && data.player.name };
+
+  // personal_goals: [{ id, text, source: "coach" | "me", added: "YYYY-MM-DD", done: false }]
+  let goals = 0;
+  if (data.personal_goals != null) {
+    if (!Array.isArray(data.personal_goals)) {
+      errors.push('"personal_goals" must be an array (use [] for none)');
+    } else {
+      const goalIds = new Set();
+      data.personal_goals.forEach((g, i) => {
+        const w = `goal ${g && g.id ? g.id : '#' + (i + 1)}`;
+        if (!g || typeof g !== 'object') { errors.push(`${w}: must be an object`); return; }
+        if (!g.id) errors.push(`${w}: missing id`);
+        else if (goalIds.has(g.id)) errors.push(`${w}: duplicate goal id`);
+        goalIds.add(g.id);
+        if (typeof g.text !== 'string' || !g.text.trim()) errors.push(`${w}: "text" must be a non-empty string`);
+        else if (g.text.length > 140) warnings.push(`${w}: text is ${g.text.length} characters; keep goals short enough to read at a glance`);
+        if (g.source !== 'coach' && g.source !== 'me') errors.push(`${w}: "source" must be "coach" or "me"`);
+        if (g.added != null && !/^\d{4}-\d{2}-\d{2}$/.test(g.added)) errors.push(`${w}: "added" must be YYYY-MM-DD`);
+        if (g.done != null && typeof g.done !== 'boolean') errors.push(`${w}: "done" must be true or false`);
+      });
+      goals = data.personal_goals.length;
+    }
+  }
+  return { errors, warnings, sessions: sessionIds.size, shots: shotIds.size, goals, name: data.player && data.player.name };
 }
 
 // Checks data/players.json. Returns { errors, warnings, files: [{ id, name, file }] }.
@@ -123,7 +146,7 @@ function report(label, res) {
   for (const e of res.errors) console.log(`✗ ${label}: ${e}`);
 }
 function summary(res) {
-  return `${res.sessions} sessions, ${res.shots} shots${res.warnings.length ? `, ${res.warnings.length} warning(s)` : ''}`;
+  return `${res.sessions} sessions, ${res.shots} shots, ${res.goals} goal${res.goals === 1 ? '' : 's'}${res.warnings.length ? `, ${res.warnings.length} warning(s)` : ''}`;
 }
 
 let failed = 0;

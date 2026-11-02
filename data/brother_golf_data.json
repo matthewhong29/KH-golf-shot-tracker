@@ -22,5 +22,6 @@
   "sign_convention": "curve_ft and offline_ft: negative = left, positive = right (right-handed golfer view). curve = how much the ball bent in the air; offline = where it finished relative to the target line.",
   "clubs": {},
   "baseline_session_id": null,
+  "personal_goals": [],
   "sessions": []
 }
