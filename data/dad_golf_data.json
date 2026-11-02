@@ -28,7 +28,15 @@
     "5w": "5 wood"
   },
   "baseline_session_id": "2026-08-rapsodo",
-  "personal_goals": [],
+  "personal_goals": [
+    {
+      "id": "goal-2026-11-01-86o0",
+      "text": "Test",
+      "source": "me",
+      "added": "2026-11-01",
+      "done": false
+    }
+  ],
   "sessions": [
     {
       "id": "2026-08-rapsodo",
