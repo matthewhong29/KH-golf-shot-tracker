@@ -4,7 +4,13 @@ const fs = require('fs');
 const path = require('path');
 const C = require('../js/core.js');
 
-const data = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'dad_golf_data.json'), 'utf8'));
+const fileText = fs.readFileSync(path.join(__dirname, '..', 'data', 'dad_golf_data.json'), 'utf8');
+const fileData = JSON.parse(fileText);
+// The tests check numbers worked out by hand from Dad's first two sessions (Aug 2026 and
+// Nov 1), with no goals. Pinning to those keeps them passing as new range sessions and
+// goals are added to the real file; scripts/check-data.js checks the file itself.
+const FIXTURE_SESSIONS = ['2026-08-rapsodo', '2026-11-01-toptracer'];
+const data = Object.assign({}, fileData, { personal_goals: [], sessions: fileData.sessions.filter((s) => FIXTURE_SESSIONS.indexOf(s.id) >= 0) });
 
 let passed = 0, failed = 0;
 function eq(actual, expected, msg) {
@@ -229,10 +235,11 @@ eq(C.mergeGoals(fileGoals, { added: [{ id: 'g4', text: 'Ball first, then turf', 
 eq(C.mergeGoals([{ id: 'x', text: 'Keep your head still', source: 'Coach Jim' }, { id: 'x', text: 'dupe', source: 'me' }, { id: 'y', text: '' }, null, 'junk'])
   .map((g) => [g.id, g.source, g.text]), [['x', 'coach', 'Keep your head still']], 'bad entries skipped, first id wins, "Coach …" counts as a coach goal');
 eq(C.mergeGoals(null, null), [], 'no goals');
-eq(require('../data/dad_golf_data.json').personal_goals, [], 'Dad starts with an empty goals list');
+eq(Array.isArray(fileData.personal_goals), true, 'Dad\u2019s file has a goals list');
+eq(FIXTURE_SESSIONS.every((id) => fileData.sessions.some((s) => s.id === id)), true, 'the hand-checked sessions are still in the file');
 // Saving goals back to the repo: only personal_goals changes, key order and formatting are kept.
-const dadText = require('fs').readFileSync(require('path').join(__dirname, '..', 'data', 'dad_golf_data.json'), 'utf8');
-const dadObj = JSON.parse(dadText);
+const dadObj = JSON.parse(JSON.stringify(data));
+const dadText = JSON.stringify(dadObj, null, 2) + (fileText.endsWith('\n') ? '\n' : '');
 eq(C.applyGoals(dadObj, { added: [], edits: {}, removed: [] }), null, 'no goal changes: nothing to save');
 const saved = C.applyGoals(dadObj, { added: [{ id: 'goal-2026-11-02-1', text: 'Keep your head still', source: 'coach', added: '2026-11-02' }], edits: {}, removed: [] });
 eq(Object.keys(saved), Object.keys(dadObj), 'key order kept');
