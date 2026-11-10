@@ -113,17 +113,22 @@ function checkPlayerFile(file) {
       goals = data.personal_goals.length;
     }
   }
-  // equipment (optional): { irons: "Lynx Black Cat", iron_lofts_deg: { "7i": 33, ... } }
-  // The page sets each listed club's launch target from its loft.
+  // equipment (optional): { note, bag: { "7i": { "model": "Lynx Black Cat", "loft_deg": 33 }, ... } }
+  // The page sets each club's launch target from its loft (loft_deg may be null when unknown).
   if (data.equipment != null) {
     const eq = data.equipment;
     if (typeof eq !== 'object' || Array.isArray(eq)) errors.push('"equipment" must be an object');
-    else if (eq.iron_lofts_deg != null) {
-      if (typeof eq.iron_lofts_deg !== 'object' || Array.isArray(eq.iron_lofts_deg)) errors.push('equipment.iron_lofts_deg must be an object like { "7i": 33 }');
-      else Object.entries(eq.iron_lofts_deg).forEach(([club, loft]) => {
-        if (!CLUB_RE.test(club)) errors.push(`equipment.iron_lofts_deg: "${club}" isn't a standard club name`);
-        if (typeof loft !== 'number' || !Number.isFinite(loft)) errors.push(`equipment.iron_lofts_deg.${club} must be a number of degrees`);
-        else if (loft < 15 || loft > 65) warnings.push(`equipment.iron_lofts_deg.${club} = ${loft}° looks out of range`);
+    else if (eq.bag != null) {
+      if (typeof eq.bag !== 'object' || Array.isArray(eq.bag)) errors.push('equipment.bag must be an object like { "7i": { "model": "…", "loft_deg": 33 } }');
+      else Object.entries(eq.bag).forEach(([club, spec]) => {
+        const w = `equipment.bag.${club}`;
+        if (!CLUB_RE.test(club)) errors.push(`${w}: "${club}" isn't a standard club name`);
+        if (!spec || typeof spec !== 'object') { errors.push(`${w} must be an object`); return; }
+        if (spec.model != null && typeof spec.model !== 'string') errors.push(`${w}.model must be text`);
+        if (spec.loft_deg != null) {
+          if (typeof spec.loft_deg !== 'number' || !Number.isFinite(spec.loft_deg)) errors.push(`${w}.loft_deg must be a number of degrees or null`);
+          else if (spec.loft_deg < 5 || spec.loft_deg > 65) warnings.push(`${w}.loft_deg = ${spec.loft_deg}° looks out of range`);
+        }
       });
     }
   }

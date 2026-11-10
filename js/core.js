@@ -345,19 +345,34 @@
     '6hy': [16, 20], '5hy': [15, 19], '4hy': [14, 18], '3hy': [13, 17],
     '7w': [13, 17], '5w': [12, 16], '4w': [11, 15], '3w': [11, 15], Driver: [12, 16]
   };
-  // Launch window for a club. When the player's data file lists his clubs' lofts
-  // (equipment.iron_lofts_deg), the window is centred on 64% of the loft, ±2°:
-  // with a modest swing speed and a neutral strike, irons launch at roughly 60–68%
-  // of their loft. Otherwise the ballpark LAUNCH_WINDOWS apply.
-  var LAUNCH_PER_LOFT = 0.64;
+  // A player's clubs, from his data file: equipment.bag = { "7i": { model, loft_deg }, ... }.
+  function clubSpec(club, equip) {
+    var bag = equip && equip.bag;
+    return bag && bag[club] && typeof bag[club] === 'object' ? bag[club] : null;
+  }
   function clubLoft(club, equip) {
-    var lofts = equip && equip.iron_lofts_deg;
-    return lofts && isNum(lofts[club]) ? lofts[club] : null;
+    var spec = clubSpec(club, equip);
+    return spec && isNum(spec.loft_deg) ? spec.loft_deg : null;
+  }
+  // Launch window for a club. When the player's data file gives the club's loft,
+  // the window is ±2° around what a solid strike at a modest swing speed usually
+  // launches at: about 64% of the loft for irons and wedges, 68% for hybrids
+  // (their weight sits lower and farther back), 75% for fairway woods, and about
+  // 3° above the loft for a driver hit off a tee. Without a loft, the ballpark
+  // LAUNCH_WINDOWS apply.
+  var LAUNCH_PER_LOFT = { iron: 0.64, hybrid: 0.68, wood: 0.75 };
+  function clubKind(club) {
+    var c = String(club);
+    if (c === 'Driver') return 'driver';
+    if (/^\d+w$/.test(c)) return 'wood';
+    if (/^\d+hy$/.test(c)) return 'hybrid';
+    return 'iron';
   }
   function launchWindow(club, equip) {
     var loft = clubLoft(club, equip);
     if (loft != null) {
-      var c = roundHalfEven(LAUNCH_PER_LOFT * loft, 0);
+      var kind = clubKind(club);
+      var c = roundHalfEven(kind === 'driver' ? loft + 3 : LAUNCH_PER_LOFT[kind] * loft, 0);
       return [c - 2, c + 2];
     }
     return LAUNCH_WINDOWS[club] || null;
@@ -1151,7 +1166,7 @@
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
     mergeGoals: mergeGoals, applyGoals: applyGoals,
     bestStrikes: bestStrikes, strikeReference: strikeReference, checkShot: checkShot,
-    launchWindow: launchWindow, clubLoft: clubLoft, LAUNCH_PER_LOFT: LAUNCH_PER_LOFT,
+    launchWindow: launchWindow, clubLoft: clubLoft, clubSpec: clubSpec, clubKind: clubKind, LAUNCH_PER_LOFT: LAUNCH_PER_LOFT,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf

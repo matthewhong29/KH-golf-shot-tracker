@@ -221,7 +221,8 @@ eq(C.checkShot(novE['5hy'], '5hy', { carry_yds: 150, launch_deg: 17 }).verdict, 
 eq(C.checkShot(null, 'PW', { carry_yds: 80 }), null, 'no data for the club: nothing to check');
 
 section('Launch targets from his club lofts');
-const blackCats = { irons: 'Lynx Black Cat', iron_lofts_deg: { '7i': 33, '9i': 41, PW: 45 } };
+const blackCats = { bag: { '7i': { model: 'Lynx Black Cat', loft_deg: 33 }, '9i': { model: 'Lynx Black Cat', loft_deg: 41 }, PW: { model: 'Lynx Black Cat', loft_deg: 45 },
+  '3i': { model: 'Lynx Black Cat', loft_deg: 20 }, '5hy': { model: 'Callaway Edge', loft_deg: null }, Driver: { model: 'Callaway Edge', loft_deg: 10.5 } } };
 eq(['7i', '9i', 'PW', '5hy', 'SW'].map((c) => C.launchWindow(c, blackCats)), [[19, 23], [24, 28], [27, 31], [15, 19], [30, 34]],
   'windows from loft (64%, ±2°); clubs without a loft keep the general windows');
 eq([C.clubLoft('7i', blackCats), C.clubLoft('5hy', blackCats), C.clubLoft('7i', null)], [33, null, null], 'club loft lookup');
@@ -230,7 +231,14 @@ const pwG = C.clubGoals(novE.PW, 'PW', blackCats).goals.find((g) => g.id === 'la
 eq([pwG.lo, pwG.hi, pwG.status], [27, 31, 'high'], 'PW goal uses the Black Cat loft');
 eq(C.checkShot(novE.PW, 'PW', { launch_deg: 31 }, blackCats).lines[0].ok, true, 'a 31° PW launch is on target with a 45° PW');
 eq(C.checkShot(novE.PW, 'PW', { launch_deg: 31 }).lines[0].ok, false, 'but high against the general 26–30° window');
-eq(fileData.equipment && fileData.equipment.irons, 'Lynx Black Cat', 'Dad\u2019s file lists his Lynx Black Cat irons');
+eq(['3i', 'Driver', '5hy'].map((c) => C.launchWindow(c, blackCats)), [[11, 15], [12, 16], [15, 19]], '3 iron from its loft, driver loft + 3°, hybrid without a loft keeps the general window');
+eq(C.launchWindow('5hy', { bag: { '5hy': { loft_deg: 25 } } }), [15, 19], 'a 25° hybrid: 68% of loft');
+eq(C.launchWindow('3w', { bag: { '3w': { loft_deg: 15 } } }), [9, 13], 'a 15° 3 wood: 75% of loft');
+eq(['PW', '7i', 'Driver', '5w', 'SW'].map(C.clubKind), ['iron', 'iron', 'driver', 'wood', 'iron'], 'club kinds');
+eq([C.clubSpec('5hy', blackCats).model, C.clubSpec('SW', blackCats)], ['Callaway Edge', null], 'club spec lookup');
+eq(Object.keys(fileData.equipment.bag).map((c) => [c, fileData.equipment.bag[c].model]).filter((x) => x[1] === 'Callaway Edge').map((x) => x[0]), ['5hy', 'Driver'],
+  'Dad\u2019s file: the 5 hybrid and driver are Callaway Edge');
+eq(['3i', '4i', '5i', '6i', '7i', '8i', '9i', 'PW'].every((c) => fileData.equipment.bag[c].model === 'Lynx Black Cat'), true, 'Dad\u2019s file: 3 iron to PW are Lynx Black Cats');
 const w56 = { club: '56°', shots: [{ club: '56°', carry_yds: 60, launch_deg: 33 }], mis: [], ranges: {} };
 w56.solid = w56.shots;
 eq(C.clubGoals(w56, '56°').goals.map((g) => g.id), ['carry', 'contact'], 'no launch window or offline data: carry and contact goals only');

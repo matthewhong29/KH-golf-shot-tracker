@@ -741,9 +741,24 @@
   const NW_PILL = '<span class="nw-pill">Needs work</span>';
   // "7 iron · Lynx Black Cat, 33° loft" when the data file lists the player's clubs.
   function clubLabel(c) {
-    const name = C.clubName(c, data.clubs), loft = C.clubLoft(c, data.equipment);
-    const brand = data.equipment && data.equipment.irons;
-    return loft != null ? `${name} · ${brand ? brand + ', ' : ''}${loft}° loft` : name;
+    const name = C.clubName(c, data.clubs), spec = C.clubSpec(c, data.equipment), loft = C.clubLoft(c, data.equipment);
+    const parts = [spec && spec.model, loft != null ? `${C.fmtRaw(loft)}° loft` : ''].filter(Boolean);
+    return parts.length ? `${name} · ${parts.join(', ')}` : name;
+  }
+  // Every club in the bag plus any he has hit: model, loft and launch target.
+  function clubsCard(clubsHit) {
+    const bag = (data.equipment && data.equipment.bag) || {};
+    const list = C.sortClubs(Array.from(new Set(Object.keys(bag).concat(clubsHit))));
+    if (!list.length) return '';
+    const rows = list.map((c) => {
+      const spec = C.clubSpec(c, data.equipment), loft = C.clubLoft(c, data.equipment), win = C.launchWindow(c, data.equipment);
+      const what = [spec && spec.model, loft != null ? `${C.fmtRaw(loft)}°` : spec ? 'loft not listed' : 'not listed yet'].filter(Boolean).join(' · ');
+      return `<li><span class="aim-k">${esc(c)}<small>${esc(what)}</small></span><span class="aim-v">${win ? `${win[0]}–${win[1]}°` : '—'}<small>${loft != null ? 'from its loft' : 'general target'}</small></span></li>`;
+    }).join('');
+    return `<div class="card"><h3 class="card-title">Your clubs and launch targets</h3>
+      <p class="note">The launch a solid strike should have with each club, worked out from its loft.</p>
+      <ul class="aim-list">${rows}</ul>
+      ${data.equipment && data.equipment.note ? `<p class="hint">${esc(data.equipment.note)}</p>` : ''}</div>`;
   }
   function yds(n) { return n === '1' ? n + ' yd' : n + ' yds'; }
   function goalRow(g) {
@@ -1060,7 +1075,8 @@
           <p class="note">How far a pure strike carries with each club. Tap a club for its numbers.</p>
           <ul class="yard-list">${rows}</ul>
           <p class="hint">A pure strike is one of your best-struck shots: solid contact with your highest ball speeds, launched at a normal height. Each club uses its most recent session, so these grow as you improve.</p></div>
-        <div class="card" id="practiceCard">${practiceCard(ui.practiceClub, pc[ui.practiceClub], t)}</div>`
+        <div class="card" id="practiceCard">${practiceCard(ui.practiceClub, pc[ui.practiceClub], t)}</div>
+        ${clubsCard(clubs)}`
       : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>`}
       ${t ? `<h2 class="lib-title">Tips &amp; drills</h2>
         <p class="lead">${esc(fillText(t.intro))}</p>

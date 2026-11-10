@@ -38,6 +38,7 @@ The four tabs are:
 - **Progress**: pick a club and a metric to see each session's range and average, then a baseline-vs-latest table. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
 - **Practice**, for use during a range session:
   - **Your yardages:** each club's pure-strike carry and ball speed at a glance. Tap a club to pick it.
+  - **Your clubs and launch targets:** every club in his bag with its model, loft and the launch a solid strike should have.
   - **Aim for:** the club's numbers to hit: a distance zone, the ball speed of a pure strike, the launch window and on line (within 10 yds). It also shows what his pure strikes look like (peak height, landing angle, total) and the club's "Needs work" notes.
   - **Focus:** one thing to work on with that club, with the matching drill and a "Look it up" link.
   - **Check a shot:** type the carry, ball speed, launch and offline from the range screen to get "Pure strike!", "Good shot", "Keep working" or "Looks thin or topped", with a line on each number.
@@ -91,7 +92,7 @@ Units match the screen. Carry and total are in yards. Apex, curve and offline ar
 
 A shot can also have `club_speed_mph`, `spin_rpm`, `smash_factor` (derived from ball and club speed when missing) and `note`.
 
-A player's clubs can go in a top-level `equipment` block, e.g. Dad's: `{ "irons": "Lynx Black Cat", "iron_lofts_deg": { "7i": 33, "9i": 41, "PW": 45, … } }`, plus a note on which clubs are from the set and where the lofts came from. Each listed club's launch target comes from its loft, and the club cards show it ("Pitching wedge · Lynx Black Cat, 45° loft").
+A player's clubs can go in a top-level `equipment` block: a `bag` with one entry per club, e.g. Dad's `"7i": { "model": "Lynx Black Cat", "loft_deg": 33 }` and `"Driver": { "model": "Callaway Edge", "loft_deg": 10.5 }`. `loft_deg` can be `null` when it isn't known, like his Callaway Edge 5 hybrid. A `note` and `lofts_source` say which clubs are which and where the lofts came from. Each club's launch target comes from its loft. The club cards show the model and loft, e.g. "7 iron · Lynx Black Cat, 33° loft", and the Practice tab lists every club with its launch target.
 
 Goals live in a top-level `personal_goals` list: `{ "id": "goal-2026-11-02-1", "text": "Keep your head still through impact", "source": "coach", "added": "2026-11-02", "done": false }`, where `source` is `"coach"` or `"me"`.
 
@@ -147,7 +148,7 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
   - **Distance:** a zone centred on the club's pure-strike carry. The window is 25% tighter than his current spread, but never under ±5 yds for wedges, ±6 for irons or ±8 for hybrids, woods and driver. Met when 7 of 10 shots land in it.
   - **On line:** met when 8 of 10 shots finish within 10 yds (30 ft) of the target line.
   - **Launch:** the solid shots' average launch sits inside the club's launch window (`launchWindow`).
-    - When the data file lists the club's loft under `equipment`, the window is centred on 64% of the loft, ±2°. With a modest swing speed and a neutral strike, irons launch at roughly 60–68% of their loft. Dad's Lynx Black Cats give PW 27–31°, 9i 24–28° and 7i 19–23°.
+    - When the data file gives the club's loft under `equipment.bag`, the window is ±2° around what a solid strike at a modest swing speed usually launches at: 64% of the loft for irons and wedges, 68% for hybrids, 75% for fairway woods, and the loft plus 3° for a driver off a tee. Dad's Black Cats give 3 iron 11–15°, 4 iron 13–17°, 5 iron 15–19°, 6 iron 17–21°, 7 iron 19–23°, 8 iron 22–26°, 9 iron 24–28° and PW 27–31°. His 10.5° Callaway Edge driver gives 12–16°.
     - Otherwise a ballpark window for the club applies (`LAUNCH_WINDOWS`, e.g. PW 26–30°, 7i 19–23°). These sit a few degrees above tour averages because slower swings launch higher; a coach can fine-tune them.
   - **Solid contact:** met when 9 of 10 swings are solid.
   - **Focus** names one thing to work on first: contact, then direction, then launch, then distance. Its "See drills" button opens the matching Tips section on Practice.
