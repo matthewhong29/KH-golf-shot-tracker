@@ -91,6 +91,8 @@ Units match the screen. Carry and total are in yards. Apex, curve and offline ar
 
 A shot can also have `club_speed_mph`, `spin_rpm`, `smash_factor` (derived from ball and club speed when missing) and `note`.
 
+A player's clubs can go in a top-level `equipment` block, e.g. Dad's: `{ "irons": "Lynx Black Cat", "iron_lofts_deg": { "7i": 33, "9i": 41, "PW": 45, … } }`, plus a note on which clubs are from the set and where the lofts came from. Each listed club's launch target comes from its loft, and the club cards show it ("Pitching wedge · Lynx Black Cat, 45° loft").
+
 Goals live in a top-level `personal_goals` list: `{ "id": "goal-2026-11-02-1", "text": "Keep your head still through impact", "source": "coach", "added": "2026-11-02", "done": false }`, where `source` is `"coach"` or `"me"`.
 
 A session has `id`, `date` (YYYY-MM-DD), `device`, optional `bay` or `location`, `notes` (data caveats), `coaching_notes`, optional `screen_averages`, and `shots`. A session with only ranges, like the Aug Rapsodo one, uses `"summary": { "PW": { "carry_yds": { "min": 9, "max": 95 } } }` and an empty `shots` array.
@@ -144,7 +146,9 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
 - **Goals** for each club come from the player's own shots, so they move as he improves (`clubGoals`):
   - **Distance:** a zone centred on the club's pure-strike carry. The window is 25% tighter than his current spread, but never under ±5 yds for wedges, ±6 for irons or ±8 for hybrids, woods and driver. Met when 7 of 10 shots land in it.
   - **On line:** met when 8 of 10 shots finish within 10 yds (30 ft) of the target line.
-  - **Launch:** the solid shots' average launch sits inside a ballpark window for the club at a modest swing speed (`LAUNCH_WINDOWS`, e.g. PW 26–30°, 7i 19–23°). These sit a few degrees above tour averages because slower swings launch higher; a coach can fine-tune them.
+  - **Launch:** the solid shots' average launch sits inside the club's launch window (`launchWindow`).
+    - When the data file lists the club's loft under `equipment`, the window is centred on 64% of the loft, ±2°. With a modest swing speed and a neutral strike, irons launch at roughly 60–68% of their loft. Dad's Lynx Black Cats give PW 27–31°, 9i 24–28° and 7i 19–23°.
+    - Otherwise a ballpark window for the club applies (`LAUNCH_WINDOWS`, e.g. PW 26–30°, 7i 19–23°). These sit a few degrees above tour averages because slower swings launch higher; a coach can fine-tune them.
   - **Solid contact:** met when 9 of 10 swings are solid.
   - **Focus** names one thing to work on first: contact, then direction, then launch, then distance. Its "See drills" button opens the matching Tips section on Practice.
 - **Check a shot** (`checkShot`) compares the numbers typed from the screen with that club's references:

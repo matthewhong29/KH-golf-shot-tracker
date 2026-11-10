@@ -27,6 +27,19 @@
     "5hy": "5 hybrid",
     "5w": "5 wood"
   },
+  "equipment": {
+    "irons": "Lynx Black Cat",
+    "irons_note": "An older set of Lynx Black Cat irons; his 7i, 9i and PW are from it. The SW, 5hy and 5w aren’t confirmed as Black Cats, so they use the general launch windows.",
+    "iron_lofts_deg": {
+      "5i": 27,
+      "6i": 30,
+      "7i": 33,
+      "8i": 37,
+      "9i": 41,
+      "PW": 45
+    },
+    "lofts_source": "Lynx’s published Black Cat specs: 5-iron 27°, 6-iron 30°, 7-iron 33°, PW 45°, with the 8 and 9 iron filled in between. Older Black Cat heads list the 7-iron at 34°, so his set may be a degree or so different."
+  },
   "baseline_session_id": "2026-08-rapsodo",
   "personal_goals": [],
   "sessions": [

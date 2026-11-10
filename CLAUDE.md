@@ -8,10 +8,12 @@ A phone-first web page that tracks golf shots for Matthew's family. GitHub Pages
 
 | Player | id (URL `?player=`) | File | About |
 |---|---|---|---|
-| Dad | `dad` | `data/dad_golf_data.json` | 56, 6′1″, beginner |
+| Dad | `dad` | `data/dad_golf_data.json` | 56, 6′1″, beginner; plays an older set of Lynx Black Cat irons |
 | M3 (Matthew's brother) | `brother` | `data/brother_golf_data.json` | 14, 5′0″, plays for fun and wants to keep up with his friends on the team |
 
 If it isn't clear whose photos they are, ask Matthew before adding anything.
+
+A player's clubs are in the `equipment` block of his file. Each loft listed in `iron_lofts_deg` sets that club's launch target, so when Matthew says a player has new clubs or gives their lofts, update `equipment` and leave the shot data alone.
 
 The page itself also commits to `main`: on a phone with a GitHub key, every goal change is saved straight into that player's data file ("Update Dad’s goals from the tracker"). So run `git pull origin main` before editing any data file, and pull again if a push is rejected.
 

@@ -219,6 +219,18 @@ eq(C.checkShot(novE.PW, 'PW', { carry_yds: 80, ball_speed_mph: 70, launch_deg: 3
 eq(C.checkShot(novE.PW, 'PW', { carry_yds: 40, ball_speed_mph: 55, launch_deg: 6 }).verdict, 'mishit', 'a topped PW');
 eq(C.checkShot(novE['5hy'], '5hy', { carry_yds: 150, launch_deg: 17 }).verdict, 'good', 'carry and launch only: good shot');
 eq(C.checkShot(null, 'PW', { carry_yds: 80 }), null, 'no data for the club: nothing to check');
+
+section('Launch targets from his club lofts');
+const blackCats = { irons: 'Lynx Black Cat', iron_lofts_deg: { '7i': 33, '9i': 41, PW: 45 } };
+eq(['7i', '9i', 'PW', '5hy', 'SW'].map((c) => C.launchWindow(c, blackCats)), [[19, 23], [24, 28], [27, 31], [15, 19], [30, 34]],
+  'windows from loft (64%, ±2°); clubs without a loft keep the general windows');
+eq([C.clubLoft('7i', blackCats), C.clubLoft('5hy', blackCats), C.clubLoft('7i', null)], [33, null, null], 'club loft lookup');
+eq(C.launchWindow('PW', null), [26, 30], 'no equipment: general window');
+const pwG = C.clubGoals(novE.PW, 'PW', blackCats).goals.find((g) => g.id === 'launch');
+eq([pwG.lo, pwG.hi, pwG.status], [27, 31, 'high'], 'PW goal uses the Black Cat loft');
+eq(C.checkShot(novE.PW, 'PW', { launch_deg: 31 }, blackCats).lines[0].ok, true, 'a 31° PW launch is on target with a 45° PW');
+eq(C.checkShot(novE.PW, 'PW', { launch_deg: 31 }).lines[0].ok, false, 'but high against the general 26–30° window');
+eq(fileData.equipment && fileData.equipment.irons, 'Lynx Black Cat', 'Dad\u2019s file lists his Lynx Black Cat irons');
 const w56 = { club: '56°', shots: [{ club: '56°', carry_yds: 60, launch_deg: 33 }], mis: [], ranges: {} };
 w56.solid = w56.shots;
 eq(C.clubGoals(w56, '56°').goals.map((g) => g.id), ['carry', 'contact'], 'no launch window or offline data: carry and contact goals only');
@@ -285,7 +297,7 @@ for (const p of players) {
 const bro = JSON.parse(fs.readFileSync(path.join(root, 'data', 'brother_golf_data.json'), 'utf8'));
 eq([bro.player.relationship, bro.player.level, bro.player.age, bro.player.height_in, bro.baseline_session_id, bro.sessions.length, Object.keys(bro.clubs).length],
   ["Matthew's brother", 'beginner', 14, 60, null, 0, 0], 'brother file: empty, same schema');
-eq(Object.keys(bro), Object.keys(data), 'brother file has the same top-level keys as Dad’s');
+eq(Object.keys(bro), Object.keys(data).filter((k) => k !== 'equipment'), 'brother file has the same top-level keys as Dad’s (equipment is optional)');
 eq([data.player.age, data.player.height_in], [56, 73], 'Dad: age and height');
 eq([C.buildHighlights(bro.sessions, null), C.sessionCallout('carry', bro.sessions), C.progressFor(bro.sessions, 'PW', null).rows.length], [[], null, 0], 'no data: no highlights, callouts or progress rows');
 eq([C.resolvePlayer(players, 'brother', 'dad'), C.resolvePlayer(players, 'nobody', 'brother'), C.resolvePlayer(players, null, null), C.resolvePlayer([], 'x', 'y')],

@@ -345,6 +345,24 @@
     '6hy': [16, 20], '5hy': [15, 19], '4hy': [14, 18], '3hy': [13, 17],
     '7w': [13, 17], '5w': [12, 16], '4w': [11, 15], '3w': [11, 15], Driver: [12, 16]
   };
+  // Launch window for a club. When the player's data file lists his clubs' lofts
+  // (equipment.iron_lofts_deg), the window is centred on 64% of the loft, ±2°:
+  // with a modest swing speed and a neutral strike, irons launch at roughly 60–68%
+  // of their loft. Otherwise the ballpark LAUNCH_WINDOWS apply.
+  var LAUNCH_PER_LOFT = 0.64;
+  function clubLoft(club, equip) {
+    var lofts = equip && equip.iron_lofts_deg;
+    return lofts && isNum(lofts[club]) ? lofts[club] : null;
+  }
+  function launchWindow(club, equip) {
+    var loft = clubLoft(club, equip);
+    if (loft != null) {
+      var c = roundHalfEven(LAUNCH_PER_LOFT * loft, 0);
+      return [c - 2, c + 2];
+    }
+    return LAUNCH_WINDOWS[club] || null;
+  }
+
   // ----- Pure strikes: what a well-struck shot does for this player -----
   // His best-struck shots with a club: solid shots that weren't launched more
   // than 4° below the club's launch window (those are usually thin), then the top
@@ -357,9 +375,9 @@
     var cut = sorted[k - 1][key];
     return sorted.filter(function (s) { return s[key] >= cut; });
   }
-  function bestStrikes(entry, club) {
+  function bestStrikes(entry, club, equip) {
     if (!entry || !entry.solid) return { shots: [], by: null };
-    var win = LAUNCH_WINDOWS[club], floor = win ? win[0] - 4 : -Infinity;
+    var win = launchWindow(club, equip), floor = win ? win[0] - 4 : -Infinity;
     var normal = entry.solid.filter(function (s) { return isNum(s.carry_yds) && !(isNum(s.launch_deg) && s.launch_deg < floor); });
     var withSpeed = normal.filter(function (s) { return isNum(s.ball_speed_mph); });
     if (withSpeed.length) return { shots: topQuarter(withSpeed, 'ball_speed_mph'), by: 'ball_speed_mph' };
@@ -369,8 +387,8 @@
   var REF_KEYS = ['carry_yds', 'total_yds', 'ball_speed_mph', 'launch_deg', 'apex_ft', 'landing_deg'];
   // Reference numbers for a pure strike with this club: averages and ranges of
   // the best strikes, plus the pure-strike carry rounded to a yard.
-  function strikeReference(entry, club) {
-    var b = bestStrikes(entry, club);
+  function strikeReference(entry, club, equip) {
+    var b = bestStrikes(entry, club, equip);
     if (!b.shots.length) return null;
     var m = {};
     REF_KEYS.forEach(function (k) {
@@ -399,11 +417,11 @@
   //   contact:    9 of 10 swings solid
   // `focus` picks the one thing to work on first: contact, then direction, then
   // launch, then distance.
-  function clubGoals(entry, club) {
+  function clubGoals(entry, club, equip) {
     if (!entry || !entry.shots || !entry.shots.length) return null;
     var goals = [], g = {};
     function add(x) { goals.push(x); g[x.id] = x; }
-    var ref = strikeReference(entry, club);
+    var ref = strikeReference(entry, club, equip);
     var solidCarry = entry.solid.map(function (s) { return s.carry_yds; }).filter(isNum);
     if (solidCarry.length) {
       // Centred on the pure-strike carry (falls back to the upper-quartile carry).
@@ -421,7 +439,7 @@
       var within = offShots.filter(function (s) { return Math.abs(s.offline_ft) <= GOALS.lineFt; }).length;
       add({ id: 'line', label: 'On line', n: within, of: offShots.length, met: within / offShots.length >= GOALS.onLine });
     }
-    var win = LAUNCH_WINDOWS[club], la = summarize(entry.solid, 'launch_deg');
+    var win = launchWindow(club, equip), la = summarize(entry.solid, 'launch_deg');
     if (win && la.n) {
       var status = la.avg > win[1] ? 'high' : la.avg < win[0] ? 'low' : 'ok';
       add({ id: 'launch', label: 'Launch', lo: win[0], hi: win[1], avg: la.avg, status: status, met: status === 'ok' });
@@ -445,8 +463,8 @@
   // that club. shot: { carry_yds, ball_speed_mph, launch_deg, offline_ft }, any
   // of them missing. Returns { verdict: 'pure' | 'good' | 'mishit' | 'keep',
   // title, lines: [{ key, ok: true | false | null, text }] }.
-  function checkShot(entry, club, shot) {
-    var G = clubGoals(entry, club);
+  function checkShot(entry, club, shot, equip) {
+    var G = clubGoals(entry, club, equip);
     if (!G) return null;
     shot = shot || {};
     var ref = G.ref, lines = [], bad = 0, good = 0;
@@ -464,7 +482,7 @@
       else if (carry < zone.lo) line('carry', false, 'Carry ' + fmtRaw(carry) + ' yds: ' + fmtRaw(roundHalfEven(zone.lo - carry, 1)) + ' short of your ' + zone.lo + '–' + zone.hi + ' yd zone.');
       else line('carry', null, 'Carry ' + fmtRaw(carry) + ' yds: ' + fmtRaw(roundHalfEven(carry - zone.hi, 1)) + ' past your ' + zone.lo + '–' + zone.hi + ' yd zone.');
     }
-    var win = LAUNCH_WINDOWS[club];
+    var win = launchWindow(club, equip);
     if (isNum(la) && win) {
       if (la >= win[0] && la <= win[1]) line('launch', true, 'Launch ' + fmtRaw(la) + '°: in the ' + win[0] + '–' + win[1] + '° window.');
       else if (la > win[1]) line('launch', false, 'Launch ' + fmtRaw(la) + '° is high (aim for ' + win[0] + '–' + win[1] + '°): keep your hands ahead.');
@@ -1133,6 +1151,7 @@
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
     mergeGoals: mergeGoals, applyGoals: applyGoals,
     bestStrikes: bestStrikes, strikeReference: strikeReference, checkShot: checkShot,
+    launchWindow: launchWindow, clubLoft: clubLoft, LAUNCH_PER_LOFT: LAUNCH_PER_LOFT,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf

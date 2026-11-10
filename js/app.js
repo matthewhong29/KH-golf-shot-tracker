@@ -102,6 +102,7 @@
     return {
       player: local.player || b.player || { name: playerInfo().name },
       clubs: Object.assign({}, b.clubs || {}, local.clubs || {}),
+      equipment: b.equipment || null,
       // local.baselineSessionId: null = use the file's; '' = none (first session per club)
       baseline_session_id: local.baselineSessionId != null ? (local.baselineSessionId || null) : (b.baseline_session_id || null),
       goals: C.mergeGoals(b.personal_goals, local.goals),
@@ -738,6 +739,12 @@
     return (TIP_FOR[kind] || []).find((id) => t.focus.some((f) => f.id === id)) || null;
   }
   const NW_PILL = '<span class="nw-pill">Needs work</span>';
+  // "7 iron · Lynx Black Cat, 33° loft" when the data file lists the player's clubs.
+  function clubLabel(c) {
+    const name = C.clubName(c, data.clubs), loft = C.clubLoft(c, data.equipment);
+    const brand = data.equipment && data.equipment.irons;
+    return loft != null ? `${name} · ${brand ? brand + ', ' : ''}${loft}° loft` : name;
+  }
   function yds(n) { return n === '1' ? n + ' yd' : n + ' yds'; }
   function goalRow(g) {
     let target, now;
@@ -757,7 +764,7 @@
     const e = entries[club];
     const flags = C.needsWork(e);
     const flagKeys = new Set(flags.map((f) => f.key));
-    const G = C.clubGoals(e, club);
+    const G = C.clubGoals(e, club, data.equipment);
     const shotsLine = !e.shots.length ? 'Ranges only; individual shots weren’t recorded.'
       : e.mis.length ? `${plural(e.shots.length, 'shot')}: ${e.solid.length} solid, ${plural(e.mis.length, 'likely mis-hit')} (left out of the numbers)`
         : `${plural(e.shots.length, 'shot')}, all solid`;
@@ -791,7 +798,7 @@
         <p class="hint">Goals come from ${scopeAll ? 'all of your sessions' : 'your shots in this session'} and move as you improve. Launch windows are ballpark targets for your swing speed.</p>
       </div>` : '';
     return `<div class="club-card">
-      <div class="cc-head"><span class="cc-name">${esc(club)}</span><span class="cc-full">${esc(C.clubName(club, data.clubs))}</span></div>
+      <div class="cc-head"><span class="cc-name">${esc(club)}</span><span class="cc-full">${esc(clubLabel(club))}</span></div>
       <p class="cc-shots">${esc(shotsLine)}</p>
       ${flags.length ? `<div class="work-box">${NW_PILL}<ul>${flags.map((f) => `<li>${esc(cap(f.text))}.</li>`).join('')}</ul></div>` : ''}
       ${goals}
@@ -976,7 +983,7 @@
     if (ck.carry == null && ck.ball == null && ck.launch == null && ck.off == null) { toast('Type at least one number from the screen'); const f = $('#ckCarry'); if (f) f.focus(); return; }
     if (ck.off && !ck.dir) { toast('Tap Left or Right for the offline number'); return; }
     const off = ck.off == null ? null : (ck.dir === 'L' ? -Math.abs(ck.off) : Math.abs(ck.off));
-    ck.result = C.checkShot(sel.entry, c, { carry_yds: ck.carry, ball_speed_mph: ck.ball, launch_deg: ck.launch, offline_ft: off });
+    ck.result = C.checkShot(sel.entry, c, { carry_yds: ck.carry, ball_speed_mph: ck.ball, launch_deg: ck.launch, offline_ft: off }, data.equipment);
     renderTips();
     const r = $('#checkResult'); if (r) r.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
@@ -985,9 +992,9 @@
       <ul class="check-lines">${r.lines.map((l) => `<li><span class="ck ${l.ok === true ? 'ok' : l.ok === false ? 'bad' : ''}" aria-hidden="true">${l.ok === true ? '✓' : l.ok === false ? '✗' : '~'}</span><span>${esc(l.text)}</span></li>`).join('')}</ul></div>`;
   }
   function practiceCard(c, sel, t) {
-    const e = sel.entry, G = C.clubGoals(e, c), r = G.ref, m = r ? r.metrics : {};
+    const e = sel.entry, G = C.clubGoals(e, c, data.equipment), r = G.ref, m = r ? r.metrics : {};
     const zone = G.goals.find((g) => g.id === 'carry');
-    const win = C.LAUNCH_WINDOWS[c];
+    const win = C.launchWindow(c, data.equipment);
     const flags = C.needsWork(e);
     const aim = [];
     if (zone) aim.push(['Distance', 'Carry in this zone', `${zone.lo}–${zone.hi} yds`, r ? `pure strike about ${r.carry} yds` : '']);
@@ -1004,7 +1011,7 @@
     const ck = ui.check || {};
     const val = (v) => (v == null ? '' : esc(String(v)));
     return `
-      <div class="cc-head"><span class="cc-name">${esc(c)}</span><span class="cc-full">${esc(C.clubName(c, data.clubs))}</span></div>
+      <div class="cc-head"><span class="cc-name">${esc(c)}</span><span class="cc-full">${esc(clubLabel(c))}</span></div>
       <p class="cc-shots">From your ${esc(C.fmtDate(sel.session.date))} session${r ? `: ${plural(r.n, 'best-struck shot')} of ${plural(e.shots.length, 'shot')}` : ''}</p>
       ${flags.length ? `<div class="work-box">${NW_PILL}<ul>${flags.map((f) => `<li>${esc(cap(f.text))}.</li>`).join('')}</ul></div>` : ''}
       <h4 class="cc-sub">Aim for</h4>
@@ -1037,7 +1044,7 @@
     const clubs = C.sortClubs(Object.keys(pc));
     if (clubs.length && (!ui.practiceClub || !pc[ui.practiceClub])) ui.practiceClub = clubs[0];
     const rows = clubs.map((c) => {
-      const e = pc[c].entry, r = C.strikeReference(e, c), nw = C.needsWork(e).length;
+      const e = pc[c].entry, r = C.strikeReference(e, c, data.equipment), nw = C.needsWork(e).length;
       const sub = [r && r.metrics.ball_speed_mph ? `${C.fmtRaw(r.metrics.ball_speed_mph.min)}+ mph ball speed` : '',
         r && r.solid < 4 ? `only ${plural(r.solid, 'solid shot')} so far` : ''].filter(Boolean).join(' · ');
       return `<li><button class="yard-row" data-action="practice-club" data-club="${esc(c)}" aria-pressed="${c === ui.practiceClub}">
@@ -1450,6 +1457,7 @@
     if (b.units) out.units = b.units;
     if (b.sign_convention) out.sign_convention = b.sign_convention;
     out.clubs = clubs;
+    if (b.equipment) out.equipment = b.equipment;
     out.baseline_session_id = data.baseline_session_id;
     out.personal_goals = (data.goals || []).map((g) => ({ id: g.id, text: g.text, source: g.source, added: g.added, done: g.done }));
     out.sessions = data.sessions.map(stripUI);

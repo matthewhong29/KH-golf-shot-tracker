@@ -46,7 +46,7 @@
         {
           id: 'hands',
           title: 'Hands ahead at impact',
-          why: 'Launch is high on every iron, which usually means the hands are behind the ball at impact and add loft. With your hands slightly ahead of the ball, it flies lower and farther.',
+          why: 'Your Lynx Black Cats have a little more loft than many new irons (the 7 iron is about 33°), and the launch targets on the Practice tab allow for that. Even so, launch runs above those targets on every iron, which usually means the hands are behind the ball at impact and add loft. With your hands slightly ahead of the ball, it flies lower and farther.',
           callout: 'launch',
           drills: [
             { name: 'Punch shots', reps: '10 balls with a 7 iron', search: 'golf punch shot drill hands ahead',
@@ -73,11 +73,13 @@
         },
         {
           id: 'fit',
-          title: 'Setup and clubs for a {height} golfer',
-          why: 'You’re using Matthew’s standard-length Callaway Edge set. Clubs that are short for a {height} golfer can make you hunch over the ball, which leads to thin shots. Fitting charts typically suggest about ½ to 1 inch longer than standard and a slightly more upright lie for someone your height, but the right numbers depend on your wrist-to-floor measurement and your swing, so let a fitter decide.',
+          title: 'Your Black Cats and setup for a {height} golfer',
+          why: 'You’re playing an older set of Lynx Black Cat irons. With any older set, two things are worth checking: the grips and the fit. Old grips get hard and slick, and a grip that slips lets the clubface open at impact, which is one common cause of shots going right. Older sets were also usually built at standard length, and clubs that are short for a {height} golfer can make you hunch over the ball, which leads to thin shots. Fitting charts typically suggest about ½ to 1 inch longer than standard and a slightly more upright lie for someone your height, but the right numbers depend on your wrist-to-floor measurement and your swing, so let a fitter decide, and ask whether your set can be adjusted.',
           drills: [
-            { name: 'Get a fitting check', reps: 'Once, and again if you change clubs', search: 'golf club fitting wrist to floor measurement length lie',
-              steps: ['Stand up straight in golf shoes with your arms relaxed.', 'Have someone measure from the crease of your wrist to the floor.', 'Take that number and your 7 iron to a club fitter or golf shop.', 'Ask them to check the length and lie angle.'] },
+            { name: 'Club check at a golf shop', reps: 'Once now; the grips about once a year', search: 'golf club fitting wrist to floor measurement length lie',
+              steps: ['Look at the grips: shiny, hard, cracked or smooth spots mean they’re worn. If the 7 iron twists or slips when you hold it lightly, it’s worn.', 'Stand up straight in golf shoes with your arms relaxed, and have someone measure from the crease of your wrist to the floor.', 'Take that number and your 7 iron to a club fitter or golf shop.', 'Ask them to check the length, lie angle and grip size, and to regrip the set if the grips are worn. Regripping doesn’t cost much.'] },
+            { name: 'Use your own yardages', reps: 'Every time you pick a club', search: 'golf club yardages how far each club goes',
+              steps: ['Your Black Cats have more loft than many new irons, so the same number goes a little shorter than a friend’s new club.', 'Pick clubs from Your yardages on the Practice tab, not from the number on the club.', 'The yardages update after every range session.'] },
             { name: 'Posture', reps: '5 setups in a mirror before practice', search: 'golf posture hip hinge arms hang',
               steps: ['Stand tall, then tip forward from your hips, not your waist, keeping your back straight.', 'Let your knees flex a little.', 'Let your arms hang straight down from your shoulders, and hold the club where they hang.', 'Check it side-on in a mirror or a phone video.'] },
             { name: 'Ball position by club', reps: 'Check every time you change clubs', search: 'golf ball position by club',

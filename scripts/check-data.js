@@ -113,6 +113,20 @@ function checkPlayerFile(file) {
       goals = data.personal_goals.length;
     }
   }
+  // equipment (optional): { irons: "Lynx Black Cat", iron_lofts_deg: { "7i": 33, ... } }
+  // The page sets each listed club's launch target from its loft.
+  if (data.equipment != null) {
+    const eq = data.equipment;
+    if (typeof eq !== 'object' || Array.isArray(eq)) errors.push('"equipment" must be an object');
+    else if (eq.iron_lofts_deg != null) {
+      if (typeof eq.iron_lofts_deg !== 'object' || Array.isArray(eq.iron_lofts_deg)) errors.push('equipment.iron_lofts_deg must be an object like { "7i": 33 }');
+      else Object.entries(eq.iron_lofts_deg).forEach(([club, loft]) => {
+        if (!CLUB_RE.test(club)) errors.push(`equipment.iron_lofts_deg: "${club}" isn't a standard club name`);
+        if (typeof loft !== 'number' || !Number.isFinite(loft)) errors.push(`equipment.iron_lofts_deg.${club} must be a number of degrees`);
+        else if (loft < 15 || loft > 65) warnings.push(`equipment.iron_lofts_deg.${club} = ${loft}° looks out of range`);
+      });
+    }
+  }
   return { errors, warnings, sessions: sessionIds.size, shots: shotIds.size, goals, name: data.player && data.player.name };
 }
 
