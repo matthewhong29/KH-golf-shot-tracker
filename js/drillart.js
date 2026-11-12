@@ -49,31 +49,33 @@
   // ---------------------------------------------------------------------------
   // Swing scene: a golfer seen face-on (the target is to the right)
   // ---------------------------------------------------------------------------
-  // th: hands' angle around the chest; cl: club angle (both from straight down, + toward the trail side);
-  // hip: pelvis shift toward the target; tilt: spine tilt away from the target; turn: how square the
-  // shoulders are to the camera (1 = square); sTilt: shoulder tilt (+ = lead shoulder lower);
-  // kneeT: trail knee kicking in; heel: trail heel lift; aim: point the club at the ball;
-  // toe: draw the clubhead toe up; reach: hands' distance from the chest; drop: lower the body.
-  var BASE = { th: -4, cl: 4, hip: 0, tilt: 6, turn: 1, sTilt: 4, kneeT: 0, heel: 0, headX: 0, reach: 44, drop: 0 };
+  // Hands: hx, hy put the hands relative to the centre of the shoulders, taken from real face-on swing
+  // positions. straight: the arm that stays straight ('both' at setup and in short swings, 'lead' going
+  // back and at impact, 'trail' through the ball); the other arm folds with its elbow pointing down.
+  // cl: club angle from straight down (+ toward the trail side); aim: point the club at the ball.
+  // Body: hip shifts the pelvis toward the target; tilt leans the spine away from it; turn is how square
+  // the shoulders are to the camera (1 = square); sTilt tilts the shoulders (+ = lead shoulder lower);
+  // kneeT kicks the trail knee in; heel lifts the trail heel; toe draws the clubhead toe up.
+  // bend: how long the torso looks face-on (bent over at setup it looks shorter; 1 = standing tall).
+  var BASE = { hx: 3, hy: 47, cl: 4, straight: 'both', hip: 0, tilt: 6, turn: 1, sTilt: -5, bend: 0.8, kneeT: 0, heel: 0, headX: 0, drop: 0 };
   var POSES = {
     address: { aim: true },
-    halfBack: { th: 47, cl: 92, hip: -2, tilt: 7, turn: 0.72, sTilt: 9, toe: true },
-    threeQ: { th: 106, cl: 196, hip: -3, tilt: 8, turn: 0.55, sTilt: 12 },
-    top: { th: 140, cl: 262, hip: -3, tilt: 9, turn: 0.42, sTilt: 14 },
-    impact: { th: -11, aim: true, hip: 7, tilt: 12, turn: 0.86, sTilt: 9, kneeT: 6 },
-    halfThru: { th: -48, cl: -92, hip: 10, tilt: 8, turn: 0.62, sTilt: -2, kneeT: 10, heel: 3, toe: true },
-    finish: { th: -150, cl: -290, hip: 14, tilt: -3, turn: 0.38, sTilt: -12, kneeT: 18, heel: 9, headX: 4 },
-    punchBack: { th: 46, cl: 118, hip: -1, tilt: 7, turn: 0.78, sTilt: 7 },
-    punchThru: { th: -58, cl: -84, hip: 11, tilt: 7, turn: 0.6, sTilt: -3, kneeT: 10, heel: 3 },
-    putt: { aim: true, tilt: 3, sTilt: 2, reach: 50, drop: 6 },
-    puttBack: { th: 15, cl: 15, tilt: 3, sTilt: 4, reach: 50, drop: 6 },
-    puttThru: { th: -17, cl: -17, tilt: 3, sTilt: 0, reach: 50, drop: 6 },
-    chipBack: { th: 30, cl: 48, tilt: 5, turn: 0.86, sTilt: 6, hip: 2 },
-    chipThru: { th: -34, cl: -40, hip: 6, tilt: 4, turn: 0.75, sTilt: 1, kneeT: 6 },
-    stand: { arms: 'side', tilt: 0, sTilt: 0, turn: 1 },
+    halfBack: { hx: -12.5, hy: 36, cl: 90, straight: 'lead', hip: -2, tilt: 7, turn: 0.72, sTilt: 6, toe: true },
+    top: { hx: -26, hy: -30, cl: 262, straight: 'lead', hip: -3, tilt: 9, turn: 0.42, sTilt: 14 },
+    impact: { hx: 9.4, hy: 49, aim: true, straight: 'lead', hip: 7, tilt: 12, turn: 0.86, sTilt: -10, kneeT: 6 },
+    halfThru: { hx: 16.3, hy: 37, cl: -90, straight: 'trail', hip: 10, tilt: 8, turn: 0.62, sTilt: -6, bend: 0.82, kneeT: 10, heel: 3, toe: true },
+    finish: { hx: 22, hy: -30, cl: -290, straight: 'trail', hip: 14, tilt: -3, turn: 0.38, sTilt: -8, bend: 0.95, kneeT: 18, heel: 9, headX: 4 },
+    punchBack: { hx: -12.5, hy: 36, cl: 125, straight: 'lead', hip: -1, tilt: 7, turn: 0.78, sTilt: 4 },
+    punchThru: { hx: 20.5, hy: 31.6, cl: -100, straight: 'trail', hip: 11, tilt: 7, turn: 0.6, sTilt: -6, bend: 0.84, kneeT: 10, heel: 3 },
+    putt: { hx: 2.4, hy: 50, aim: true, tilt: 3, sTilt: -3, bend: 0.74, drop: 4 },
+    puttBack: { hx: -5.6, hy: 49, cl: 12, tilt: 3, sTilt: -3, bend: 0.74, drop: 4 },
+    puttThru: { hx: 10.4, hy: 49, cl: -14, tilt: 3, sTilt: -3, bend: 0.74, drop: 4 },
+    chipBack: { hx: -10, hy: 46, cl: 40, tilt: 5, turn: 0.86, sTilt: 0, hip: 2 },
+    chipThru: { hx: 11, hy: 46, cl: -38, hip: 6, tilt: 4, turn: 0.75, sTilt: -4, kneeT: 6 },
+    stand: { arms: 'side', tilt: 0, sTilt: 0, turn: 1, bend: 1 },
     crossAddr: { arms: 'cross' },
     crossBack: { arms: 'cross', turn: 0.36, sTilt: 17, tilt: 7, hip: -2 },
-    crossThru: { arms: 'cross', turn: 0.36, sTilt: -15, tilt: -2, hip: 11, kneeT: 15, heel: 7 }
+    crossThru: { arms: 'cross', turn: 0.36, sTilt: -15, tilt: -2, hip: 11, kneeT: 15, heel: 7, bend: 0.9 }
   };
   function poseOf(name) {
     var p = {}, k, src = POSES[name] || {};
@@ -81,6 +83,9 @@
     for (k in src) p[k] = src[k];
     return p;
   }
+  // The hands as an angle and distance around the chest, so a swing between two frames moves on an arc.
+  function handsPolar(p) { var vx = p.hx, vy = p.hy - 9; return { a: Math.atan2(-vx, vy) * 180 / Math.PI, r: Math.sqrt(vx * vx + vy * vy) }; }
+  function handsFromPolar(a, r) { var d = dir(a); return { hx: d[0] * r, hy: d[1] * r + 9 }; }
 
   var CLUBS = {
     wedge: { ball: 0, head: 'blade' }, iron: { ball: 3, head: 'blade' }, hybrid: { ball: 9, head: 'hybrid' },
@@ -93,7 +98,7 @@
     var st = art.stance === 'together' ? 6 : art.stance === 'narrow' ? 15 : 23;
     var P = [CX + p.hip, 99 + p.drop];
     var t = rad(p.tilt), sv = [Math.sin(t), Math.cos(t)];
-    var N = [P[0] - 50 * sv[0], P[1] - 50 * sv[1]];
+    var N = [P[0] - 50 * p.bend * sv[0], P[1] - 50 * p.bend * sv[1]];
     var Sc = [N[0] + 5 * sv[0], N[1] + 5 * sv[1]];
     var s = rad(p.sTilt), hw = 17 * p.turn;
     var SL = [Sc[0] + hw * Math.cos(s), Sc[1] + hw * Math.sin(s)];
@@ -107,7 +112,7 @@
       head: [N[0] - 13 * sv[0] + p.headX, N[1] - 13 * sv[1]],
       KL: [(HL[0] + FL[0]) / 2 - 1.5, (HL[1] + FL[1]) / 2],
       KT: [(HT[0] + FT[0]) / 2 + 1.5 + p.kneeT, (HT[1] + FT[1]) / 2 + p.kneeT * 0.2],
-      H: at(C, dir(p.th), p.reach)
+      H: [Sc[0] + p.hx, Sc[1] + p.hy]
     };
   }
   // Where the ball sits and where the clubhead meets it.
@@ -127,23 +132,24 @@
   }
   function resolvePose(p, art) {
     if (p.aim) {
-      var c = ballPoint(art).contact, back = p.th > -6 ? ({ hybrid: 6, wood: 7, driver: 9 }[art.club] || 2) : 0;
+      var c = ballPoint(art).contact, back = p.hx < 6 ? ({ hybrid: 6, wood: 7, driver: 9 }[art.club] || 2) : 0;
       p.cl = aimAngle(body(p, art).H, [c[0] - back, c[1]]);
     }
     return p;
   }
 
-  function elbow(a, b, l1, l2, away) {
+  var ARM = 25;   // upper arm and forearm
+  // The elbow of a folding arm: of the two ways it can bend, golfers' elbows point at the ground.
+  function elbow(a, b) {
     var dx = b[0] - a[0], dy = b[1] - a[1], d = Math.sqrt(dx * dx + dy * dy) || 0.001;
-    var dd = Math.min(d, l1 + l2 - 0.01);
-    var ang = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + dd * dd - l2 * l2) / (2 * l1 * dd))));
-    var base = Math.atan2(dy, dx);
-    var e1 = [a[0] + l1 * Math.cos(base + ang), a[1] + l1 * Math.sin(base + ang)];
-    var e2 = [a[0] + l1 * Math.cos(base - ang), a[1] + l1 * Math.sin(base - ang)];
-    return dist(e1, away) > dist(e2, away) ? e1 : e2;
+    if (d >= 2 * ARM - 0.5) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    var ang = Math.acos(Math.max(-1, Math.min(1, d / (2 * ARM)))), base = Math.atan2(dy, dx);
+    var e1 = [a[0] + ARM * Math.cos(base + ang), a[1] + ARM * Math.sin(base + ang)];
+    var e2 = [a[0] + ARM * Math.cos(base - ang), a[1] + ARM * Math.sin(base - ang)];
+    return e1[1] > e2[1] ? e1 : e2;
   }
-  function arm(S, Hp, away) {
-    var E = elbow(S, Hp, 25, 25, away);
+  function arm(S, Hp, straight) {
+    var E = straight ? [(S[0] + Hp[0]) / 2, (S[1] + Hp[1]) / 2] : elbow(S, Hp);
     return ln('da-sleeve', S, E) + ln('da-limb', E, Hp);
   }
   // A golf cap: crown and a short brim (pointing at the camera face-on, forward side-on).
@@ -191,23 +197,25 @@
     o.push(path('da-shirt', [B.ST, B.SL, B.HL, B.HT], true));
     o.push(ln('da-neck', B.Sc, B.N), dot('da-skin', B.head, 11), cap(B.head, 0));
     if (p.arms === 'side') {
-      o.push(arm(B.SL, [B.SL[0] + 4, B.SL[1] + 49], [B.C[0] - 30, B.C[1]]), arm(B.ST, [B.ST[0] - 4, B.ST[1] + 49], [B.C[0] + 30, B.C[1]]));
+      o.push(arm(B.SL, [B.SL[0] + 4, B.SL[1] + 49], true), arm(B.ST, [B.ST[0] - 4, B.ST[1] + 49], true));
       o.push(dot('da-skin', [B.SL[0] + 4, B.SL[1] + 50], 4.5), dot('da-skin', [B.ST[0] - 4, B.ST[1] + 50], 4.5));
       return { svg: o.join(''), B: B };
     }
     if (p.arms === 'cross') {
       var u = [B.SL[0] - B.ST[0], B.SL[1] - B.ST[1]], ul = Math.sqrt(u[0] * u[0] + u[1] * u[1]) || 1;
       u = [u[0] / ul, u[1] / ul];
-      var down = [Math.sin(rad(p.tilt)) * 0 , 1];
-      var a = at(at(B.ST, u, -13), down, 7), b = at(at(B.SL, u, 13), down, 7);
-      o.push(ln('da-across', a, b));
-      var hl = at(B.ST, down, 8), ht = at(B.SL, down, 8);
-      o.push(path('da-sleeve', [B.SL, [B.C[0] + 2, B.C[1] + 12], hl]), path('da-sleeve', [B.ST, [B.C[0] - 2, B.C[1] + 14], ht]));
-      o.push(dot('da-skin', hl, 4.5), dot('da-skin', ht, 4.5));
+      var hl = [B.ST[0] + 2, B.ST[1] + 8], ht = [B.SL[0] - 2, B.SL[1] + 8];
+      o.push(path('da-arm2', [B.SL, [B.C[0] + 5, B.C[1] + 16], hl]), path('da-arm2', [B.ST, [B.C[0] - 5, B.C[1] + 18], ht]));
+      var a = at(hl, u, -18), b = at(ht, u, 18);
+      o.push(ln('da-across', a, b), ln('da-grip', a, at(a, u, 14)));
+      o.push(dot('da-skin', hl, 4.6), dot('da-skin', ht, 4.6));
       return { svg: o.join(''), B: B };
     }
     if (!behind) o.push(drawClub(p, art, B));
-    o.push(arm(B.ST, B.H, B.P), arm(B.SL, B.H, B.P));
+    var leadStraight = p.straight !== 'trail', trailStraight = p.straight !== 'lead';
+    // The folding arm first, so the straight one is drawn over it.
+    if (leadStraight) o.push(arm(B.ST, B.H, trailStraight), arm(B.SL, B.H, true));
+    else o.push(arm(B.SL, B.H, false), arm(B.ST, B.H, true));
     o.push(dot('da-skin', B.H, 4.8));
     if (art.split) o.push(dot('da-skin', at(B.H, dir(p.cl), 11), 4.8));
     return { svg: o.join(''), B: B };
@@ -247,7 +255,7 @@
       if (k === 'gap') { out.push(arrow('da-mark', [x - 12, GY + 11], [x - 4, GY + 11]), label(o, v || '4–6 in', x - 16, GY + 21, 'end')); }
       else if (k === 'brush') { out.push(curve('da-brush', [x + 2, GY + 1], [x + 10, GY + 5], [x + 21, GY + 2])); }
       else if (k === 'divot') { out.push(curve('da-brush', [x + 2, GY + 1], [x + 12, GY + 6], [x + 24, GY + 2])); }
-      else if (k === 'handsAhead') { out.push('<path class="da-guide" d="M' + pt(B.H) + 'L' + pt([B.H[0], GY + 14]) + '"/>', label(o, v || 'hands ahead', B.H[0] - 12, B.H[1] + 30, 'end')); }
+      else if (k === 'handsAhead') { out.push('<path class="da-guide" d="M' + pt(B.H) + 'L' + pt([B.H[0], GY + 14]) + '"/>', label(o, 'hands', B.H[0] - 14, B.H[1] + 20, 'end'), label(o, 'ahead', B.H[0] - 14, B.H[1] + 44, 'end')); }
       else if (k === 'toeUp') { var e = at(B.H, dir(p.cl), clubLength(art)); out.push(e[0] < CX ? label(o, 'toe up', Math.max(4, e[0] - 4), e[1] - 18) : label(o, 'toe up', Math.min(236, e[0] + 4), e[1] - 18, 'end')); }
       else if (k === 'timer') { out.push(badge(o, v || '3 s', 182, 10)); }
       else if (k === 'flightLow') { out.push(curve('da-flight', bp.ball, [x + 60, GY - 46], [236, GY - 40])); }
@@ -287,55 +295,67 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Posture scene: a golfer seen side-on (facing right, the ball on the right)
+  // Filming guide: where the camera goes (from above) and what's in the picture
   // ---------------------------------------------------------------------------
-  var SIDE = {
-    tall: { ankle: [106, 174], knee: [106, 137], hip: [106, 99], sh: [108, 51], head: [110, 33], el: [109, 77], hand: [111, 101] },
-    hinge: { ankle: [110, 174], knee: [114, 139], hip: [94, 103], sh: [128, 65], head: [141, 51], el: [130, 90], hand: [131, 115] },
-    knees: { ankle: [110, 174], knee: [119, 141], hip: [96, 107], sh: [130, 69], head: [143, 55], el: [132, 94], hand: [133, 119] }
-  };
-  function sidePose(name) { return SIDE[name] || SIDE.tall; }
-  function mixSide(a, b, t) {
-    var out = {};
-    Object.keys(a).forEach(function (k) { out[k] = [mix(a[k][0], b[k][0], t), mix(a[k][1], b[k][1], t)]; });
-    return out;
-  }
-  function sideScene(art, frame, o, pose) {
-    var s = pose || sidePose(frame.pose), out = [ground()];
-    var hasClub = (frame.club != null ? frame.club : art.club) !== 'none';
-    var ballX = 182;
-    if (hasClub) out.push(dot('da-ball', [ballX, GY - 4.5], 4.5));
-    out.push(path('da-leg', [s.hip, s.knee, s.ankle]), ln('da-shoe da-thick', [s.ankle[0] - 3, GY - 2], [s.ankle[0] + 13, GY - 2]));
-    out.push(ln('da-torso', s.hip, s.sh), dot('da-skin', s.head, 11), cap(s.head, 1));
-    if (hasClub) out.push(ln('da-shaft', s.hand, [ballX - 4, GY - 2]), ln('da-grip', at(s.hand, [-(ballX - 4 - s.hand[0]), -(GY - 2 - s.hand[1])], 0.1), s.hand), ln('da-head da-thick', [ballX - 10, GY - 1.5], [ballX, GY - 1.5]));
-    out.push(ln('da-sleeve', s.sh, s.el), ln('da-limb', s.el, s.hand), dot('da-skin', s.hand, 4.8));
-    (frame.marks || []).forEach(function (m) {
-      var k = typeof m === 'string' ? m : m[0];
-      if (k === 'spine') out.push('<path class="da-guide" d="M' + pt(at(s.hip, [s.sh[0] - s.hip[0], s.sh[1] - s.hip[1]], -0.25)) + 'L' + pt(at(s.hip, [s.sh[0] - s.hip[0], s.sh[1] - s.hip[1]], 1.35)) + '"/>', label(o, 'flat back', 30, 60));
-      else if (k === 'plumb') out.push('<path class="da-guide" d="M' + pt(s.sh) + 'L' + pt([s.sh[0], GY - 2]) + '"/>', label(o, 'arms hang', s.sh[0] + 12, s.sh[1] - 12));
-      else if (k === 'hips') out.push(dot('da-ring', s.hip, 9), label(o, 'hinge', s.hip[0] - 14, s.hip[1] + 6, 'end'));
-      else if (k === 'knees') out.push(dot('da-ring', s.knee, 8), label(o, 'soft knees', s.knee[0] + 14, s.knee[1] + 6));
-      else if (k === 'tall') out.push(arrow('da-mark', [72, 120], [72, 40]), label(o, 'stand tall', 20, 30));
-      else if (k === 'phone') out.push(rect('da-phone', 200, 74, 30, 52, 6), dot('da-lens', [215, 84], 3.5));
-    });
+  // A golfer at address seen down the line (from behind the hands): facing right, the ball on the right.
+  var DTL = { ankle: [110, 174], knee: [119, 141], hip: [96, 107], sh: [130, 69], head: [143, 55], el: [132, 94], hand: [133, 119] };
+  function dtlFigure() {
+    var s2 = DTL, ballX = 182, out = [];
+    out.push(dot('da-ball', [ballX, GY - 4.5], 4.5));
+    out.push(path('da-leg', [s2.hip, s2.knee, s2.ankle]), ln('da-shoe da-thick', [s2.ankle[0] - 3, GY - 2], [s2.ankle[0] + 13, GY - 2]));
+    out.push(ln('da-torso', s2.hip, s2.sh), dot('da-skin', s2.head, 11), cap(s2.head, 1));
+    out.push(ln('da-shaft', s2.hand, [ballX - 4, GY - 2]), ln('da-head da-thick', [ballX - 10, GY - 1.5], [ballX, GY - 1.5]));
+    out.push(ln('da-sleeve', s2.sh, s2.el), ln('da-limb', s2.el, s2.hand), dot('da-skin', s2.hand, 4.8));
     return out.join('');
   }
-
-  // ---------------------------------------------------------------------------
-  // Stance from above: where the ball goes for each club
-  // ---------------------------------------------------------------------------
-  var STANCE_BALLS = { wedge: [120, 'Wedge'], mid: [129, '7 iron'], hybrid: [137, 'Hybrid'], driver: [145, 'Driver'] };
-  function stanceScene(art, frame, o) {
-    var out = [rect('da-mat', 14, 20, 212, 168, 14)];
-    out.push(oval('da-foot', [92, 140], 11, 23, -4), oval('da-foot', [152, 140], 11, 23, 14));
-    out.push(ln('da-tline', [24, 88], [216, 88]), arrowHead('da-tline', [222, 88], [210, 88]));
-    var hi = STANCE_BALLS[frame.ball] || STANCE_BALLS.wedge;
-    Object.keys(STANCE_BALLS).forEach(function (k) {
-      var b = STANCE_BALLS[k];
-      if (b !== hi) out.push(dot('da-ghost', [b[0], 88], 4.5));
-    });
-    out.push(ln('da-paint', [hi[0], 96], [hi[0], 164]), dot('da-ball', [hi[0], 88], 5.5), label(o, hi[1], hi[0], 70, 'middle'));
-    out.push(label(o, 'target', 222, 78, 'end'));
+  // A phone camera from above, pointing at `aim`.
+  function cameraIcon(c, aim, on) {
+    var a = Math.atan2(aim[1] - c[1], aim[0] - c[0]) * 180 / Math.PI;
+    return '<g class="da-cam' + (on ? ' on' : '') + '" transform="rotate(' + r1(a) + ' ' + r1(c[0]) + ' ' + r1(c[1]) + ')">' +
+      rect('da-cambody', c[0] - 9, c[1] - 14, 18, 28, 5) + rect('da-camlens', c[0] + 6, c[1] - 5, 6, 10, 2) + '</g>';
+  }
+  function cameraScene(art, frame, o) {
+    var face = frame.view !== 'dtl', out = [rect('da-ground', 0, 0, W, H)];
+    var ball = [120, 112], hands = [120, 86];
+    // view cone from the active camera
+    if (face) out.push(path('da-cone', [[120, 160], [64, 36], [176, 36]], true));
+    else out.push(path('da-cone', [[34, 86], [214, 34], [214, 150]], true));
+    // target line and the target
+    out.push('<path class="da-tline" d="M20 112L210 112"/>', arrowHead('da-tline', [222, 112], [208, 112]), label(o, 'target', 236, 132, 'end'));
+    // the golfer from above, facing the ball: feet, shoulders, head with a cap, club to the ball
+    out.push(oval('da-foot', [104, 84], 5, 9), oval('da-foot', [136, 84], 5, 9));
+    out.push(ln('da-shaft', hands, [ball[0], ball[1] - 3]), oval('da-shirt', [120, 72], 23, 9), dot('da-skin', [120, 72], 8), ln('da-brim', [114, 80], [126, 80]), dot('da-skin', hands, 3.8));
+    out.push(dot('da-ball', ball, 4.2));
+    // the two camera spots: face-on across the ball; down the line behind the hands, parallel to the target line
+    out.push(cameraIcon([120, 172], [120, 72], face), cameraIcon([22, 86], [214, 86], !face));
+    if (face) {
+      out.push(ln('da-dim', [66, 170], [66, 76]), arrowHead('da-dim', [66, 76], [66, 86]), arrowHead('da-dim', [66, 170], [66, 160]), label(o, '10 ft', 58, 150, 'end'));
+      out.push(label(o, 'Face-on', 136, 196));
+    } else {
+      out.push(ln('da-dim', [24, 150], [104, 150]), arrowHead('da-dim', [24, 150], [34, 150]), arrowHead('da-dim', [104, 150], [94, 150]), label(o, '10 ft', 64, 172, 'middle'));
+      out.push(label(o, 'Down the line', 6, 22));
+    }
+    return out.join('');
+  }
+  function framingScene(art, frame, o) {
+    var face = frame.view !== 'dtl', out = [];
+    out.push(rect('da-phone', 70, 2, 100, 196, 16), rect('da-phonescreen da-light', 77, 12, 86, 176, 6));
+    // the golfer, scaled to fit the screen with room above the club
+    var fig, sc = 0.8, tx, ty;
+    if (face) {
+      var art2 = { scene: 'swing', club: 'iron', frames: [{ pose: 'top', cap: '' }, { pose: 'top', cap: '' }] };
+      fig = swingScene(art2, art2.frames[0], { thumb: true });
+      tx = 120 - sc * 111; ty = 172 - sc * 176;
+    } else {
+      fig = ground() + '<path class="da-tline" d="M182 171L162 96"/>' + dtlFigure();
+      tx = 120 - sc * 138; ty = 172 - sc * 176;
+    }
+    out.push('<svg x="77" y="12" width="86" height="176" viewBox="77 12 86 176" overflow="hidden"><g transform="translate(' + r1(tx) + ' ' + r1(ty) + ') scale(' + sc + ')">' + fig + '</g></svg>');
+    // room above, and the phone at hip height
+    out.push('<path class="da-guide" d="M82 20H158"/>');
+    var hipY = ty + sc * (face ? 99 : 107);
+    out.push(ln('da-dim', [24, hipY], [66, hipY]), cameraIcon([16, hipY], [80, hipY], true), label(o, 'hip', 30, hipY - 10));
+    out.push(label(o, 'club', 178, 34), label(o, 'body', 178, 104), label(o, 'ball', 178, 178));
     return out.join('');
   }
 
@@ -391,32 +411,6 @@
       if (step >= 1) balls.forEach(function (b) { out.push('<path class="da-guide" d="M' + pt(b) + 'L' + pt(fl) + '"/>'); });
       if (step >= 2) out.push(dot('da-ring', balls[2], 10), badge(o, '+1 point', 152, 10, 82));
     }
-    return out.join('');
-  }
-
-  // ---------------------------------------------------------------------------
-  // The grip, close up, as the golfer sees it looking down
-  // ---------------------------------------------------------------------------
-  function handsScene(art, frame, o) {
-    var step = frame.step || 0, out = [];
-    out.push(rect('da-gripbar', 108, 0, 24, 200, 8));
-    // lead hand in a white glove
-    out.push('<path class="da-glove" d="M82 50 Q80 34 96 30 L140 28 Q158 28 158 46 L154 100 Q152 114 138 116 L100 116 Q86 114 86 100 Z"/>');
-    out.push('<path class="da-fold" d="M86 64 Q92 66 96 62 M86 80 Q92 82 96 78 M87 96 Q93 98 97 94"/>');
-    out.push('<path class="da-glove" d="M113 104 L129 102 L128 142 Q121 151 114 142 Z"/>');
-    var knuckles = [[102, 33], [117, 30], [132, 30]];
-    knuckles.forEach(function (k, i) { out.push(dot(step === 0 || step === 1 ? 'da-knuckle on' : 'da-knuckle', k, 5)); });
-    if (step === 0) out.push(label(o, '2–3 knuckles', 120, 20, 'middle'));
-    if (step === 1 || step === 2) {
-      out.push(path('da-v', [[136, 78], [122, 102], [116, 74]]));
-      out.push(arrow('da-mark', [140, 72], [214, 18]), label(o, 'V to back', 228, 46, 'end'), label(o, 'shoulder', 228, 66, 'end'));
-    }
-    if (step >= 2 && art.trail) {
-      out.push('<path class="da-trail" d="M96 120 Q92 106 108 104 L136 106 Q150 108 148 124 L144 168 Q142 180 128 180 L104 178 Q94 176 96 164 Z"/>');
-      if (step === 3) out.push(label(o, 'covers thumb', 120, 196, 'middle'));
-    }
-    if (step === 3 && !art.trail) out.push(label(o, 'light hold', 120, 196, 'middle'));
-    if (step === 3 && art.trail) out.push(badge(o, 'firm, not tight', 6, 8, 128));
     return out.join('');
   }
 
@@ -517,7 +511,7 @@
     return out.join('');
   }
 
-  var SCENES = { swing: swingScene, side: sideScene, stance: stanceScene, green: greenScene, hands: handsScene, range: rangeScene, tracker: trackerScene, plan: planScene, horse: horseScene, grip: gripScene };
+  var SCENES = { swing: swingScene, green: greenScene, range: rangeScene, tracker: trackerScene, plan: planScene, horse: horseScene, grip: gripScene, camera: cameraScene, framing: framingScene };
 
   function frameScene(art, frame) { return frame.scene || art.scene; }
   function wrap(inner, o) {
@@ -535,12 +529,13 @@
   function tween(art, from, to, t, o) {
     o = o || {};
     var fa = art.frames[from], fb = art.frames[to], sa = frameScene(art, fa), sb = frameScene(art, fb);
-    if (t >= 1 || sa !== sb || (sa !== 'swing' && sa !== 'side')) return render(art, t < 0.5 ? from : to, o);
+    if (t >= 1 || sa !== sb || sa !== 'swing') return render(art, t < 0.5 ? from : to, o);
     var e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-    if (sa === 'side') return wrap(sideScene(art, fb, { thumb: true }, mixSide(sidePose(fa.pose), sidePose(fb.pose), e)), o);
     var pa = resolvePose(poseOf(fa.pose), art), pb = resolvePose(poseOf(fb.pose), art), p = {};
-    Object.keys(BASE).forEach(function (k) { p[k] = mix(pa[k], pb[k], e); });
-    p.th = mix(pa.th, unwrapNear(pa.th, pb.th), e);
+    Object.keys(BASE).forEach(function (k) { if (typeof BASE[k] === 'number') p[k] = mix(pa[k], pb[k], e); });
+    var ha = handsPolar(pa), hb = handsPolar(pb), hm = handsFromPolar(mix(ha.a, unwrapNear(ha.a, hb.a), e), mix(ha.r, hb.r, e));
+    p.hx = hm.hx; p.hy = hm.hy;
+    p.straight = e < 0.5 ? pa.straight : pb.straight;
     p.cl = mix(pa.cl, unwrapNear(pa.cl, pb.cl), e);
     p.arms = e < 0.5 ? pa.arms : pb.arms;
     p.toe = e > 0.85 ? pb.toe : e < 0.15 ? pa.toe : false;
@@ -557,12 +552,16 @@
       if (!SCENES[sc]) errs.push('frame ' + (i + 1) + ': unknown scene ' + sc);
       if (!f.cap || f.cap.length > 60) errs.push('frame ' + (i + 1) + ': caption missing or over 60 characters');
       if (sc === 'swing' && !POSES[f.pose]) errs.push('frame ' + (i + 1) + ': unknown pose ' + f.pose);
-      if (sc === 'side' && !SIDE[f.pose]) errs.push('frame ' + (i + 1) + ': unknown side pose ' + f.pose);
     });
     if (art.club && !CLUBS[art.club]) errs.push('unknown club ' + art.club);
     return errs;
   }
-  function moves(art) { return art.frames.some(function (f) { var s = frameScene(art, f); return s === 'swing' || s === 'side'; }); }
+  // Where the head, hands, ball and lead foot are in a swing frame (for marking up an example frame).
+  function points(art, i) {
+    var f = art.frames[i], p = resolvePose(poseOf(f.pose), art), B = body(p, art), bp = ballPoint(art);
+    return { head: B.head, hands: B.H, ball: bp.ball, leadFoot: B.FL, hip: B.P };
+  }
+  function moves(art) { return art.frames.some(function (f) { return frameScene(art, f) === 'swing'; }); }
 
-  return { render: render, tween: tween, validate: validate, moves: moves, POSES: POSES, SIDE: SIDE, SCENES: Object.keys(SCENES) };
+  return { render: render, tween: tween, validate: validate, moves: moves, points: points, POSES: POSES, SCENES: Object.keys(SCENES) };
 });

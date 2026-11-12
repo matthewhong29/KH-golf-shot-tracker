@@ -816,7 +816,7 @@
     spin_rpm: ['Spin', 'Backspin, in revolutions per minute']
   };
   // The Tips section that helps with each kind of focus (first one the player has).
-  const TIP_FOR = { contact: ['contact', 'basics'], direction: ['straight', 'basics'], launch: ['hands', 'basics'], distance: ['plan', 'speed'] };
+  const TIP_FOR = { contact: ['contact', 'strike'], direction: ['straight', 'strike'], launch: ['hands', 'strike'], distance: ['plan', 'speed'] };
   function tipIdFor(kind) {
     const t = TIPS[playerId];
     if (!t || !kind) return null;
@@ -1234,7 +1234,15 @@
   const REDUCED = (() => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } })();
   const ART_HOLD = 1700, ART_MOVE = 700;
   let artBoxes = [], artIO = null, artClock = null;
+  // Where the camera goes and what to get in the picture, for swing videos.
+  const FILM_ART = { scene: 'camera', auto: false, frames: [
+    { view: 'face', cap: 'Face-on: in front of you, across the ball, 10 ft away' },
+    { scene: 'framing', view: 'face', cap: 'Phone at hip height; whole body, club and ball in' },
+    { view: 'dtl', cap: 'Down the line: behind your hands, aimed at the target' },
+    { scene: 'framing', view: 'dtl', cap: 'Same height; your whole body, the club and the ball' }
+  ] };
   function drillFor(key) {
+    if (key === 'film') return { name: 'How to film your swing', art: FILM_ART };
     const m = /^([\w-]+):(\d+)$/.exec(key || ''), t = TIPS[playerId];
     const f = m && t ? t.focus.find((x) => x.id === m[1]) : null;
     return f ? f.drills[+m[2]] || null : null;
@@ -1242,11 +1250,12 @@
   function artLabel(name, art, i) { return `${name}, step ${i + 1} of ${art.frames.length}: ${art.frames[i].cap}`; }
   function artHtml(art, key, name) {
     if (!DA || !art || !Array.isArray(art.frames) || !art.frames.length) return '';
+    const auto = !REDUCED && art.auto !== false;
     return `<div class="da-box" data-art="${esc(key)}" data-name="${esc(name)}">
       <div class="da-stage">${DA.render(art, 0, { label: artLabel(name, art, 0) })}</div>
       <div class="da-strip" role="group" aria-label="${esc(name)}: steps">${art.frames.map((fr, i) => `<button type="button" class="da-step" data-action="art-step" data-i="${i}" aria-pressed="${i === 0}" aria-label="Step ${i + 1}: ${esc(fr.cap)}">${DA.render(art, i, { thumb: true })}<span class="da-num" aria-hidden="true">${i + 1}</span></button>`).join('')}</div>
       <div class="da-foot"><p class="da-cap"><span class="da-capn" aria-hidden="true">1</span><span class="da-capt">${esc(art.frames[0].cap)}</span></p>
-        <button type="button" class="da-play" data-action="art-play" aria-label="${REDUCED ? 'Play' : 'Pause'} the animation">${icon(REDUCED ? 'run' : 'pause')}</button></div>
+        <button type="button" class="da-play" data-action="art-play" aria-label="${auto ? 'Pause' : 'Play'} the animation">${icon(auto ? 'pause' : 'run')}</button></div>
     </div>`;
   }
   function artStop() {
@@ -1262,7 +1271,7 @@
     if (!DA) return;
     artBoxes = $$('.da-box').filter((el) => !el.closest('[hidden]')).map((el) => {
       const d = drillFor(el.dataset.art);
-      return d && d.art ? { el, art: d.art, name: el.dataset.name, i: 0, playing: !REDUCED, visible: false, next: 0, raf: 0 } : null;
+      return d && d.art ? { el, art: d.art, name: el.dataset.name, i: 0, playing: !REDUCED && d.art.auto !== false, visible: false, next: 0, raf: 0 } : null;
     }).filter(Boolean);
     if (!artBoxes.length) return;
     if ('IntersectionObserver' in window) {
@@ -1424,45 +1433,51 @@
     if (EXAMPLES[playerId] || !DA) return EXAMPLES[playerId] || null;
     const art = { scene: 'swing', club: 'iron', frames: ['address', 'top', 'impact', 'finish'].map((pose) => ({ pose, cap: pose })) };
     const fr = (i, label, marks, notes) => ({ svg: DA.render(art, i, {}), thumb: DA.render(art, i, { thumb: true }), w: 240, h: 200, label, marks, notes });
-    const headLine = { type: 'line', from: [113.4, 12], to: [113.4, 176], kind: 'ref', dash: true };
+    const pt = (i) => DA.points(art, i), r1 = (v) => Math.round(v * 10) / 10;
+    const a = pt(0), top = pt(1), imp = pt(2), fin = pt(3);
+    const headLine = { type: 'line', from: [r1(a.head[0]), 12], to: [r1(a.head[0]), 176], kind: 'ref', dash: true };
     const ex = {
       id: 'example', club: '7i', view: 'face-on', title: '7 iron, face-on',
       summary: 'Send a swing video and it comes back like this: the key frames, with lines drawn on them, numbered notes, and the drills that fix what they show.',
       frames: [
-        fr(0, 'Address', [headLine, { type: 'circle', at: [113.4, 36.4], r: 16, kind: 'good', n: 1 }],
+        fr(0, 'Address', [headLine, { type: 'circle', at: a.head.map(r1), r: 16, kind: 'good', n: 1 }],
           [{ n: 1, kind: 'good', text: 'Head over the ball and weight even. The dashed line marks where your head starts.' }]),
-        fr(1, 'Top', [headLine, { type: 'circle', at: [107.1, 36.8], r: 16, kind: 'issue', n: 1 }, { type: 'arrow', from: [90, 64], to: [109, 64], kind: 'fix', n: 2 }],
+        fr(1, 'Top', [headLine, { type: 'circle', at: top.head.map(r1), r: 16, kind: 'issue', n: 1 }, { type: 'arrow', from: [r1(top.head[0] - 30), r1(top.head[1] + 28)], to: [r1(a.head[0] - 2), r1(top.head[1] + 28)], kind: 'fix', n: 2 }],
           [{ n: 1, kind: 'issue', text: 'Your head has slid back, away from the target, off the dashed line.' }, { n: 2, kind: 'fix', text: 'Turn your chest instead, and keep your head over the ball.' }]),
-        fr(2, 'Impact', [{ type: 'line', from: [127.9, 107], to: [127.9, 188], kind: 'ref', dash: true }, { type: 'arrow', from: [154, 132], to: [131, 112], kind: 'good', n: 1 }],
+        fr(2, 'Impact', [{ type: 'line', from: imp.hands.map(r1), to: [r1(imp.hands[0]), 190], kind: 'ref', dash: true }, { type: 'arrow', from: [r1(imp.hands[0] + 28), r1(imp.hands[1] + 22)], to: [r1(imp.hands[0] + 5), r1(imp.hands[1] + 4)], kind: 'good', n: 1 }],
           [{ n: 1, kind: 'good', text: 'Hands ahead of the ball at impact: the dashed line from your hands is past the ball.' }]),
-        fr(3, 'Finish', [{ type: 'line', from: [143, 176], to: [143, 58], kind: 'ref', dash: true }, { type: 'dot', at: [143, 172], r: 5, kind: 'fix', n: 1 }],
+        fr(3, 'Finish', [{ type: 'line', from: [r1(fin.leadFoot[0]), 176], to: [r1(fin.leadFoot[0]), 58], kind: 'ref', dash: true }, { type: 'dot', at: [r1(fin.leadFoot[0]), 172], r: 5, kind: 'fix', n: 1 }],
           [{ n: 1, kind: 'fix', text: 'Finish balanced over your front foot, belt buckle to the target, and hold it.' }])
       ],
       good: ['Steady posture at address', 'Hands ahead at impact'],
-      fixes: (playerId === 'brother' ? [{ text: 'Keep your head still through the backswing', drill: 'basics:1' }, { text: 'Hold a balanced finish' }]
+      fixes: (playerId === 'brother' ? [{ text: 'Keep your head still through the backswing', drill: 'strike:0' }, { text: 'Hold a balanced finish' }]
         : [{ text: 'Keep your head still through the backswing', drill: 'turn:1' }, { text: 'Hold a balanced finish', drill: 'turn:2' }])
         .map((x) => (x.drill && !drillFor(x.drill) ? { text: x.text } : x))
     };
     EXAMPLES[playerId] = ex;
     return ex;
   }
-  function filmTips(open) {
-    return `<details class="card rv-film"${open ? ' open' : ''}><summary><span class="head-ico">${icon('calendar')}</span><span>How to film your swing</span></summary>
-      <ul class="rv-tips">
-        <li>Phone at hip height, about 10 feet away. Lean it on your bag or use a stand.</li>
-        <li><strong>Face-on:</strong> in front of you, looking at your chest. <strong>Down the line:</strong> behind your hands, pointing at the target.</li>
-        <li>Get your whole body and the club in the picture, with room above your head.</li>
-        <li>Use slow motion if your phone has it, in good light.</li>
-        <li>Text the video to Matthew with the date and the club.</li>
-      </ul></details>`;
+  function filmGuide(open) {
+    return `<details class="card rv-film"${open ? ' open' : ''}><summary><span class="head-ico">${icon('play')}</span><span>How to film your swing</span></summary>
+      <div class="rv-film-body">
+        <p class="note">Two camera spots show the most. Tap the pictures to see where the phone goes and what to get in the picture.</p>
+        ${artHtml(FILM_ART, 'film', 'How to film your swing')}
+        <ul class="rv-tips">
+          <li><strong>Face-on:</strong> straight in front of you, across the ball, pointing at your belt buckle.</li>
+          <li><strong>Down the line:</strong> behind you, on a line through your hands that runs parallel to the target line, pointing at the target.</li>
+          <li>About 10 feet away, at hip height, and level, not tilted. Use a stand or lean the phone on your bag.</li>
+          <li>Get your whole body, the ball, and the club at the top of your swing in the picture, with a little room above it. Don’t zoom; move the phone instead.</li>
+          <li>Use slow motion if your phone has it, in good light. Film 3 to 5 swings with one club, then text the video to Matthew with the date and the club.</li>
+        </ul>
+      </div></details>`;
   }
   function swingView() {
     const list = data.reviews || [];
-    if (list.length) return list.map(reviewCard).join('') + filmTips(false);
+    if (list.length) return list.map(reviewCard).join('') + filmGuide(false);
     const ex = exampleReview();
     return `<div class="card"><div class="card-head"><span class="head-ico">${icon('play')}</span><h3 class="card-title">No swing reviews yet</h3></div>
         <p class="note">Film a few swings and text the video to Matthew. Claude pulls out the key frames (setup, top, impact and finish), draws on them to show what’s happening, and adds the fixes and drills here.</p></div>
-      ${filmTips(true)}
+      ${filmGuide(true)}
       ${ex ? reviewCard(ex) : ''}`;
   }
   function focusCard(f, i, openFirst) {

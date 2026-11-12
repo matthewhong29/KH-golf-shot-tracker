@@ -8,8 +8,8 @@ A phone-first web page that tracks golf shots for Matthew's family. GitHub Pages
 
 | Player | id (URL `?player=`) | File | About |
 |---|---|---|---|
-| Dad | `dad` | `data/dad_golf_data.json` | 56, 6′1″, beginner; older Lynx Black Cat irons (3 iron to PW), Callaway Edge 5 hybrid and driver |
-| M3 (Matthew's brother) | `brother` | `data/brother_golf_data.json` | 14, 5′0″, plays for fun and wants to keep up with his friends on the team |
+| Dad | `dad` | `data/dad_golf_data.json` | 56, 6′1″; has had lessons and knows the basics; older Lynx Black Cat irons (3 iron to PW), Callaway Edge 5 hybrid and driver |
+| M3 (Matthew's brother) | `brother` | `data/brother_golf_data.json` | 14, 5′0″; has had lessons and knows the basics; plays for fun and wants to keep up with his friends on the team |
 
 If it isn't clear whose photos they are, ask Matthew before adding anything.
 
@@ -35,7 +35,7 @@ Dad or M3 takes photos of the Toptracer or Rapsodo screen and texts them to Matt
 3. **Write the shots in time order.** Screens list the newest shot first, so reverse them. In an existing session, ids continue its sequence (e.g. `2026-11-01-049` after `2026-11-01-048`). A new session numbers its shots `{session id}-001`, `-002`, … (e.g. `2026-11-15-toptracer-001`), the same as the page does, so two sessions on one day never share an id. Use the same keys as the existing shots: `id, time, club, carry_yds, total_yds, ball_speed_mph, launch_deg, apex_ft, landing_deg, hang_time_s, curve_ft, offline_ft`. Add `club_speed_mph`, `spin_rpm` or `smash_factor` only when the device shows them. Add any new club to that player's top-level `clubs` map. If the photo cuts off rows, add a line to the session's `notes`.
 4. **Check before committing.** Re-read your rows against the photo one more time. Then `node scripts/check-data.js` (it checks every player's file) and `node tests/core.test.js` must both pass.
 5. **Commit and push to `main`.** Matthew, the repo owner, approved pushing data updates straight to `main`, because that branch is what the website serves. If your session requires a different branch, ask once whether to push to `main`. Use a commit message like "Add 12 shots for Dad from 2026-11-01 (SW, 5w)". The site updates about a minute after the push.
-6. **End with a short summary Matthew can forward:** shots per club, average carry per club (solid shots), each club's new pure-strike carry from the Practice tab's "Your yardages", how many likely mis-hits there were, which clubs the page now marks "Needs work" (and any that dropped off the list), and anything notable, such as misses to one side or a club that went farther than last time. Use plain words, short and encouraging. Dad is a beginner; for M3, keep it fun.
+6. **End with a short summary Matthew can forward:** shots per club, average carry per club (solid shots), each club's new pure-strike carry from the Practice tab's "Your yardages", how many likely mis-hits there were, which clubs the page now marks "Needs work" (and any that dropped off the list), and anything notable, such as misses to one side or a club that went farther than last time. Use plain words, short and encouraging. Both have had lessons and know the basics, so skip beginner advice (grip, posture, ball position); for M3, keep it fun.
 
 ## Adding or updating goals
 
@@ -66,7 +66,7 @@ Matthew may send a swing video and ask for a review. The page shows it under Pra
 Each drill in `js/tips.js` has `art`, its frames for the animation (`js/drillart.js` lists the scenes, poses and marks; 2–4 frames, captions up to 60 characters), and `video` when a coach's video has been found: `{ "id", "title", "by", "note" }`.
 
 - Only use a YouTube id copied from a real search result or page. Never type one from memory or make one up.
-- The listing must show the same drill (or the same skill) and a qualified coach: a PGA or LPGA professional, a well-known teaching pro, or an established instruction channel. If you can't tell, leave `video` out; the page then shows a "Look it up on YouTube" search instead.
+- The listing must show the same drill (or the same skill) and come from a channel with a long track record of good instruction, such as Titleist, Rick Shiels, Me and My Golf, Danny Maude, Golf Monthly, Golf Digest, Golf Channel's School of Golf, PGA of America, or U.S. Kids Golf for juniors (or a nationally known teacher, such as a GOLF Top 100 Teacher). The videos can't be watched from here, so the channel's track record is the check. If you can't tell, leave `video` out; the page then shows a "Look it up on YouTube" search instead.
 - When Matthew says a video is wrong or doesn't play, replace it or take it out.
 - `node scripts/check-data.js` checks every drill's animation and video.
 

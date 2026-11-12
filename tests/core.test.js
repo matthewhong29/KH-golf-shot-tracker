@@ -314,7 +314,7 @@ eq([C.fmtHeight(73), C.fmtHeight(60), C.fmtHeight(null)], ['6′1″', '5′0″
 eq(C.youtubeSearchUrl('golf towel drill'), 'https://www.youtube.com/results?search_query=golf%20towel%20drill', 'YouTube search link');
 const TIPS = require('../js/tips.js');
 eq(TIPS.dad.focus.map((f) => f.id), ['contact', 'turn', 'hands', 'straight', 'fit', 'plan'], 'Dad focus areas');
-eq(TIPS.brother.focus.map((f) => f.id), ['clubs', 'basics', 'short', 'speed', 'games', 'plan'], 'M3 focus areas');
+eq(TIPS.brother.focus.map((f) => f.id), ['clubs', 'strike', 'short', 'speed', 'games', 'plan'], 'M3 focus areas');
 for (const p of players) {
   const t = TIPS[p.id];
   ok(t && t.intro && /coach/i.test(t.lesson || ''), `${p.id}: intro and a coach line`);
@@ -346,6 +346,19 @@ const mid = DA.tween(towel, 0, 1, 0.5, {});
 ok(mid !== DA.render(towel, 0) && mid !== DA.render(towel, 1), 'tween draws an in-between position');
 eq(DA.tween(towel, 0, 1, 1, {}), DA.render(towel, 1, {}), 'tween at the end = the next frame');
 eq(DA.validate({ scene: 'swing', frames: [{ pose: 'nope', cap: 'x' }] }), ['needs 2–4 frames', 'frame 1: unknown pose nope'], 'validate catches bad specs');
+// The figure's positions follow real face-on swing positions.
+const iron = { scene: 'swing', club: 'iron', frames: ['address', 'halfBack', 'top', 'impact', 'halfThru', 'finish'].map((pose) => ({ pose, cap: pose })) };
+const P = iron.frames.map((f, i) => DA.points(iron, i));
+ok(P[0].hands[1] > P[0].hip[1], 'address: hands hang below the belt');
+ok(Math.abs(P[1].hands[1] - P[1].hip[1]) < 6 && P[1].hands[0] < P[0].hands[0] - 12, 'halfway back: hands at hip height, toward the trail side');
+ok(P[2].hands[0] < P[2].head[0] - 14 && P[2].hands[1] < P[2].head[1], 'top: hands above and behind the head, not on it');
+ok(P[3].hands[0] > P[3].ball[0], 'impact: hands ahead of the ball');
+ok(P[4].hands[0] > P[3].hands[0] + 8, 'halfway through: hands past impact, toward the target');
+ok(P[5].hands[0] > P[5].head[0] + 12 && P[5].hands[1] < P[5].head[1], 'finish: hands high on the target side of the head');
+const film = { scene: 'camera', auto: false, frames: [{ view: 'face', cap: 'a' }, { scene: 'framing', view: 'face', cap: 'b' }, { view: 'dtl', cap: 'c' }, { scene: 'framing', view: 'dtl', cap: 'd' }] };
+eq(DA.validate(film), [], 'filming guide spec is valid');
+ok(/da-cam on/.test(DA.render(film, 0)) && /Face-on/.test(DA.render(film, 0)) && /Down the line/.test(DA.render(film, 2)), 'filming guide: the active camera and its label');
+ok(/da-phone/.test(DA.render(film, 1)) && /da-phone/.test(DA.render(film, 3)), 'filming guide: what goes in the picture');
 
 section('Swing reviews');
 const SR = require('../js/review.js');

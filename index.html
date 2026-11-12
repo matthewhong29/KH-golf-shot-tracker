@@ -551,17 +551,11 @@ nav.tabs button[aria-selected="true"] .ti{background:var(--g150)}
 .da .da-t{font:700 18px var(--font);fill:#0e1a13;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round}
 .da .da-n{font:700 17px var(--font);fill:#0e1a13;paint-order:stroke;stroke:#fff;stroke-width:4px}
 .da .da-big{font:800 40px var(--font);fill:#0f5135;letter-spacing:-.02em}
-.da .da-mat{fill:#e6f0e9}
 .da .da-foot{fill:#2b3a33}
 .da .da-tline{fill:none;stroke:#e2b10c;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
 .da .da-green{fill:#cfe8d6;stroke:#b3dbc0;stroke-width:6}
 .da .da-hole{fill:#13261c}
 .da .da-gripbar{fill:#2b3a33}
-.da .da-glove{fill:#fff;stroke:#8d9a92;stroke-width:2;stroke-linejoin:round}
-.da .da-trail{fill:#5b6b62;stroke:#3d4a43;stroke-width:2;stroke-linejoin:round}
-.da .da-knuckle{fill:#fff;stroke:#b8c2bc;stroke-width:1.6}
-.da .da-knuckle.on{stroke:#d97706;stroke-width:2.6}
-.da .da-v{fill:none;stroke:#d97706;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
 .da .da-screen{fill:#123726}
 .da .da-row{stroke:rgba(255,255,255,.35);stroke-width:3;stroke-linecap:round}
 .da .da-row.on{stroke:rgba(255,255,255,.8)}
@@ -578,11 +572,17 @@ nav.tabs button[aria-selected="true"] .ti{background:var(--g150)}
 .da .da-letter.on{fill:#fff3dc;stroke:#d97706;stroke-width:2.5}
 .da .da-lt{font:800 24px var(--font);fill:#55625a}
 .da .da-lt.on{fill:#6b4a00}
+.da .da-arm2{fill:none;stroke:#1f7a4f;stroke-width:8.5;stroke-linecap:round;stroke-linejoin:round}
+.da .da-cone{fill:rgba(24,122,78,.12);stroke:rgba(24,122,78,.35);stroke-width:1.2;stroke-dasharray:4 3}
+.da .da-cam{opacity:.38}
+.da .da-cam.on{opacity:1}
+.da .da-cambody{fill:#26352d}
+.da .da-camlens{fill:#55625a}
+.da .da-light{fill:#f8fbf9}
 .da .da-worn{fill:#9aa7a0;opacity:.85}
 .da .da-cap{fill:#1f7a4f}
 .da .da-brim{stroke:#145c3a;stroke-width:3.2;stroke-linecap:round}
 .da .da-across{stroke:#55625a;stroke-width:4;stroke-linecap:round}
-.da .da-fold{fill:none;stroke:#b8c2bc;stroke-width:1.6;stroke-linecap:round}
 /* ----- Practice sections ----- */
 .pv{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:16px;padding:4px;border-radius:14px;background:rgba(0,0,0,.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
 .pv button{min-height:48px;border:0;border-radius:10px;background:transparent;color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;transition:background-color .2s,color .2s}
@@ -649,7 +649,9 @@ nav.tabs button[aria-selected="true"] .ti{background:var(--g150)}
 .rv-film>summary::after{content:"";margin-left:auto;flex:none;width:11px;height:11px;border-right:2.5px solid var(--g600);border-bottom:2.5px solid var(--g600);transform:rotate(45deg) translate(-3px,-3px);transition:transform .2s}
 .rv-film[open]>summary::after{transform:rotate(-135deg) translate(-3px,-3px)}
 .rv-film[open]>summary{border-bottom:1px solid var(--line)}
-.rv-tips{margin:0;padding:12px 18px 16px 40px;font-size:17px}
+.rv-film-body{padding:4px 16px 16px}
+.rv-film-body>.note{margin-top:10px}
+.rv-tips{margin:4px 0 0;padding:0 0 0 22px;font-size:17px}
 .rv-tips li{padding:4px 0}
 </style>
 </head>
