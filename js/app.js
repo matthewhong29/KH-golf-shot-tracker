@@ -205,6 +205,7 @@
       ${pct != null ? `<span class="meter" aria-hidden="true"><span style="width:${f1(pct)}%"></span></span>` : ''}
       ${o.sub ? `<span class="kpi-s">${esc(o.sub)}</span>` : ''}
       ${d ? `<span class="kpi-d ${d.cls}">${d.dir ? `<span aria-hidden="true">${d.dir === 'up' ? '▲' : '▼'} </span><span class="sr">${d.dir === 'up' ? 'Up' : 'Down'} </span>` : ''}${esc(d.text)}</span>` : ''}
+      ${o.html || ''}
       ${o.flag ? '<span class="kpi-d nw">Needs work</span>' : ''}</div>`;
   }
   // "1.9" and "yds right", for a big number with its direction spelled out.
@@ -1054,6 +1055,22 @@
   }
 
   // ----- Progress -----
+  const TREND_WORDS = { better: ['', 'A little better', 'Better', 'Much better'], worse: ['', 'A little worse', 'Worse', 'Much worse'] };
+  function trendIcon(t) {
+    const n = t.dir === 'same' ? 0 : t.level;
+    if (!n) return '<svg class="tr-ico" viewBox="0 0 14 20" aria-hidden="true"><path d="M2.5 10h9"/></svg>';
+    const ys = { 1: [7.5], 2: [4.5, 10.5], 3: [1.5, 7.5, 13.5] }[n], up = t.dir === 'better';
+    const d = ys.map((y) => (up ? `M2.5 ${y + 4.5}L7 ${y}L11.5 ${y + 4.5}` : `M2.5 ${y}L7 ${y + 4.5}L11.5 ${y}`)).join('');
+    return `<svg class="tr-ico" viewBox="0 0 14 20" aria-hidden="true"><path d="${d}"/></svg>`;
+  }
+  // Up arrows for better, down arrows for worse; more arrows for a bigger change.
+  function trendBadge(t) {
+    if (!t) return '';
+    const full = t.dir === 'same' ? 'About the same' : TREND_WORDS[t.dir][t.level];
+    const note = [t.basis === 'best' ? 'comparing the longest shots' : '', t.few ? 'only a few shots' : ''].filter(Boolean).join(', ');
+    const word = t.dir === 'same' ? 'Same' : t.dir === 'better' ? 'Better' : 'Worse';
+    return `<span class="trend ${t.dir} l${t.dir === 'same' ? 0 : t.level}" title="${esc(full + (note ? ` (${note})` : ''))}">${trendIcon(t)}<span aria-hidden="true">${word}</span><span class="sr">${esc(full + (note ? `, ${note}` : ''))}</span></span>`;
+  }
   function progValue(m, st) {
     if (!st) return { value: '—', sub: 'not recorded' };
     if (st.allMis) return { value: '—', sub: `all ${st.total} were mis-hits` };
@@ -1065,7 +1082,6 @@
     if (C.isNum(st.min) && C.isNum(st.max)) return { value: C.fmtRange(st.min, st.max, m.dir) + (deg ? '°' : ''), unit: deg ? '' : m.dir ? 'ft' : m.unit, sub: 'recorded range' };
     return { value: '—', sub: '' };
   }
-  const UP_IS_GOOD = { carry_yds: true, total_yds: true, ball_speed_mph: true, club_speed_mph: true, smash_factor: true };
   // Baseline and latest side by side, with the change, for the metric on the chart.
   function progKpis(P, m) {
     if (P.rows.length < 2 || !P.baseline || !P.latest) return '';
@@ -1074,16 +1090,19 @@
     if (m.key === C.SOLID_METRIC.key) {
       const pa = C.solidPct(b.entry), pl = C.solidPct(l.entry);
       const v = (pc, e) => (pc == null ? { value: '—', sub: 'ranges only' } : { value: C.roundHalfEven(pc, 0) + '%', meter: pc, sub: `${e.solid.length} of ${e.shots.length}` });
-      return `<div class="kpis">${kpi(Object.assign({ label: lb('Baseline', b) }, v(pa, b.entry)))}${kpi(Object.assign({ label: lb('Latest', l), delta: pa != null && pl != null ? pctDelta(pl, pa, b.session) : null }, v(pl, l.entry)))}</div>`;
+      const t = pa != null && pl != null ? C.trend('solid_pct', { avg: pa }, { avg: pl }) : null;
+      const extra = t ? trendBadge(t) + `<span class="kpi-s">${esc(C.fmtSigned(C.roundHalfEven(pl, 0) - C.roundHalfEven(pa, 0), 0))} points since the baseline</span>` : '';
+      return `<div class="kpis">${kpi(Object.assign({ label: lb('Baseline', b) }, v(pa, b.entry)))}${kpi(Object.assign({ label: lb('Latest', l), html: extra }, v(pl, l.entry)))}</div>`;
     }
     const a = C.metricStat(b.entry, m.key), c = C.metricStat(l.entry, m.key);
-    let delta = null;
-    if (!m.dir && a && c && C.isNum(a.avg) && C.isNum(c.avg)) {
-      const d = c.avg - a.avg, txt = C.fmtAvg(m, Math.abs(d));
-      delta = txt === C.fmtAvg(m, 0) ? { cls: 'same', text: 'Same as the baseline' }
-        : { cls: UP_IS_GOOD[m.key] ? (d > 0 ? 'up' : 'down') : 'same', dir: d > 0 ? 'up' : 'down', text: `${txt}${m.unit === '°' ? '°' : ' ' + m.unit} since the baseline` };
+    const t = C.trend(m.key, a, c, { window: C.launchWindow(P.club || ui.progClub, data.equipment) });
+    let change = '';
+    if (!m.dir && a && c && C.isNum(a.avg) && C.isNum(c.avg) && !a.summaryOnly && !c.summaryOnly) {
+      const txt = C.fmtSigned(c.avg - a.avg, m.dec);
+      change = `${txt}${m.unit === '°' ? '°' : ' ' + m.unit} since the baseline`;
     }
-    return `<div class="kpis">${kpi(Object.assign({ label: lb('Baseline', b) }, progValue(m, a)))}${kpi(Object.assign({ label: lb('Latest', l), delta }, progValue(m, c)))}</div>`;
+    const extra = trendBadge(t) + (change ? `<span class="kpi-s">${esc(change)}</span>` : '');
+    return `<div class="kpis">${kpi(Object.assign({ label: lb('Baseline', b) }, progValue(m, a)))}${kpi(Object.assign({ label: lb('Latest', l), html: extra }, progValue(m, c)))}</div>`;
   }
   function renderProgress() {
     const el = $('#view-progress');
@@ -1125,16 +1144,20 @@
     const b = P.baseline, l = P.latest;
     const pa = C.solidPct(b.entry), pl = C.solidPct(l.entry);
     const pctCell = (p, e) => p == null ? '<span class="v">—</span><span class="n">unknown (ranges only)</span>' : `<span class="v">${C.roundHalfEven(p, 0)}%</span><span class="r">${e.solid.length} of ${e.shots.length}</span>`;
+    const solidT = pa != null && pl != null ? C.trend('solid_pct', { avg: pa }, { avg: pl }) : null;
     const solidRow = (b.entry.shots.length || l.entry.shots.length)
-      ? `<tr><th scope="row">Solid contact</th><td>${pctCell(pa, b.entry)}</td><td>${pctCell(pl, l.entry)}${pa != null && pl != null ? `<span class="chg">${esc(C.fmtSigned(pl - pa, 0))} points</span>` : ''}</td></tr>` : '';
+      ? `<tr><th scope="row">Solid contact</th><td>${pctCell(pa, b.entry)}</td><td>${pctCell(pl, l.entry)}${trendBadge(solidT)}${pa != null && pl != null ? `<span class="chg">${esc(C.fmtSigned(pl - pa, 0))} points</span>` : ''}</td></tr>` : '';
+    const win = C.launchWindow(P.club || ui.progClub, data.equipment);
     const rows = C.METRICS.map((m) => {
       const a = C.metricStat(b.entry, m.key), c = C.metricStat(l.entry, m.key);
       if (!a && !c) return '';
+      const t = C.trend(m.key, a, c, { window: win });
       const d = C.compareStats(a, c);
       let change = '';
       if (d) {
         if (m.dir) {
-          if (C.isNum(d.spreadA) && C.isNum(d.spreadB)) change = `spread ${C.fmtRaw(d.spreadA)} → ${C.fmtRaw(d.spreadB)} ft`;
+          if (t && t.basis === 'line') change = `${m.key === 'curve_ft' ? 'average bend' : 'average miss'} ${C.fmtNum(t.from, 1)} → ${C.fmtNum(t.to, 1)} ft`;
+          else if (C.isNum(d.spreadA) && C.isNum(d.spreadB)) change = `spread ${C.fmtRaw(d.spreadA)} → ${C.fmtRaw(d.spreadB)} ft`;
         } else {
           const parts = [];
           if (C.isNum(d.dMin)) parts.push('low ' + C.fmtSigned(d.dMin));
@@ -1143,10 +1166,12 @@
           change = parts.join(' · ');
         }
       }
-      return `<tr><th scope="row">${esc(m.label)}${m.unit ? `<span class="u">${esc(unitLabel(m))}</span>` : ''}</th><td>${statCell(m, a)}</td><td>${statCell(m, c)}${change ? `<span class="chg">${esc(change)}</span>` : ''}</td></tr>`;
+      return `<tr><th scope="row">${esc(m.label)}${m.unit ? `<span class="u">${esc(unitLabel(m))}</span>` : ''}</th><td>${statCell(m, a)}</td><td>${statCell(m, c)}${trendBadge(t)}${change ? `<span class="chg">${esc(change)}</span>` : ''}</td></tr>`;
     }).join('');
     const head = (r, label) => `${label}<span class="u">${esc(C.fmtDate(r.session.date))} · ${esc(C.shortDevice(r.session.device))}</span>`;
     return `<div class="table-wrap"><table class="matrix cmp"><thead><tr><th scope="col">Metric</th><th scope="col">${head(b, 'Baseline')}</th><th scope="col">${head(l, 'Latest')}</th></tr></thead><tbody>${solidRow}${rows}</tbody></table></div>
+      <p class="hint trend-key"><span class="trend better l2">${trendIcon({ dir: 'better', level: 2 })}<span aria-hidden="true">Better</span></span> <span class="trend worse l2">${trendIcon({ dir: 'worse', level: 2 })}<span aria-hidden="true">Worse</span></span>
+        Up arrows mean better since the baseline and down arrows worse: one arrow is a small change, three a big one. Launch is better when it moves toward the club’s target window; curve and offline when shots finish closer to the line on average. When the baseline only has ranges, the longest shots are compared. Peak height, landing and hang time get no arrow, since higher isn’t always better.</p>
       <p class="hint">Each cell shows the average (when individual shots exist), then lowest–highest, from solid shots. Changes are latest minus baseline.</p>`;
   }
 

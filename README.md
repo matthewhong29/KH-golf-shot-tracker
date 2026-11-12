@@ -35,7 +35,7 @@ The four tabs are:
   - Dispersion: offline vs. carry. All clubs show as one panel each on the same scale, or pick one club.
   - Average miss by club.
   - The session's coaching notes.
-- **Progress**: pick a club and a metric to see the baseline and latest side by side with the change, each session's range and average, then a baseline-vs-latest table. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
+- **Progress**: pick a club and a metric to see the baseline and latest side by side with the change, each session's range and average, then a baseline-vs-latest table. Arrows mark each change: up for better, down for worse, and one to three arrows for a small to big change (`GolfCore.trend` in `js/core.js`). More carry and speed is better; launch is better when it moves toward the club's target window; curve and offline when shots finish closer to the line on average. Peak height, landing angle and hang time get no arrow, since higher isn't always better. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
 - **Practice** has three sections. **Range**, for use during a range session:
   - **Your yardages:** each club's pure-strike carry and ball speed at a glance. Tap a club to pick it.
   - **Your clubs and launch targets:** every club in his bag with its model, loft and the launch a solid strike should have.

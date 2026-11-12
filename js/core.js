@@ -674,6 +674,55 @@
     return { dMin: d(a.min, b.min), dMax: d(a.max, b.max), dAvg: d(a.avg, b.avg), spreadA: spread(a), spreadB: spread(b) };
   }
 
+  // Better or worse since the baseline, and by how much. `better` says what counts as better:
+  // 'up' (a higher average), 'line' (closer to the target line on average, so less miss or less bend,
+  // which doesn't depend on how many shots were hit) or 'target' (an average closer to the club's
+  // launch window). steps are the changes that count as a little, clearly and a lot (a share
+  // of the baseline when rel). Apex, landing angle, hang time and spin aren't better higher or lower,
+  // so they get no verdict.
+  var TREND = {
+    solid_pct: { better: 'up', steps: [3, 8, 20] },
+    carry_yds: { better: 'up', rel: true, steps: [0.015, 0.04, 0.08] },
+    total_yds: { better: 'up', rel: true, steps: [0.015, 0.04, 0.08] },
+    ball_speed_mph: { better: 'up', rel: true, steps: [0.015, 0.035, 0.07] },
+    club_speed_mph: { better: 'up', rel: true, steps: [0.015, 0.035, 0.07] },
+    smash_factor: { better: 'up', steps: [0.02, 0.05, 0.1] },
+    launch_deg: { better: 'target', steps: [0.5, 1.5, 4] },
+    curve_ft: { better: 'line', steps: [0.1, 0.25, 0.45] },
+    offline_ft: { better: 'line', steps: [0.1, 0.25, 0.45] }
+  };
+  // a, b: metricStat-style stats for the baseline and the latest session ({ avg } is enough for solid
+  // contact). opts.window: the launch window [lo, hi]. Returns null when there's no fair comparison, else
+  // { dir: 'better' | 'worse' | 'same', level: 0 (same) to 3 (a lot), basis, few }.
+  // basis 'best' means the baseline had ranges only, so the longest shots were compared.
+  function trend(key, a, b, opts) {
+    var t = TREND[key];
+    if (!t || !a || !b || a.allMis || b.allMis) return null;
+    var shots = !a.summaryOnly && !b.summaryOnly, both = shots && isNum(a.avg) && isNum(b.avg);
+    var gain = null, size = null, basis = null, from = null, to = null;
+    function rel(d, base) { return t.rel ? Math.abs(d) / Math.max(Math.abs(base), 1e-9) : Math.abs(d); }
+    if (t.better === 'up') {
+      if (both) { gain = b.avg - a.avg; size = rel(gain, a.avg); basis = 'average'; from = a.avg; to = b.avg; }
+      else if (isNum(a.max) && isNum(b.max)) { gain = b.max - a.max; size = rel(gain, a.max); basis = 'best'; from = a.max; to = b.max; }
+    } else if (t.better === 'line') {
+      var mean = function (v) { return v.reduce(function (x, y) { return x + Math.abs(y); }, 0) / v.length; };
+      if (shots && a.values && a.values.length && b.values && b.values.length) {
+        var ma = mean(a.values), mb = mean(b.values);
+        gain = ma - mb; size = Math.abs(gain) / Math.max(ma, 3); basis = 'line'; from = ma; to = mb;
+      }
+    } else if (t.better === 'target') {
+      var w = opts && opts.window;
+      if (both && w) {
+        var off = function (v) { return v < w[0] ? w[0] - v : v > w[1] ? v - w[1] : 0; };
+        from = off(a.avg); to = off(b.avg); gain = from - to; size = Math.abs(gain); basis = 'target';
+      }
+    }
+    if (gain == null) return null;
+    var level = size < t.steps[0] ? 0 : size < t.steps[1] ? 1 : size < t.steps[2] ? 2 : 3;
+    var few = shots && ((a.n != null && a.n < 3) || (b.n != null && b.n < 3));
+    return { dir: level === 0 ? 'same' : gain > 0 ? 'better' : 'worse', level: level, basis: basis, from: from, to: to, few: !!few };
+  }
+
   // ---------------------------------------------------------------------------
   // Tips & players
   // ---------------------------------------------------------------------------
@@ -1168,7 +1217,7 @@
     bestStrikes: bestStrikes, strikeReference: strikeReference, checkShot: checkShot,
     launchWindow: launchWindow, clubLoft: clubLoft, clubSpec: clubSpec, clubKind: clubKind, LAUNCH_PER_LOFT: LAUNCH_PER_LOFT,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
-    buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats,
+    buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats, trend: trend, TREND: TREND,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf
   };
 });

@@ -284,6 +284,28 @@ const cmp = C.compareStats(C.metricStat(pPW.baseline.entry, 'carry_yds'), C.metr
 eq([cmp.dMin, cmp.dMax, cmp.dAvg], [60, 1, null], 'PW carry change since baseline');
 eq(C.solidPct(C.progressFor(data.sessions, '5w', null).latest.entry), 40, '5w solid contact 40% in progress');
 
+section('Better or worse since the baseline');
+const sum = (key, vals) => C.summarize(vals.map((v) => ({ [key]: v })), key);
+const tr = (key, a, b, w) => { const t = C.trend(key, sum(key, a), sum(key, b), { window: w }); return t && [t.dir, t.level, t.basis]; };
+eq(tr('carry_yds', [100, 100], [105, 105]), ['better', 2, 'average'], 'carry +5%: better, two arrows');
+eq(tr('carry_yds', [100, 100], [90, 90]), ['worse', 3, 'average'], 'carry −10%: much worse');
+eq(tr('carry_yds', [100, 100], [101, 101]), ['same', 0, 'average'], 'carry +1%: about the same');
+eq(tr('ball_speed_mph', [80, 80], [82, 82]), ['better', 1, 'average'], 'ball speed +2.5%: a little better');
+eq(tr('launch_deg', [26, 26], [23, 23], [19, 23]), ['better', 2, 'target'], 'launch moving into its window: better');
+eq(tr('launch_deg', [21, 21], [27, 27], [19, 23]), ['worse', 3, 'target'], 'launch moving 4° past its window: much worse');
+eq(C.trend('launch_deg', sum('launch_deg', [26]), sum('launch_deg', [23]), {}), null, 'launch with no window: no arrow');
+eq(tr('offline_ft', [80, 90, 85], [-60, 20, 40, 30, 10, -5]), ['better', 3, 'line'], 'offline closer to the line on average is better, even with a wider spread');
+eq(tr('curve_ft', [5, -5], [20, -20]), ['worse', 3, 'line'], 'more bend: worse');
+eq(tr('apex_ft', [60, 60], [70, 70]), null, 'peak height gets no arrow');
+eq(C.trend('solid_pct', { avg: 80 }, { avg: 90 }).dir + C.trend('solid_pct', { avg: 80 }, { avg: 90 }).level, 'better2', 'solid contact +10 points: better');
+eq(C.trend('solid_pct', { avg: 90 }, { avg: 88 }).dir, 'same', 'solid contact −2 points: about the same');
+const summaryOnly = { n: 0, of: 0, avg: null, min: 9, max: 95, summaryOnly: true, values: [] };
+eq((({ dir, level, basis }) => [dir, level, basis])(C.trend('carry_yds', summaryOnly, sum('carry_yds', [80, 108]))), ['better', 3, 'best'], 'a ranges-only baseline compares the longest shots');
+eq(C.trend('offline_ft', summaryOnly, sum('offline_ft', [5, 10])), null, 'a ranges-only baseline: no verdict on offline');
+eq(C.trend('carry_yds', { allMis: true }, sum('carry_yds', [100])), null, 'all mis-hits: no arrow');
+ok(C.trend('carry_yds', sum('carry_yds', [100, 101]), sum('carry_yds', [110])).few, 'flags a comparison with only a few shots');
+
+
 section('Tips callouts (from the last session)');
 const callTitle = 'From your last session (Nov 1, 2026)';
 eq(C.sessionCallout('mishits', data.sessions), { sessionId: '2026-11-01-toptracer', title: callTitle,

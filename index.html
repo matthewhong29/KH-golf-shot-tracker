@@ -182,7 +182,8 @@ table{border-collapse:collapse;font-variant-numeric:tabular-nums}
 .matrix tr:last-child th,.matrix tr:last-child td{border-bottom:0}
 .matrix.cmp{table-layout:fixed}
 .matrix.cmp th,.matrix.cmp td{white-space:normal;overflow-wrap:anywhere}
-.matrix.cmp th:first-child{width:32%}
+.matrix.cmp th:first-child{width:28%}
+.matrix.cmp th,.matrix.cmp td{padding:10px 8px}
 .preview{font-size:16px}
 .preview th,.preview td{padding:8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}
 .preview th{font-weight:700;background:var(--soft)}
@@ -653,6 +654,17 @@ nav.tabs button[aria-selected="true"] .ti{background:var(--g150)}
 .rv-film-body>.note{margin-top:10px}
 .rv-tips{margin:4px 0 0;padding:0 0 0 22px;font-size:17px}
 .rv-tips li{padding:4px 0}
+/* ----- Better or worse since the baseline: up arrows better, down arrows worse, 1-3 for how much ----- */
+.trend{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:1px 9px 1px 6px;border-radius:999px;font-size:16px;font-weight:750;line-height:1.5;white-space:nowrap;vertical-align:middle}
+.trend .tr-ico{flex:none;width:14px;height:20px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+.trend.better{color:var(--g700);background:var(--g100)}
+.trend.worse{color:#8a3b0a;background:#fdeee4}
+.trend.same{color:var(--ink-2);background:var(--soft-2)}
+.matrix .trend{display:flex;width:max-content;max-width:100%;gap:4px;padding:1px 7px 1px 5px}
+@media (max-width:374px){.matrix.cmp tbody th{font-size:16px;-webkit-hyphens:auto;hyphens:auto;overflow-wrap:break-word}.matrix.cmp th:first-child{width:30%}}
+@media (max-width:359px){.matrix.cmp th,.matrix.cmp td{padding:8px 5px}.matrix .trend{padding:1px 6px}.matrix .trend>span[aria-hidden]{display:none}}
+.kpi .trend{align-self:flex-start;margin-top:8px}
+.trend-key .trend{margin:0 4px 4px 0}
 </style>
 </head>
 <body>
