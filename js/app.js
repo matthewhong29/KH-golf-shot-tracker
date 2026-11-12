@@ -146,6 +146,68 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   }
   function tipAttr(lines) { return esc(lines.filter(Boolean).join('\n')); }
+  // Line icons on a 24px grid, drawn in the current text colour.
+  const ICONS = {
+    target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/>',
+    flag: '<path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/>',
+    bolt: '<path d="M13 2.5 5 13.5h6l-1 8 8-11h-6z"/>',
+    launch: '<path d="M3 20h18"/><path d="M4.5 20 18 6.5"/><path d="M11.5 20a7.5 7.5 0 0 0-2.2-5.3"/>',
+    line: '<path d="M12 21V4"/><path d="M7 9l5-5 5 5"/>',
+    chevron: '<path d="M9 5.5l6.5 6.5L9 18.5"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    alert: '<path d="M12 6.5v7"/><path d="M12 17.5h.01"/>',
+    play: '<rect x="2.5" y="5" width="19" height="14" rx="4"/><path d="M10 9.2v5.6l4.8-2.8z" fill="currentColor"/>',
+    coach: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
+    data: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+    calendar: '<rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>',
+    stack: '<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="M3 12l9 4.5 9-4.5"/><path d="M3 16.5 12 21l9-4.5"/>',
+    trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>'
+  };
+  function icon(name, cls) {
+    return `<svg class="ico${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+  }
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function dateParts(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
+    if (!m) return null;
+    return { mon: MONTHS[+m[2] - 1], day: +m[3], weekday: WEEKDAYS[new Date(+m[1], +m[2] - 1, +m[3]).getDay()] };
+  }
+  function longDate(iso) { const d = dateParts(iso); return (d ? d.weekday + ', ' : '') + C.fmtDate(iso); }
+  // A tear-off calendar tile for a session date.
+  function calTile(iso) {
+    const d = dateParts(iso);
+    return d ? `<span class="sc-cal" aria-hidden="true"><span class="sc-mon">${d.mon}</span><span class="sc-day">${d.day}</span></span>` : '';
+  }
+  function clubBadge(c, small, hidden) {
+    return `<span class="club-badge${small ? ' sm' : ''}${String(c).length > 3 ? ' long' : ''}"${hidden ? ' aria-hidden="true"' : ''}>${esc(c)}</span>`;
+  }
+  // "Lynx Black Cat · 33° loft" when the data file lists the player's clubs.
+  function clubSpecLine(c) {
+    const spec = C.clubSpec(c, data.equipment), loft = C.clubLoft(c, data.equipment);
+    return [spec && spec.model, loft != null ? `${C.fmtRaw(loft)}° loft` : ''].filter(Boolean).join(' · ');
+  }
+  function clubHead(c) {
+    const spec = clubSpecLine(c);
+    return `<div class="cc-head">${clubBadge(c, false, true)}<span class="cc-titles"><span class="cc-name">${esc(C.clubName(c, data.clubs))}</span>${spec ? `<span class="cc-full">${esc(spec)}</span>` : ''}</span></div>`;
+  }
+  // A stat tile: label, a big number with a small unit, then an optional meter, note and change.
+  function kpi(o) {
+    const pct = o.meter == null ? null : Math.max(0, Math.min(100, o.meter));
+    const d = o.delta;
+    return `<div class="kpi${o.flag ? ' work' : ''}"><span class="kpi-l">${esc(o.label)}</span>
+      <span class="kpi-v">${esc(o.value)}${o.unit ? ` <span class="kpi-u">${esc(o.unit)}</span>` : ''}</span>
+      ${pct != null ? `<span class="meter" aria-hidden="true"><span style="width:${f1(pct)}%"></span></span>` : ''}
+      ${o.sub ? `<span class="kpi-s">${esc(o.sub)}</span>` : ''}
+      ${d ? `<span class="kpi-d ${d.cls}">${d.dir ? `<span aria-hidden="true">${d.dir === 'up' ? '▲' : '▼'} </span><span class="sr">${d.dir === 'up' ? 'Up' : 'Down'} </span>` : ''}${esc(d.text)}</span>` : ''}
+      ${o.flag ? '<span class="kpi-d nw">Needs work</span>' : ''}</div>`;
+  }
+  // "1.9" and "yds right", for a big number with its direction spelled out.
+  function dirSplit(v, unit, dec) {
+    if (!C.isNum(v)) return { value: '—', unit: '' };
+    const m = /^(.*?)(?: ([LR]))?$/.exec(dec == null ? C.fmtRawDir(v) : C.fmtDir(v, dec));
+    return { value: m[1], unit: unit + (m[2] ? (m[2] === 'L' ? ' left' : ' right') : '') };
+  }
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
   function todayISO() { const d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
   function nowHHMM() { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
@@ -471,8 +533,9 @@
     box.innerHTML = players.map((p) => `<button type="button" data-action="player" data-id="${esc(p.id)}" aria-pressed="${p.id === playerId}">${esc(p.id === playerId ? playerName() : p.name)}</button>`).join('');
     box.hidden = players.length < 2;
     const pl = data.player || {};
-    $('#who').textContent = [pl.level ? cap(pl.level) : '', C.isNum(pl.age) ? 'age ' + pl.age : '', C.fmtHeight(pl.height_in)].filter(Boolean).join(' · ');
-    document.title = playerName() + ' · Shot Tracker';
+    $('#who').innerHTML = [pl.level ? cap(pl.level) : '', C.isNum(pl.age) ? 'Age ' + pl.age : '', C.fmtHeight(pl.height_in)]
+      .filter(Boolean).map((t) => `<span class="who-chip">${esc(t)}</span>`).join('');
+    document.title = playerName() + ' · KH Golf';
     const meta = $('meta[name="apple-mobile-web-app-title"]');
     if (meta) meta.setAttribute('content', playerName() + ' · Golf');
   }
@@ -484,7 +547,7 @@
     if (!el) return;
     const goals = data.goals || [];
     const active = goals.filter((g) => !g.done), done = goals.filter((g) => g.done);
-    const title = `<span class="gb-title"><span aria-hidden="true">🎯 </span>${esc(playerName())}’s goals</span>`;
+    const title = `<span class="gb-title"><span class="gb-ico">${icon('target')}</span>${esc(playerName())}’s goals</span>`;
     if (ui.goalsEdit) {
       const row = (g) => `<li class="${g.done ? 'done' : ''}"><div class="gb-body"><span class="gb-text">${esc(g.text)}</span>${goalBadge(g)}</div>
         <button class="btn small ghost" data-action="goal-done" data-id="${esc(g.id)}">${g.done ? 'Undo' : 'Done'}</button>
@@ -661,9 +724,24 @@
     el.textContent = msg;
     el.hidden = !msg;
   }
+  const EMPTY_ART = `<svg class="empty-art" viewBox="0 0 200 130" aria-hidden="true">
+    <circle cx="100" cy="64" r="62" fill="#e3f1e8"/>
+    <path d="M14 108c28-15 58-21 88-21s58 6 84 21v6H14z" fill="#c4e2cf"/>
+    <ellipse cx="134" cy="98" rx="32" ry="7.5" fill="#9fd0b2"/>
+    <path d="M136 34v62" stroke="#0f5135" stroke-width="4" stroke-linecap="round"/>
+    <path d="M138.5 34l25 9.5-25 9.5z" fill="#f2c94c"/>
+    <path d="M34 104C44 40 92 24 115 88" fill="none" stroke="#187a4e" stroke-width="4.5" stroke-linecap="round" stroke-dasharray=".01 12"/>
+    <ellipse cx="136" cy="97.5" rx="5.5" ry="2" fill="#0f5135"/>
+    <circle cx="118" cy="94" r="6.5" fill="#fff" stroke="#0f5135" stroke-width="2.5"/>
+  </svg>`;
+  function skeleton() {
+    return `<div class="skel" role="status"><span class="sr">Loading</span>
+      <div class="card"><span class="sk sk-title"></span><div class="sk-tiles"><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span></div><span class="sk sk-line"></span><span class="sk sk-line short"></span></div>
+      <div class="card"><span class="sk sk-title"></span><span class="sk sk-line"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span></div></div>`;
+  }
   function emptyState(onSessionsTab) {
-    if (bundleStatus === 'loading' && !data.sessions.length) return '<p class="empty" style="margin-top:20px">Loading…</p>';
-    return `<div class="card empty-card" style="margin-top:22px"><h3>No sessions yet</h3>
+    if (bundleStatus === 'loading' && !data.sessions.length) return skeleton();
+    return `<div class="card empty-card">${EMPTY_ART}<h3>No sessions yet</h3>
       <p>After a range session, text the screen photos to Matthew.</p>
       <p class="hint">${onSessionsTab ? 'Or tap “+ New session” to add shots yourself.' : 'You can also add shots yourself on the Sessions tab.'}</p></div>`;
   }
@@ -739,12 +817,6 @@
     return (TIP_FOR[kind] || []).find((id) => t.focus.some((f) => f.id === id)) || null;
   }
   const NW_PILL = '<span class="nw-pill">Needs work</span>';
-  // "7 iron · Lynx Black Cat, 33° loft" when the data file lists the player's clubs.
-  function clubLabel(c) {
-    const name = C.clubName(c, data.clubs), spec = C.clubSpec(c, data.equipment), loft = C.clubLoft(c, data.equipment);
-    const parts = [spec && spec.model, loft != null ? `${C.fmtRaw(loft)}° loft` : ''].filter(Boolean);
-    return parts.length ? `${name} · ${parts.join(', ')}` : name;
-  }
   // Every club in the bag plus any he has hit: model, loft and launch target.
   function clubsCard(clubsHit) {
     const bag = (data.equipment && data.equipment.bag) || {};
@@ -753,9 +825,9 @@
     const rows = list.map((c) => {
       const spec = C.clubSpec(c, data.equipment), loft = C.clubLoft(c, data.equipment), win = C.launchWindow(c, data.equipment);
       const what = [spec && spec.model, loft != null ? `${C.fmtRaw(loft)}°` : spec ? 'loft not listed' : 'not listed yet'].filter(Boolean).join(' · ');
-      return `<li><span class="aim-k">${esc(c)}<small>${esc(what)}</small></span><span class="aim-v">${win ? `${win[0]}–${win[1]}°` : '—'}<small>${loft != null ? 'from its loft' : 'general target'}</small></span></li>`;
+      return `<li>${clubBadge(c, true, true)}<span class="aim-k">${esc(C.clubName(c, data.clubs))}<small>${esc(what)}</small></span><span class="aim-v">${win ? `${win[0]}–${win[1]}°` : '—'}<small>${loft != null ? 'from its loft' : 'general target'}</small></span></li>`;
     }).join('');
-    return `<div class="card"><h3 class="card-title">Your clubs and launch targets</h3>
+    return `<div class="card"><div class="card-head"><span class="head-ico">${icon('launch')}</span><h3 class="card-title">Your clubs and launch targets</h3></div>
       <p class="note">The launch a solid strike should have with each club, worked out from its loft.</p>
       <ul class="aim-list">${rows}</ul>
       ${data.equipment && data.equipment.note ? `<p class="hint">${esc(data.equipment.note)}</p>` : ''}</div>`;
@@ -773,7 +845,7 @@
   }
   function statRow(label, desc, value, sub, flagged) {
     return `<div class="stat-row${flagged ? ' work' : ''}"><dt><span class="sl">${esc(label)}</span><span class="sd">${esc(desc)}</span>${flagged ? NW_PILL : ''}</dt>
-      <dd><span class="sv">${esc(value)}</span>${sub ? `<span class="sr">${esc(sub)}</span>` : ''}</dd></div>`;
+      <dd><span class="sv">${esc(value)}</span>${sub ? `<span class="sv-sub">${esc(sub)}</span>` : ''}</dd></div>`;
   }
   function clubCard(entries, club, scopeAll) {
     const e = entries[club];
@@ -804,17 +876,31 @@
       }
       rows.push(statRow(label, desc, value, sub, flagKeys.has(m.key)));
     });
+    let tiles = '';
+    if (e.shots.length) {
+      const car = C.metricStat(e, 'carry_yds'), off = C.metricStat(e, 'offline_ft'), ref = G && G.ref, sp = C.solidPct(e);
+      const t = [];
+      if (car && C.isNum(car.avg)) t.push(kpi({ label: 'Average carry', value: C.fmtNum(car.avg, 1), unit: 'yds', sub: `range ${C.fmtRange(car.min, car.max)}\u00a0yds`, flag: flagKeys.has('carry_yds') }));
+      if (ref) t.push(kpi({ label: 'Pure strike', value: String(ref.carry), unit: 'yds', sub: `from your best ${plural(ref.n, 'shot')}` }));
+      t.push(kpi({ label: 'Solid contact', value: C.roundHalfEven(sp, 0) + '%', meter: sp, sub: `${e.solid.length} of ${e.shots.length}`, flag: flagKeys.has('solid_pct') }));
+      if (off && C.isNum(off.avg)) {
+        const d = dirSplit(off.avg / 3, 'yds', 1);
+        t.push(kpi({ label: 'Average miss', value: d.value, unit: d.unit, sub: `${dirU(off.avg, 'ft', 1)} on the screen`, flag: flagKeys.has('offline_ft') }));
+      }
+      tiles = `<div class="kpis four">${t.join('')}</div>`;
+    }
     const tip = G ? tipIdFor(G.focus.kind) : null;
     const goals = G ? `<div class="goals">
-        <h4 class="goals-title">Goals for your ${esc(club)}</h4>
+        <h4 class="goals-title"><span class="head-ico">${icon('target')}</span>Goals for your ${esc(club)}</h4>
         <div class="focus-line"><span class="fl-label">Focus</span><span class="fl-text">${esc(G.focus.text)}</span>
           ${tip ? `<button class="btn ghost small" data-action="goto-tip" data-tip="${esc(tip)}">See drills →</button>` : ''}</div>
         <ul class="goal-list">${G.goals.map(goalRow).join('')}</ul>
         <p class="hint">Goals come from ${scopeAll ? 'all of your sessions' : 'your shots in this session'} and move as you improve. Launch windows are ballpark targets for your swing speed.</p>
       </div>` : '';
     return `<div class="club-card">
-      <div class="cc-head"><span class="cc-name">${esc(club)}</span><span class="cc-full">${esc(clubLabel(club))}</span></div>
+      ${clubHead(club)}
       <p class="cc-shots">${esc(shotsLine)}</p>
+      ${tiles}
       ${flags.length ? `<div class="work-box">${NW_PILL}<ul>${flags.map((f) => `<li>${esc(cap(f.text))}.</li>`).join('')}</ul></div>` : ''}
       ${goals}
       <h4 class="cc-sub">The numbers</h4>
@@ -825,8 +911,58 @@
   function workBox(work) {
     if (!work) return '';
     return `<div class="work-box">${NW_PILL}<div class="work-list">${work.clubs.map((w) =>
-      `<button class="work-row" data-action="focus-club" data-club="${esc(w.club)}"><span class="wr-club">${esc(w.club)}</span><span class="wr-text">${esc(w.flags.map((f) => cap(f.text)).join('. '))}.</span><span class="wr-go" aria-hidden="true">›</span></button>`).join('')}</div>
+      `<button class="work-row" data-action="focus-club" data-club="${esc(w.club)}"><span class="wr-club">${esc(w.club)}</span><span class="wr-text">${esc(w.flags.map((f) => cap(f.text)).join('. '))}.</span>${icon('chevron', 'chev')}</button>`).join('')}</div>
       <p class="wr-hint">Tap a club to see its goals.</p></div>`;
+  }
+
+  // The session before this one that has shots, for "vs last time" changes.
+  function prevShotSession(s) {
+    if (!s) return null;
+    const list = data.sessions.filter((x) => shotCount(x)).sort(C.compareSessions);
+    const i = list.findIndex((x) => x.id === s.id);
+    if (i < 1) return null;
+    const p = list[i - 1], shots = C.sessionShots(p), mis = C.sessionMishits([p]);
+    const solid = shots.filter((x) => !mis.has(x)), off = solid.filter((x) => C.isNum(x.offline_ft));
+    return { session: p, solidPct: solid.length / shots.length * 100,
+      linePct: off.length ? off.filter((x) => Math.abs(x.offline_ft) <= C.GOALS.lineFt).length / off.length * 100 : null };
+  }
+  function pctDelta(now, before, s) {
+    const d = C.roundHalfEven(now, 0) - C.roundHalfEven(before, 0), when = C.fmtDate(s.date, { short: true });
+    if (!d) return { cls: 'same', text: `Same as ${when}` };
+    return { cls: d > 0 ? 'up' : 'down', dir: d > 0 ? 'up' : 'down', text: `${Math.abs(d)} ${Math.abs(d) === 1 ? 'point' : 'points'} vs ${when}` };
+  }
+  // The session at a glance: big numbers, then what needs work, then the highlights.
+  function sessionSummary(sc, hl, work) {
+    const isAll = sc.id === 'all', shots = [], mis = new Set();
+    sc.sessions.forEach((s) => { C.sessionShots(s).forEach((x) => shots.push(x)); C.sessionMishits([s]).forEach((x) => mis.add(x)); });
+    const solid = shots.filter((x) => !mis.has(x));
+    const tiles = [], skip = new Set(['work']);
+    if (shots.length) {
+      const prev = isAll ? null : prevShotSession(sc.session);
+      const clubs = new Set(shots.map((x) => x.club));
+      tiles.push(kpi({ label: 'Shots', value: String(shots.length), sub: plural(clubs.size, 'club') + (isAll ? ` · ${plural(sc.sessions.length, 'session')}` : '') }));
+      const sp = solid.length / shots.length * 100;
+      tiles.push(kpi({ label: 'Solid contact', value: C.roundHalfEven(sp, 0) + '%', meter: sp, sub: `${solid.length} of ${shots.length}`, delta: prev ? pctDelta(sp, prev.solidPct, prev.session) : null }));
+      const off = solid.filter((x) => C.isNum(x.offline_ft));
+      if (off.length) {
+        const on = off.filter((x) => Math.abs(x.offline_ft) <= C.GOALS.lineFt).length, lp = on / off.length * 100;
+        tiles.push(kpi({ label: 'On line', value: C.roundHalfEven(lp, 0) + '%', meter: lp, sub: `${on} of ${off.length} within 10 yds`, delta: prev && prev.linePct != null ? pctDelta(lp, prev.linePct, prev.session) : null }));
+      }
+      const carried = solid.filter((x) => C.isNum(x.carry_yds));
+      if (carried.length) {
+        const best = carried.reduce((a, b) => (b.carry_yds > a.carry_yds ? b : a));
+        tiles.push(kpi({ label: 'Longest carry', value: C.fmtRaw(best.carry_yds), unit: 'yds', sub: C.clubName(best.club, data.clubs) }));
+      }
+      skip.add('count'); skip.add('solid');
+    }
+    const items = hl.filter((h) => !skip.has(h.id));
+    const sub = isAll ? `${plural(sc.sessions.length, 'session')} with shots` : sc.session ? `${longDate(sc.session.date)} · ${deviceLine(sc.session)}` : '';
+    return `<div class="card summary">
+      <div class="card-head"><span class="head-ico">${icon(isAll ? 'stack' : 'calendar')}</span><div><h3 class="card-title">${isAll ? 'All sessions' : 'Session summary'}</h3>${sub ? `<p class="sum-sub">${esc(sub)}</p>` : ''}</div></div>
+      ${tiles.length ? `<div class="kpis four">${tiles.join('')}</div>` : ''}
+      ${workBox(work)}
+      ${items.length ? `<h4 class="sum-h">Highlights</h4><ul class="hl">${items.map((h) => `<li>${esc(h.text)}</li>`).join('')}</ul>` : ''}
+    </div>`;
   }
 
   function renderStats() {
@@ -859,11 +995,12 @@
         const e = entries[single];
         const car = C.summarize(e.solid, 'carry_yds'), off = C.summarize(e.solid, 'offline_ft');
         const spread = C.isNum(off.min) ? off.max - off.min : null;
-        inner = `<div class="tiles">
-            <div class="tile"><div class="k">Shots</div><div class="v">${e.shots.length}</div><div class="s">${e.mis.length ? `${e.solid.length} solid · ${plural(e.mis.length, 'mis-hit')}` : esc(C.clubName(single, data.clubs))}</div></div>
-            <div class="tile"><div class="k">Average carry</div><div class="v">${car.n ? C.fmtNum(car.avg, 1) + ' yds' : '—'}</div><div class="s">${car.n ? esc(C.fmtRange(car.min, car.max)) : 'all mis-hits'}</div></div>
-            <div class="tile"><div class="k">Average miss</div><div class="v">${dirU(off.avg / 3, 'yds', 1)}</div><div class="s">${dirU(off.avg, 'ft', 1)}</div></div>
-            <div class="tile"><div class="k">Left to right spread</div><div class="v">${C.isNum(spread) ? C.fmtNum(spread / 3, 1) + ' yds' : '—'}</div><div class="s">${C.isNum(spread) ? esc(C.fmtRange(off.min, off.max, true)) + ' ft' : ''}</div></div>
+        const miss = dirSplit(off.avg / 3, 'yds', 1);
+        inner = `<div class="kpis four">
+            ${kpi({ label: 'Shots', value: String(e.shots.length), sub: e.mis.length ? `${e.solid.length} solid · ${plural(e.mis.length, 'mis-hit')}` : C.clubName(single, data.clubs) })}
+            ${kpi({ label: 'Average carry', value: car.n ? C.fmtNum(car.avg, 1) : '—', unit: car.n ? 'yds' : '', sub: car.n ? `${C.fmtRange(car.min, car.max)} yds` : 'all mis-hits' })}
+            ${kpi({ label: 'Average miss', value: miss.value, unit: miss.unit, sub: C.isNum(off.avg) ? `${dirU(off.avg, 'ft', 1)} on the screen` : '' })}
+            ${kpi({ label: 'Left to right spread', value: C.isNum(spread) ? C.fmtNum(spread / 3, 1) : '—', unit: C.isNum(spread) ? 'yds' : '', sub: C.isNum(spread) ? `${C.fmtRange(off.min, off.max, true)} ft` : '' })}
           </div><div class="chart" id="dispChart"></div>`;
       } else {
         inner = '<div class="facets" id="facets"></div>';
@@ -881,7 +1018,7 @@
     el.innerHTML = `
       <div class="filters"><label for="scope">Session</label><select id="scope" data-change="scope">${scopeOptions(sc.id)}</select></div>
       ${sc.id === 'all' && data.sessions.some((s) => C.isSummaryOnly(s)) ? '<p class="note" style="margin-bottom:14px">“All sessions” pools sessions with individual shots. Sessions with ranges only are left out; pick one in the menu to see its ranges.</p>' : ''}
-      <div class="card"><h3 class="card-title">Highlights</h3>${workBox(work)}<ul class="hl">${hl.filter((h) => h.id !== 'work').map((h) => `<li>${esc(h.text)}</li>`).join('')}</ul></div>
+      ${sessionSummary(sc, hl, work)}
       ${clubs.length ? `<h2 id="clubSection">Club by club</h2>
       <div class="card">
         <div class="chips" role="group" aria-label="Club">${clubChips}</div>
@@ -911,6 +1048,37 @@
   }
 
   // ----- Progress -----
+  function progValue(m, st) {
+    if (!st) return { value: '—', sub: 'not recorded' };
+    if (st.allMis) return { value: '—', sub: `all ${st.total} were mis-hits` };
+    const deg = m.unit === '°';
+    if (C.isNum(st.avg)) {
+      if (m.dir) { const d = dirSplit(st.avg, 'ft', m.dec); return { value: d.value, unit: d.unit, sub: 'average' }; }
+      return { value: C.fmtAvg(m, st.avg) + (deg ? '°' : ''), unit: deg ? '' : m.unit, sub: `average of ${plural(st.n, 'solid shot')}` };
+    }
+    if (C.isNum(st.min) && C.isNum(st.max)) return { value: C.fmtRange(st.min, st.max, m.dir) + (deg ? '°' : ''), unit: deg ? '' : m.dir ? 'ft' : m.unit, sub: 'recorded range' };
+    return { value: '—', sub: '' };
+  }
+  const UP_IS_GOOD = { carry_yds: true, total_yds: true, ball_speed_mph: true, club_speed_mph: true, smash_factor: true };
+  // Baseline and latest side by side, with the change, for the metric on the chart.
+  function progKpis(P, m) {
+    if (P.rows.length < 2 || !P.baseline || !P.latest) return '';
+    const b = P.baseline, l = P.latest;
+    const lb = (word, r) => `${word} · ${C.fmtDate(r.session.date, { short: true })}`;
+    if (m.key === C.SOLID_METRIC.key) {
+      const pa = C.solidPct(b.entry), pl = C.solidPct(l.entry);
+      const v = (pc, e) => (pc == null ? { value: '—', sub: 'ranges only' } : { value: C.roundHalfEven(pc, 0) + '%', meter: pc, sub: `${e.solid.length} of ${e.shots.length}` });
+      return `<div class="kpis">${kpi(Object.assign({ label: lb('Baseline', b) }, v(pa, b.entry)))}${kpi(Object.assign({ label: lb('Latest', l), delta: pa != null && pl != null ? pctDelta(pl, pa, b.session) : null }, v(pl, l.entry)))}</div>`;
+    }
+    const a = C.metricStat(b.entry, m.key), c = C.metricStat(l.entry, m.key);
+    let delta = null;
+    if (!m.dir && a && c && C.isNum(a.avg) && C.isNum(c.avg)) {
+      const d = c.avg - a.avg, txt = C.fmtAvg(m, Math.abs(d));
+      delta = txt === C.fmtAvg(m, 0) ? { cls: 'same', text: 'Same as the baseline' }
+        : { cls: UP_IS_GOOD[m.key] ? (d > 0 ? 'up' : 'down') : 'same', dir: d > 0 ? 'up' : 'down', text: `${txt}${m.unit === '°' ? '°' : ' ' + m.unit} since the baseline` };
+    }
+    return `<div class="kpis">${kpi(Object.assign({ label: lb('Baseline', b) }, progValue(m, a)))}${kpi(Object.assign({ label: lb('Latest', l), delta }, progValue(m, c)))}</div>`;
+  }
   function renderProgress() {
     const el = $('#view-progress');
     const clubs = C.sortClubs(Object.keys(C.clubData(data.sessions)));
@@ -934,7 +1102,7 @@
         <select id="progMetric" data-change="prog-metric">${metrics.map((x) => `<option value="${x.key}"${x.key === m.key ? ' selected' : ''}>${esc(x.label)}${x.key === C.SOLID_METRIC.key ? ' %' : ''}</option>`).join('')}</select>
       </div>
       ${P.fallback && P.baseline ? `<p class="note" style="margin-bottom:14px">${base ? `The ${esc(C.fmtDate(base.date))} baseline has no ${esc(club)}, so` : 'No baseline session is set, so'} the first ${esc(club)} session (${esc(C.fmtDate(P.baseline.session.date))}) is its baseline.</p>` : ''}
-      <div class="card"><h3 class="card-title">${esc(club)}: ${esc(m.label.toLowerCase())}${m.key === C.SOLID_METRIC.key ? ' %' : ''} by session</h3><div class="chart" id="progChart"></div>
+      <div class="card"><h3 class="card-title">${esc(club)}: ${esc(m.label.toLowerCase())}${m.key === C.SOLID_METRIC.key ? ' %' : ''} by session</h3>${progKpis(P, m)}<div class="chart" id="progChart"></div>
         <p class="hint">${m.key === C.SOLID_METRIC.key ? 'Share of shots that weren’t likely mis-hits.' : 'Bar: lowest to highest. Dot and number: average. Solid shots only.'}${m.dir ? ' Feet; L = left, R = right.' : ''}${rangeOnly.length ? ` ${esc(rangeOnly.join(', '))} recorded ranges only, so ${rangeOnly.length > 1 ? 'their' : 'its'} numbers include any topped shots and ${rangeOnly.length > 1 ? 'their' : 'its'} solid-contact rate is unknown.` : ''}</p></div>
       ${P.rows.length < 2
         ? `<div class="card"><p class="note">Only one session with the ${esc(club)} so far. Progress shows up after the next one.</p></div>`
@@ -1003,8 +1171,9 @@
     const r = $('#checkResult'); if (r) r.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   function checkResultHtml(r) {
-    return `<div class="check-result ${esc(r.verdict)}" role="status" id="checkResult"><p class="check-title">${esc(r.title)}</p>
-      <ul class="check-lines">${r.lines.map((l) => `<li><span class="ck ${l.ok === true ? 'ok' : l.ok === false ? 'bad' : ''}" aria-hidden="true">${l.ok === true ? '✓' : l.ok === false ? '✗' : '~'}</span><span>${esc(l.text)}</span></li>`).join('')}</ul></div>`;
+    const good = r.verdict === 'pure' || r.verdict === 'good';
+    return `<div class="check-result ${esc(r.verdict)}" role="status" id="checkResult"><span class="cr-ico">${icon(good ? 'check' : 'alert')}</span><div class="cr-body"><p class="check-title">${esc(r.title)}</p>
+      <ul class="check-lines">${r.lines.map((l) => `<li><span class="ck ${l.ok === true ? 'ok' : l.ok === false ? 'bad' : ''}" aria-hidden="true">${l.ok === true ? '✓' : l.ok === false ? '✗' : '~'}</span><span>${esc(l.text)}</span></li>`).join('')}</ul></div></div>`;
   }
   function practiceCard(c, sel, t) {
     const e = sel.entry, G = C.clubGoals(e, c, data.equipment), r = G.ref, m = r ? r.metrics : {};
@@ -1012,10 +1181,10 @@
     const win = C.launchWindow(c, data.equipment);
     const flags = C.needsWork(e);
     const aim = [];
-    if (zone) aim.push(['Distance', 'Carry in this zone', `${zone.lo}–${zone.hi} yds`, r ? `pure strike about ${r.carry} yds` : '']);
-    if (m.ball_speed_mph) aim.push(['Ball speed', 'Shows a centred strike', `${C.fmtRaw(m.ball_speed_mph.min)}+ mph`, `your pure strikes: ${C.fmtRange(m.ball_speed_mph.min, m.ball_speed_mph.max)} mph`]);
-    if (win) aim.push(['Launch', 'How steeply it starts', `${win[0]}–${win[1]}°`, m.launch_deg ? `your pure strikes: about ${C.fmtNum(m.launch_deg.avg, 0)}°` : '']);
-    aim.push(['On line', 'Left or right of target', 'within 10 yds', '30 ft or less on the screen']);
+    if (zone) aim.push(['flag', 'Distance', 'Carry in this zone', `${zone.lo}–${zone.hi} yds`, r ? `pure strike about ${r.carry} yds` : '']);
+    if (m.ball_speed_mph) aim.push(['bolt', 'Ball speed', 'Shows a centred strike', `${C.fmtRaw(m.ball_speed_mph.min)}+ mph`, `your pure strikes: ${C.fmtRange(m.ball_speed_mph.min, m.ball_speed_mph.max)} mph`]);
+    if (win) aim.push(['launch', 'Launch', 'How steeply it starts', `${win[0]}–${win[1]}°`, m.launch_deg ? `your pure strikes: about ${C.fmtNum(m.launch_deg.avg, 0)}°` : '']);
+    aim.push(['line', 'On line', 'Left or right of target', 'within 10 yds', '30 ft or less on the screen']);
     const look = [];
     if (m.apex_ft) look.push(`peak height about ${C.fmtNum(m.apex_ft.avg, 0)} ft`);
     if (m.landing_deg) look.push(`landing about ${C.fmtNum(m.landing_deg.avg, 0)}°`);
@@ -1026,17 +1195,18 @@
     const ck = ui.check || {};
     const val = (v) => (v == null ? '' : esc(String(v)));
     return `
-      <div class="cc-head"><span class="cc-name">${esc(c)}</span><span class="cc-full">${esc(clubLabel(c))}</span></div>
+      ${clubHead(c)}
       <p class="cc-shots">From your ${esc(C.fmtDate(sel.session.date))} session${r ? `: ${plural(r.n, 'best-struck shot')} of ${plural(e.shots.length, 'shot')}` : ''}</p>
       ${flags.length ? `<div class="work-box">${NW_PILL}<ul>${flags.map((f) => `<li>${esc(cap(f.text))}.</li>`).join('')}</ul></div>` : ''}
       <h4 class="cc-sub">Aim for</h4>
-      <ul class="aim-list">${aim.map((a) => `<li><span class="aim-k">${esc(a[0])}<small>${esc(a[1])}</small></span><span class="aim-v">${esc(a[2])}${a[3] ? `<small>${esc(a[3])}</small>` : ''}</span></li>`).join('')}</ul>
+      <ul class="aim-list targets">${aim.map((a) => `<li><span class="aim-ico">${icon(a[0])}</span><span class="aim-k">${esc(a[1])}</span><span class="aim-v">${esc(a[3])}</span>
+        <span class="aim-s">${esc(a[2])}${a[4] ? `<span class="aim-n">${esc(cap(a[4]))}</span>` : ''}</span></li>`).join('')}</ul>
       ${look.length ? `<p class="pure-look">Your pure strikes also show ${esc(look.join(', '))}.</p>` : ''}
       <div class="focus-line" style="margin-top:14px"><span class="fl-label">Focus</span><span class="fl-text">${esc(G.focus.text)}</span></div>
       ${drill ? `<details class="focus-drill"><summary>Drill: ${esc(fillText(drill.name))}</summary>
         <ol>${drill.steps.map((s) => `<li>${esc(fillText(s))}</li>`).join('')}</ol>
         <p class="reps"><strong>Reps:</strong> ${esc(fillText(drill.reps))}</p>
-        <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(drill.search))}" target="_blank" rel="noopener">Look it up on YouTube <span aria-hidden="true">↗</span></a></details>` : ''}
+        <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(drill.search))}" target="_blank" rel="noopener">${icon('play')}Look it up on YouTube</a></details>` : ''}
       <h4 class="cc-sub">Check a shot</h4>
       <p class="note">Type the numbers from the range screen to see how this ${esc(c)} shot compares.</p>
       <div class="check-grid" style="margin-top:10px">
@@ -1052,26 +1222,32 @@
       <div class="row-actions"><button class="btn" data-action="check-shot">Check this shot</button>${ck.result ? '<button class="btn ghost" data-action="check-clear">Clear</button>' : ''}</div>
       ${ck.result ? checkResultHtml(ck.result) : ''}`;
   }
+  const HERO_ART = `<svg class="hero-art" viewBox="0 0 160 110" aria-hidden="true"><path d="M6 106C24 32 90 8 126 86" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray=".01 13"/><path d="M140 20v78" stroke="#fff" stroke-width="5" stroke-linecap="round"/><path d="M143 20l17 7-17 7z" fill="#fff"/><circle cx="128" cy="94" r="7" fill="#fff"/></svg>`;
   function renderTips() {
     const el = $('#view-tips');
     const t = TIPS[playerId];
     const pc = practiceClubs();
     const clubs = C.sortClubs(Object.keys(pc));
     if (clubs.length && (!ui.practiceClub || !pc[ui.practiceClub])) ui.practiceClub = clubs[0];
+    const refs = {};
+    clubs.forEach((c) => { refs[c] = C.strikeReference(pc[c].entry, c, data.equipment); });
+    const longest = Math.max(1, ...clubs.map((c) => (refs[c] ? refs[c].carry : 0)));
     const rows = clubs.map((c) => {
-      const e = pc[c].entry, r = C.strikeReference(e, c, data.equipment), nw = C.needsWork(e).length;
+      const e = pc[c].entry, r = refs[c], nw = C.needsWork(e).length;
       const sub = [r && r.metrics.ball_speed_mph ? `${C.fmtRaw(r.metrics.ball_speed_mph.min)}+ mph ball speed` : '',
         r && r.solid < 4 ? `only ${plural(r.solid, 'solid shot')} so far` : ''].filter(Boolean).join(' · ');
       return `<li><button class="yard-row" data-action="practice-club" data-club="${esc(c)}" aria-pressed="${c === ui.practiceClub}">
-        <span class="yr-club">${esc(c)}</span>
-        <span class="yr-main"><span class="yr-carry">${r ? r.carry + ' yds' : '—'}</span>${sub ? `<span class="yr-sub">${esc(sub)}</span>` : ''}</span>
-        ${nw ? NW_PILL : ''}</button></li>`;
+        ${clubBadge(c, true)}
+        <span class="yr-main"><span class="yr-top"><span class="yr-carry">${r ? `${r.carry} <span class="yr-u">yds</span>` : '—'}</span>${nw ? NW_PILL : ''}</span>
+          ${r ? `<span class="yr-bar" aria-hidden="true"><span style="width:${f1(r.carry / longest * 100)}%"></span></span>` : ''}
+          ${sub ? `<span class="yr-sub">${esc(sub)}</span>` : ''}</span>
+        ${icon('chevron', 'chev')}</button></li>`;
     }).join('');
     el.innerHTML = `
-      <h2>Practice</h2>
-      <p class="lead">At the range, pick the club you’re hitting, aim for its numbers, and check a shot against them.</p>
+      <div class="hero">${HERO_ART}<span class="hero-k">Practice</span><h2>At the range</h2>
+        <p>Pick the club you’re hitting, aim for its numbers, and check a shot against them.</p></div>
       ${clubs.length ? `
-        <div class="card"><h3 class="card-title">Your yardages</h3>
+        <div class="card"><div class="card-head"><span class="head-ico">${icon('flag')}</span><h3 class="card-title">Your yardages</h3></div>
           <p class="note">How far a pure strike carries with each club. Tap a club for its numbers.</p>
           <ul class="yard-list">${rows}</ul>
           <p class="hint">A pure strike is one of your best-struck shots: solid contact with your highest ball speeds, launched at a normal height. Each club uses its most recent session, so these grow as you improve.</p></div>
@@ -1081,7 +1257,7 @@
       ${t ? `<h2 class="lib-title">Tips &amp; drills</h2>
         <p class="lead">${esc(fillText(t.intro))}</p>
         ${t.focus.map((f, i) => focusCard(f, i, !clubs.length)).join('')}
-        <div class="card lesson"><h3>Check it with a coach</h3><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>` : ''}`;
+        <div class="card lesson"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Check it with a coach</h3></div><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>` : ''}`;
   }
   function focusCard(f, i, openFirst) {
     const call = f.callout ? C.sessionCallout(f.callout, data.sessions) : null;
@@ -1089,7 +1265,7 @@
         <h4>${esc(fillText(d.name))}</h4>
         <ol>${d.steps.map((s) => `<li>${esc(fillText(s))}</li>`).join('')}</ol>
         <p class="reps"><strong>Reps:</strong> ${esc(fillText(d.reps))}</p>
-        <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(d.search))}" target="_blank" rel="noopener">Look it up on YouTube <span aria-hidden="true">↗</span></a>
+        <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(d.search))}" target="_blank" rel="noopener">${icon('play')}Look it up on YouTube</a>
       </div>`).join('');
     const open = ui.openTip ? f.id === ui.openTip : !!openFirst && i === 0;
     return `<details class="card focus" data-focus="${esc(f.id)}"${open ? ' open' : ''}>
@@ -1113,7 +1289,7 @@
     }
     el.innerHTML = `
       <div class="row-between"><h2>Sessions</h2>${ui.newSession ? '' : '<button class="btn small" data-action="new-session">+ New session</button>'}</div>
-      <button class="btn ghost block data-link" data-action="open-data">Data &amp; backup</button>
+      <button class="setting-row data-link" data-action="open-data"><span class="head-ico">${icon('data')}</span><span class="set-text"><span class="set-title">Data &amp; backup</span><span class="set-desc">Player, baseline, GitHub key and backups</span></span>${icon('chevron', 'chev')}</button>
       ${ui.newSession ? newSessionForm() : ''}
       ${data.sessions.length ? data.sessions.slice().reverse().map(sessionCard).join('') : emptyState(true)}
     `;
@@ -1127,10 +1303,13 @@
     if (C.isSummaryOnly(s)) badges.push('Ranges only');
     if (s.id === data.baseline_session_id) badges.push('Baseline');
     return `<button class="session-card" data-action="open-session" data-id="${esc(s.id)}">
-      <span class="sc-date">${esc(C.fmtDate(s.date))}</span>
-      <span class="sc-meta">${esc(deviceLine(s))}</span>
-      <span class="sc-meta">${n ? plural(n, 'shot') : 'No individual shots'}${clubs.length ? ' · ' + esc(clubs.join(', ')) : ''}</span>
-      ${badges.length ? `<span class="badges">${badges.map((b) => `<span class="badge">${esc(b)}</span>`).join('')}</span>` : ''}
+      ${calTile(s.date)}
+      <span class="sc-body">
+        <span class="sc-title">${esc(longDate(s.date))}</span>
+        <span class="sc-meta">${esc(deviceLine(s))} · ${n ? plural(n, 'shot') : 'no individual shots'}</span>
+        ${clubs.length ? `<span class="sc-clubs">${clubs.map((c) => `<span class="sc-club">${esc(c)}</span>`).join('')}</span>` : ''}
+        ${badges.length ? `<span class="badges">${badges.map((b) => `<span class="badge${b === 'Baseline' ? ' base' : ''}">${esc(b)}</span>`).join('')}</span>` : ''}
+      </span>${icon('chevron', 'chev')}
     </button>`;
   }
   function newSessionForm() {
@@ -1153,11 +1332,12 @@
     const coaching = C.asList(s.coaching_notes);
     if (!ui.addMode) ui.addMode = n ? 'enter' : 'paste';
     el.innerHTML = `
-      <button class="back" data-action="close-session">← All sessions</button>
-      <div class="detail-head">
-        <h2>${esc(C.fmtDate(s.date))}</h2>
-        <p class="meta">${esc(deviceLine(s))}${s.equipment ? ' · ' + esc(s.equipment) : ''} · ${n ? plural(n, 'shot') : 'no individual shots'}</p>
-        ${s.date_note ? `<p class="hint">${esc(s.date_note)}</p>` : ''}
+      <button class="back" data-action="close-session">${icon('chevron')}All sessions</button>
+      <div class="detail-head">${calTile(s.date)}<div>
+        <h2>${esc(longDate(s.date))}</h2>
+        <p class="meta">${esc(deviceLine(s))}${s.equipment ? ' · ' + esc(s.equipment) : ''} · ${n ? plural(n, 'shot') : 'no individual shots'}</p></div></div>
+      <div class="detail-extra">
+        ${s.date_note ? `<p class="hint" style="margin-top:0">${esc(s.date_note)}</p>` : ''}
         ${s._source === 'edited' ? '<div class="edited"><span class="badge">Edited on this device</span><button class="btn small ghost" data-action="revert-session">Revert to file version</button></div>' : ''}
         ${s._source === 'local' ? '<div class="edited"><span class="badge">Added on this device</span></div>' : ''}
       </div>
@@ -1428,7 +1608,7 @@
     if (c.edited) parts.push(`${c.edited} edited`);
     if (c.hidden) parts.push(`${c.hidden} deleted`);
     el.innerHTML = `
-      <button class="back" data-action="close-data">← Sessions</button>
+      <button class="back" data-action="close-data">${icon('chevron')}Sessions</button>
       <h2 style="margin-top:6px">Data &amp; backup</h2>
       <p class="lead">For ${esc(playerName())}. Each person’s data and backups are separate.</p>
       <div class="card"><h3 class="card-title">Player</h3><div class="grid2">

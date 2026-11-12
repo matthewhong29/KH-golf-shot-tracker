@@ -29,13 +29,13 @@ Under them, **goals** stay pinned on every tab as a constant reminder: personal 
 The four tabs are:
 
 - **Stats** for one session, or all sessions pooled:
-  - Highlights: a "Needs work" box listing clubs to practise (tap one to jump to it), then shot count, solid-contact rate, thin or topped shots, average miss per club, and change since the baseline.
-  - Club by club, one club at a time: its "Needs work" notes, **Goals** for the range (a focus, a distance zone around its pure-strike carry, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
+  - Session summary: big-number tiles for shots, solid contact and on line (within 10 yds), each with the change from the previous session, and the longest carry. Then a "Needs work" box listing clubs to practise (tap one to jump to it) and highlights: thin or topped shots, average miss per club, and change since the baseline.
+  - Club by club, one club at a time: tiles for its average carry, pure-strike carry, solid contact and average miss, its "Needs work" notes, **Goals** for the range (a focus, a distance zone around its pure-strike carry, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
   - A carry gapping chart.
   - Dispersion: offline vs. carry. All clubs show as one panel each on the same scale, or pick one club.
   - Average miss by club.
   - The session's coaching notes.
-- **Progress**: pick a club and a metric to see each session's range and average, then a baseline-vs-latest table. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
+- **Progress**: pick a club and a metric to see the baseline and latest side by side with the change, each session's range and average, then a baseline-vs-latest table. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
 - **Practice**, for use during a range session:
   - **Your yardages:** each club's pure-strike carry and ball speed at a glance. Tap a club to pick it.
   - **Your clubs and launch targets:** every club in his bag with its model, loft and the launch a solid strike should have.
@@ -45,7 +45,7 @@ The four tabs are:
   - **Tips & drills** below: focus areas for that player, each with why it matters, a "from your last session" line, and drills with steps, reps and a YouTube search link. It ends with a suggestion to check things with a coach. The content is in `js/tips.js`.
 - **Sessions**: list, details, coaching notes, screen averages and recorded ranges. Add shots by hand or by pasting rows, delete shots, create or delete sessions. **Data & backup** (a button on this tab) has the player's name and level, baseline session, export JSON and CSV, import JSON, and reset local changes.
 
-The layout is white and high-contrast, using large Atkinson Hyperlegible text (18px body; charts at 14px or more). Every button is at least 48px tall, and it works at phone widths down to 360px.
+The look: a green KH Golf app bar with the Dad | M3 switch, white cards on a light background, big-number tiles, calendar tiles for sessions and a yardage book with distance bars in Practice. Text is Inter at 18px (nothing under 16px; chart labels 15px or more), every colour pair meets WCAG AA contrast (4.5:1), every button is at least 44px tall, and it works at phone widths down to 300px. Added to a home screen, it opens full screen with its own icon (`manifest.webmanifest`, `icons/`).
 
 ## Files
 
@@ -60,7 +60,8 @@ data/brother_golf_data.json  M3's sessions (none yet)
 tests/core.test.js           node tests; run: node tests/core.test.js
 scripts/check-data.js        data check; run: node scripts/check-data.js
 CLAUDE.md                    how Claude adds shots from screen photos
-favicon.svg, apple-touch-icon.png
+manifest.webmanifest         home-screen app name, colours and icons
+favicon.svg, apple-touch-icon.png, icons/
 ```
 
 To add another player, add an entry to `data/players.json` and create his data file by copying the shape of `data/brother_golf_data.json`. Tips are optional: add an entry keyed by his id in `js/tips.js`.
