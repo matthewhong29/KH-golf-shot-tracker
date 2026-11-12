@@ -36,13 +36,14 @@ The four tabs are:
   - Average miss by club.
   - The session's coaching notes.
 - **Progress**: pick a club and a metric to see the baseline and latest side by side with the change, each session's range and average, then a baseline-vs-latest table. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
-- **Practice**, for use during a range session:
+- **Practice** has three sections. **Range**, for use during a range session:
   - **Your yardages:** each club's pure-strike carry and ball speed at a glance. Tap a club to pick it.
   - **Your clubs and launch targets:** every club in his bag with its model, loft and the launch a solid strike should have.
   - **Aim for:** the club's numbers to hit: a distance zone, the ball speed of a pure strike, the launch window and on line (within 10 yds). It also shows what his pure strikes look like (peak height, landing angle, total) and the club's "Needs work" notes.
-  - **Focus:** one thing to work on with that club, with the matching drill and a "Look it up" link.
+  - **Focus:** one thing to work on with that club, with the matching drill: its animation, steps and coach's video.
   - **Check a shot:** type the carry, ball speed, launch and offline from the range screen to get "Pure strike!", "Good shot", "Keep working" or "Looks thin or topped", with a line on each number.
-  - **Tips & drills** below: focus areas for that player, each with why it matters, a "from your last session" line, and drills with steps, reps and a YouTube search link. It ends with a suggestion to check things with a coach. The content is in `js/tips.js`.
+  - **Swing**: swing reviews. Matthew sends a swing video; Claude pulls out the key frames (setup, top, impact, finish), draws on them (orange for problems, green for fixes, blue for good, white guide lines), numbers each mark with a note, and lists what's working and what to fix, linked to the drills. Swipe or tap through the frames, and hide the lines to see the plain frame. Until the first review there are filming tips and an example drawn with the drill figure.
+  - **Drills**: focus areas for that player, each with why it matters, a "from your last session" line, and drills. Each drill plays its steps as an animation (a strip of 2–4 frames you can tap; it pauses for phones set to reduce motion), then the steps, reps, and a coach's video that loads when tapped (19 of the 33 drills so far; the rest link to a YouTube search). It ends with a suggestion to check things with a coach. The content is in `js/tips.js`, the drawings in `js/drillart.js`.
 - **Sessions**: list, details, coaching notes, screen averages and recorded ranges. Add shots by hand or by pasting rows, delete shots, create or delete sessions. **Data & backup** (a button on this tab) has the player's name and level, baseline session, export JSON and CSV, import JSON, and reset local changes.
 
 The look: a green KH Golf app bar with the Dad | M3 switch, white cards on a light background, big-number tiles, calendar tiles for sessions and a yardage book with distance bars in Practice. Text is Inter at 18px (nothing under 16px; chart labels 15px or more), every colour pair meets WCAG AA contrast (4.5:1), every button is at least 44px tall, and it works at phone widths down to 300px. Added to a home screen, it opens full screen with its own icon (`manifest.webmanifest`, `icons/`).
@@ -54,6 +55,11 @@ index.html                   page and styles
 js/core.js                   stats, formatting, club names, paste parser, tips callouts (no DOM; runs in node too)
 js/tips.js                   tips & drills for each player, keyed by player id
 js/app.js                    the interface
+js/drillart.js               drill animations (SVG, no DOM; the tests load it)
+js/review.js                 swing review markup and checks (no DOM; the tests and data check load it)
+media/<player>/<review>/     frames for swing reviews (never the videos)
+scripts/swing-frames.py      pulls frames from a swing video: probe, sheet, extract (with --blur), grid
+scripts/review-preview.js    screenshots a review's frames as the page draws them
 data/players.json            the list of players: id (used in ?player=), name, data file
 data/dad_golf_data.json      Dad's sessions
 data/brother_golf_data.json  M3's sessions (none yet)

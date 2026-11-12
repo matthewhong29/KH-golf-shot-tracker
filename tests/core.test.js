@@ -327,6 +327,46 @@ for (const p of players) {
 }
 
 // ---------------------------------------------------------------------------
+section('Drill animations and coach videos');
+const DA = require('../js/drillart.js');
+for (const p of players) {
+  TIPS[p.id].focus.forEach((f) => f.drills.forEach((d, i) => {
+    const w = `${p.id}/${f.id}:${i} ${d.name}`;
+    eq(DA.validate(d.art), [], `${w}: animation is valid`);
+    const big = DA.render(d.art, 0, { label: d.name }), thumb = DA.render(d.art, d.art.frames.length - 1, { thumb: true });
+    ok(/^<svg class="da"/.test(big) && /role="img"/.test(big) && /aria-label="/.test(big), `${w}: stage frame is a labelled SVG`);
+    ok(!/<text/.test(thumb), `${w}: strip frames have no text`);
+    if (d.video) ok(/^[\w-]{11}$/.test(d.video.id) && d.video.title && d.video.by, `${w}: video has an id, title and coach`);
+  }));
+}
+const towel = TIPS.dad.focus[0].drills[0].art;
+ok(/da-towel/.test(DA.render(towel, 0)), 'towel drill frame draws the towel');
+ok(DA.moves(towel) && !DA.moves(TIPS.brother.focus.find((f) => f.id === 'short').drills[0].art), 'swing scenes move; putting games cut');
+const mid = DA.tween(towel, 0, 1, 0.5, {});
+ok(mid !== DA.render(towel, 0) && mid !== DA.render(towel, 1), 'tween draws an in-between position');
+eq(DA.tween(towel, 0, 1, 1, {}), DA.render(towel, 1, {}), 'tween at the end = the next frame');
+eq(DA.validate({ scene: 'swing', frames: [{ pose: 'nope', cap: 'x' }] }), ['needs 2–4 frames', 'frame 1: unknown pose nope'], 'validate catches bad specs');
+
+section('Swing reviews');
+const SR = require('../js/review.js');
+const rf = { src: 'media/dad/r1/1-top.jpg', w: 720, h: 1280, label: 'Top', marks: [
+  { type: 'line', from: [360, 80], to: [360, 1200], kind: 'ref', dash: true },
+  { type: 'circle', at: [360, 300], r: 60, kind: 'issue', n: 1 },
+  { type: 'arrow', from: [600, 400], to: [420, 520], kind: 'fix', n: 2, label: 'turn here' },
+  { type: 'angle', vertex: [360, 700], a: [360, 200], b: [610, 700], kind: 'ref' }],
+  notes: [{ n: 1, kind: 'issue', text: 'Head moved back.' }, { n: 2, kind: 'fix', text: 'Turn your chest.' }] };
+const mk = SR.markup(rf);
+ok(/^<svg class="rv-svg" viewBox="0 0 720 1280"/.test(mk.svg) && (mk.svg.match(/class="rv-halo/g) || []).length === (mk.svg.match(/class="rv-ink/g) || []).length, 'markup: every shape has a halo and an ink stroke');
+ok(/rv-m ref dash/.test(mk.svg) && /rv-m issue/.test(mk.svg) && /rv-m fix/.test(mk.svg), 'markup: kinds and dashes become classes');
+eq(mk.pins.map((p) => [p.n, p.kind, p.label]), [[1, 'issue', ''], [2, 'fix', 'turn here'], [null, 'ref', '90°']], 'markup: number pins, labels and the angle in degrees');
+eq([Math.round(mk.pins[1].x), Math.round(mk.pins[1].y)], [83, 31], 'markup: pins are placed in percent of the frame');
+const review = { id: 'r1', date: '2026-11-15', view: 'face-on', club: '7i', summary: 's', frames: [rf], fixes: [{ text: 'Keep your head still', drill: 'contact:0' }] };
+const ctx = { fileExists: () => true, clubOk: (c) => c === '7i', drillExists: (k) => k === 'contact:0', sessionExists: () => true };
+eq(SR.validate(review, ctx), { errors: [], warnings: [] }, 'a good review passes');
+const bad = SR.validate(Object.assign({}, review, { view: 'side', frames: [Object.assign({}, rf, { src: 'photos/x.heic', marks: [{ type: 'circle', at: [900, 10], kind: 'oops' }] })], fixes: [{ text: 'x', drill: 'nope:1' }] }), ctx);
+eq(bad.errors.length, 6, 'a bad review: view, image path, mark kind, point outside the frame, circle radius, drill link');
+
+// ---------------------------------------------------------------------------
 section('Paste parser');
 function shotsOf(text, opts, columns) {
   const p = C.parsePaste(text);

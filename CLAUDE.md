@@ -46,10 +46,35 @@ Each player file has a `personal_goals` list. The page pins the open ones at the
 - To mark a goal achieved, set `"done": true` rather than deleting it; the page moves it to a "Done" list. Delete only when asked.
 - Then run the checks, commit (e.g. "Add a coach goal for Dad") and push to `main` as above.
 
+## Swing reviews from a video
+
+Matthew may send a swing video and ask for a review. The page shows it under Practice → Swing: the key frames with lines drawn on them, numbered notes, what's working, and the fixes linked to drills.
+
+1. **Ask what isn't clear:** whose swing, the date, the club, and the view (face-on, or down the line from behind the hands). Never commit the video itself.
+2. **Privacy:** the repo and the site are public. Before a player's first review, ask Matthew whether to blur faces (recommended for M3, who is 14), and use `--blur` when he says yes.
+3. **Find the frames:** `python3 scripts/swing-frames.py probe VIDEO`, then `python3 scripts/swing-frames.py sheet VIDEO --out /tmp/sheet.jpg --every 0.05` and look at the sheet to find setup, the top of the backswing, impact and the finish (plus any frame that shows a problem best).
+4. **Pull them out:** `python3 scripts/swing-frames.py extract VIDEO --out media/<player id>/<review id> --at 0.42:address,1.10:top,1.36:impact,2.05:finish` (add `--blur X,Y,W,H` for a face; `N:X,Y,W,H` for frame N only). The review id is `{date}-{club}-{view}`, e.g. `2026-11-15-7i-face-on`. It prints the `frames` JSON to start from.
+5. **Mark them up:** look at each frame (`python3 scripts/swing-frames.py grid FRAME --out /tmp/grid.png` shows pixel coordinates). Mark only what is clearly visible, and say so when the camera angle makes something hard to judge. Never guess.
+   - Marks: `type` is line, arrow, circle, box, angle, path or dot; `kind` is issue (orange), fix (green), good (blue) or ref (white guide); points are `[x, y]` in frame pixels; `dash: true` for guide lines; `label` up to 24 characters; `n` numbers a mark and matches the note with the same `n`.
+   - Useful marks: a dashed line through the head at address, repeated on later frames to show head movement; the spine or shaft angle (`angle`); the hands against the ball at impact; the shaft plane down the line; a balance line at the finish.
+6. **Write the review** into that player's `swing_reviews` list: `id, date, session_id` (if it matches a range session), `club, view, title, summary, video` (`duration_s`, `fps`), `frames` (each with `src, w, h, time_s, label, marks, notes`), `good` (short strings) and `fixes` (`{ "text": "...", "drill": "contact:0" }`; the drill is `focus id:drill number` in `js/tips.js`, so `contact:0` is the Towel drill). Keep the words short and encouraging, like the shot summaries.
+7. **Check:** `node scripts/check-data.js` and `node tests/core.test.js` must pass. Then run `node scripts/review-preview.js <player id> <review id>` and look at every PNG to make sure each mark sits where it should.
+8. **Commit and push** the frames and the data change to `main` ("Add a swing review for Dad: 7 iron, Nov 15"), then end with a short summary Matthew can forward: what's working, the one or two things to fix, and the drills for them.
+
+## Coach videos and drill animations
+
+Each drill in `js/tips.js` has `art`, its frames for the animation (`js/drillart.js` lists the scenes, poses and marks; 2–4 frames, captions up to 60 characters), and `video` when a coach's video has been found: `{ "id", "title", "by", "note" }`.
+
+- Only use a YouTube id copied from a real search result or page. Never type one from memory or make one up.
+- The listing must show the same drill (or the same skill) and a qualified coach: a PGA or LPGA professional, a well-known teaching pro, or an established instruction channel. If you can't tell, leave `video` out; the page then shows a "Look it up on YouTube" search instead.
+- When Matthew says a video is wrong or doesn't play, replace it or take it out.
+- `node scripts/check-data.js` checks every drill's animation and video.
+
 Don't change `coaching_notes` or the tips in `js/tips.js` unless asked. Don't commit the photos themselves unless asked, because the repo is public.
 
 ## Code
 
-- `index.html`: markup and styles. `js/app.js`: the UI. `js/core.js`: stats, mis-hit rule, rounding and the paste parser; the node tests load it too. `js/tips.js`: the Tips & drills content for each player, shown under the Practice tab (the tab's internal id is still `tips`).
+- `index.html`: markup and styles. `js/app.js`: the UI. `js/core.js`: stats, mis-hit rule, rounding and the paste parser; the node tests load it too. `js/tips.js`: the Tips & drills content for each player, shown under the Practice tab (the tab's internal id is still `tips`; its sections are Range, Swing and Drills). `js/drillart.js`: the drill animations. `js/review.js`: swing review markup and its checks.
+- Scripts: `scripts/swing-frames.py` pulls frames from a swing video; `scripts/review-preview.js` screenshots a review's frames as the page draws them.
 - Tests: `node tests/core.test.js`. Data check: `node scripts/check-data.js`.
 - Preview: run `python3 -m http.server 8000` in the repo root and open http://localhost:8000 (add `?player=brother` for M3).

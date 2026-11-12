@@ -9,6 +9,8 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
+const SwingReview = require('../js/review.js');
+const TIPS = require('../js/tips.js');
 const CLUB_RE = /^(Driver|[2-9]w|[2-7]hy|[2-9]i|PW|GW|SW|LW|\d{2}°)$/;
 const CORE_KEYS = ['carry_yds', 'total_yds', 'ball_speed_mph', 'launch_deg', 'apex_ft', 'landing_deg', 'hang_time_s', 'curve_ft', 'offline_ft'];
 // Loose plausibility ranges: outside them is a warning (likely a misread), not an error.
@@ -28,7 +30,8 @@ function readJSON(file, errors) {
 }
 
 // Checks one player data file. Returns { errors, warnings, sessions, shots, name }.
-function checkPlayerFile(file) {
+// playerId (from players.json) lets swing reviews check their drill links against js/tips.js.
+function checkPlayerFile(file, playerId) {
   const errors = [];
   const warnings = [];
   const data = readJSON(file, errors);
@@ -132,7 +135,29 @@ function checkPlayerFile(file) {
       });
     }
   }
-  return { errors, warnings, sessions: sessionIds.size, shots: shotIds.size, goals, name: data.player && data.player.name };
+  // swing_reviews (optional): frames from a swing video with markup; see CLAUDE.md and js/review.js.
+  let reviews = 0;
+  if (data.swing_reviews != null) {
+    if (!Array.isArray(data.swing_reviews)) errors.push('"swing_reviews" must be an array (use [] for none)');
+    else {
+      const ids = new Set();
+      const tips = playerId ? TIPS[playerId] : null;
+      const ctx = {
+        fileExists: (src) => fs.existsSync(path.join(ROOT, src)),
+        clubOk: (c) => CLUB_RE.test(c),
+        sessionExists: (id) => sessionIds.has(id),
+        drillExists: tips ? (key) => { const m = /^([\w-]+):(\d+)$/.exec(key); const f = m && tips.focus.find((x) => x.id === m[1]); return !!(f && f.drills[+m[2]]); } : null
+      };
+      data.swing_reviews.forEach((r) => {
+        if (r && r.id) { if (ids.has(r.id)) errors.push(`swing review ${r.id}: duplicate id`); ids.add(r.id); }
+        const res = SwingReview.validate(r, ctx);
+        errors.push(...res.errors);
+        warnings.push(...res.warnings);
+      });
+      reviews = data.swing_reviews.length;
+    }
+  }
+  return { errors, warnings, sessions: sessionIds.size, shots: shotIds.size, goals, reviews, name: data.player && data.player.name };
 }
 
 // Checks data/players.json. Returns { errors, warnings, files: [{ id, name, file }] }.
@@ -165,7 +190,29 @@ function report(label, res) {
   for (const e of res.errors) console.log(`✗ ${label}: ${e}`);
 }
 function summary(res) {
-  return `${res.sessions} sessions, ${res.shots} shots, ${res.goals} goal${res.goals === 1 ? '' : 's'}${res.warnings.length ? `, ${res.warnings.length} warning(s)` : ''}`;
+  return `${res.sessions} sessions, ${res.shots} shots, ${res.goals} goal${res.goals === 1 ? '' : 's'}${res.reviews ? `, ${res.reviews} swing review${res.reviews === 1 ? '' : 's'}` : ''}${res.warnings.length ? `, ${res.warnings.length} warning(s)` : ''}`;
+}
+
+// js/tips.js: each drill's animation must draw, and a video id must look like a YouTube id.
+function checkTips() {
+  const DrillArt = require('../js/drillart.js');
+  const errors = [], warnings = [];
+  let drills = 0, videos = 0;
+  Object.entries(TIPS).forEach(([pid, t]) => (t.focus || []).forEach((f) => (f.drills || []).forEach((d, i) => {
+    const w = `${pid}/${f.id}:${i} ${d.name}`;
+    drills++;
+    if (!d.art) warnings.push(`${w}: no animation`);
+    else {
+      DrillArt.validate(d.art).forEach((e) => errors.push(`${w}: ${e}`));
+      try { d.art.frames.forEach((fr, k) => DrillArt.render(d.art, k, {})); } catch (e) { errors.push(`${w}: animation doesn't draw (${e.message})`); }
+    }
+    if (d.video) {
+      videos++;
+      if (!/^[\w-]{11}$/.test(d.video.id || '')) errors.push(`${w}: video id "${d.video.id}" isn't an 11-character YouTube id`);
+      if (!d.video.title || !d.video.by) errors.push(`${w}: video needs a title and "by" (the coach)`);
+    }
+  })));
+  return { errors, warnings, drills, videos };
 }
 
 let failed = 0;
@@ -181,12 +228,16 @@ if (arg) {
   failed += reg.errors.length;
   if (!reg.errors.length) console.log(`✓ data/players.json: ${reg.files.length} players`);
   for (const p of reg.files) {
-    const res = checkPlayerFile(path.join(ROOT, p.file));
+    const res = checkPlayerFile(path.join(ROOT, p.file), p.id);
     if (res.name && res.name !== p.name) res.warnings.push(`player.name "${res.name}" differs from the name in players.json ("${p.name}")`);
     report(p.file, res);
     failed += res.errors.length;
     if (!res.errors.length) console.log(`✓ ${p.file} (${p.name}): ${summary(res)}`);
   }
+  const tips = checkTips();
+  report('js/tips.js', tips);
+  failed += tips.errors.length;
+  if (!tips.errors.length) console.log(`✓ js/tips.js: ${tips.drills} drills, ${tips.videos} with a coach's video${tips.warnings.length ? `, ${tips.warnings.length} warning(s)` : ''}`);
 }
 if (failed) console.log(`\n${failed} error(s)`);
 process.exit(failed ? 1 : 0);

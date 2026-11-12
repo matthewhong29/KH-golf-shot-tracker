@@ -46,7 +46,7 @@
   function freshUI() {
     return {
       tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
-      goalsEdit: false, goalsAll: false, goalSrc: 'me', practiceClub: null, check: {},
+      goalsEdit: false, goalsAll: false, goalSrc: 'me', practiceClub: null, check: {}, practiceView: 'range', rvFrame: {}, rvMarks: true,
       sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
       entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
       imp: { text: '', parsed: null, columns: null, sig: '', include: {}, flips: {}, defaultClub: '', lateralUnit: 'ft', apexUnit: 'ft' }
@@ -106,6 +106,9 @@
       // local.baselineSessionId: null = use the file's; '' = none (first session per club)
       baseline_session_id: local.baselineSessionId != null ? (local.baselineSessionId || null) : (b.baseline_session_id || null),
       goals: C.mergeGoals(b.personal_goals, local.goals),
+      reviews: (Array.isArray(b.swing_reviews) ? b.swing_reviews : [])
+        .filter((r) => r && r.id && Array.isArray(r.frames) && r.frames.length)
+        .slice().sort((x, y) => String(y.date || '').localeCompare(String(x.date || ''))),
       sessions
     };
   }
@@ -161,7 +164,9 @@
     data: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
     calendar: '<rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>',
     stack: '<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="M3 12l9 4.5 9-4.5"/><path d="M3 16.5 12 21l9-4.5"/>',
-    trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>'
+    trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+    pause: '<path d="M9 5.5v13M15 5.5v13"/>',
+    run: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>'
   };
   function icon(name, cls) {
     return `<svg class="ico${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -521,6 +526,7 @@
   // Rendering
   // ---------------------------------------------------------------------------
   function render() {
+    artStop();
     renderHeader();
     renderGoals();
     renderBanner();
@@ -1204,9 +1210,10 @@
       ${look.length ? `<p class="pure-look">Your pure strikes also show ${esc(look.join(', '))}.</p>` : ''}
       <div class="focus-line" style="margin-top:14px"><span class="fl-label">Focus</span><span class="fl-text">${esc(G.focus.text)}</span></div>
       ${drill ? `<details class="focus-drill"><summary>Drill: ${esc(fillText(drill.name))}</summary>
+        ${artHtml(drill.art, area.id + ':0', fillText(drill.name))}
         <ol>${drill.steps.map((s) => `<li>${esc(fillText(s))}</li>`).join('')}</ol>
         <p class="reps"><strong>Reps:</strong> ${esc(fillText(drill.reps))}</p>
-        <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(drill.search))}" target="_blank" rel="noopener">${icon('play')}Look it up on YouTube</a></details>` : ''}
+        ${drillVideo(drill)}</details>` : ''}
       <h4 class="cc-sub">Check a shot</h4>
       <p class="note">Type the numbers from the range screen to see how this ${esc(c)} shot compares.</p>
       <div class="check-grid" style="margin-top:10px">
@@ -1221,6 +1228,105 @@
       </div>
       <div class="row-actions"><button class="btn" data-action="check-shot">Check this shot</button>${ck.result ? '<button class="btn ghost" data-action="check-clear">Clear</button>' : ''}</div>
       ${ck.result ? checkResultHtml(ck.result) : ''}`;
+  }
+  // ----- Drill animations: the stage plays the frames; the strip under it jumps to one -----
+  const DA = window.DrillArt;
+  const REDUCED = (() => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } })();
+  const ART_HOLD = 1700, ART_MOVE = 700;
+  let artBoxes = [], artIO = null, artClock = null;
+  function drillFor(key) {
+    const m = /^([\w-]+):(\d+)$/.exec(key || ''), t = TIPS[playerId];
+    const f = m && t ? t.focus.find((x) => x.id === m[1]) : null;
+    return f ? f.drills[+m[2]] || null : null;
+  }
+  function artLabel(name, art, i) { return `${name}, step ${i + 1} of ${art.frames.length}: ${art.frames[i].cap}`; }
+  function artHtml(art, key, name) {
+    if (!DA || !art || !Array.isArray(art.frames) || !art.frames.length) return '';
+    return `<div class="da-box" data-art="${esc(key)}" data-name="${esc(name)}">
+      <div class="da-stage">${DA.render(art, 0, { label: artLabel(name, art, 0) })}</div>
+      <div class="da-strip" role="group" aria-label="${esc(name)}: steps">${art.frames.map((fr, i) => `<button type="button" class="da-step" data-action="art-step" data-i="${i}" aria-pressed="${i === 0}" aria-label="Step ${i + 1}: ${esc(fr.cap)}">${DA.render(art, i, { thumb: true })}<span class="da-num" aria-hidden="true">${i + 1}</span></button>`).join('')}</div>
+      <div class="da-foot"><p class="da-cap"><span class="da-capn" aria-hidden="true">1</span><span class="da-capt">${esc(art.frames[0].cap)}</span></p>
+        <button type="button" class="da-play" data-action="art-play" aria-label="${REDUCED ? 'Play' : 'Pause'} the animation">${icon(REDUCED ? 'run' : 'pause')}</button></div>
+    </div>`;
+  }
+  function artStop() {
+    if (artIO) { artIO.disconnect(); artIO = null; }
+    clearInterval(artClock);
+    artClock = null;
+    artBoxes.forEach((b) => { if (b.raf) cancelAnimationFrame(b.raf); });
+    artBoxes = [];
+  }
+  // Animations play only while on screen, and not at all when the phone asks for reduced motion.
+  function artStart() {
+    artStop();
+    if (!DA) return;
+    artBoxes = $$('.da-box').filter((el) => !el.closest('[hidden]')).map((el) => {
+      const d = drillFor(el.dataset.art);
+      return d && d.art ? { el, art: d.art, name: el.dataset.name, i: 0, playing: !REDUCED, visible: false, next: 0, raf: 0 } : null;
+    }).filter(Boolean);
+    if (!artBoxes.length) return;
+    if ('IntersectionObserver' in window) {
+      artIO = new IntersectionObserver((entries) => entries.forEach((en) => {
+        const b = artBoxes.find((x) => x.el === en.target);
+        if (!b) return;
+        b.visible = en.isIntersecting;
+        if (b.visible && !b.next) b.next = performance.now() + 900;
+      }), { threshold: 0.5 });
+      artBoxes.forEach((b) => artIO.observe(b.el));
+    } else {
+      artBoxes.forEach((b) => { b.visible = true; b.next = performance.now() + 900; });
+    }
+    artClock = setInterval(artTick, 200);
+  }
+  function artMark(b) {
+    $$('.da-step', b.el).forEach((x, k) => x.setAttribute('aria-pressed', String(k === b.i)));
+    b.el.querySelector('.da-capn').textContent = String(b.i + 1);
+    b.el.querySelector('.da-capt').textContent = b.art.frames[b.i].cap;
+  }
+  function artShow(b, i) {
+    b.i = i;
+    b.el.querySelector('.da-stage').innerHTML = DA.render(b.art, i, { label: artLabel(b.name, b.art, i) });
+    artMark(b);
+  }
+  function artTick() {
+    const now = performance.now();
+    artBoxes.forEach((b) => {
+      if (!b.playing || !b.visible || b.raf || document.hidden || !b.next || now < b.next) return;
+      const from = b.i, to = (b.i + 1) % b.art.frames.length;
+      // Back to the start, or a scene that doesn't move: cut straight to the next frame.
+      if (to === 0 || !DA.moves(b.art)) { artShow(b, to); b.next = now + ART_HOLD + (to === 0 ? 500 : 0); return; }
+      b.i = to;
+      artMark(b);
+      const stage = b.el.querySelector('.da-stage'), t0 = now;
+      const step = (ts) => {
+        const t = Math.min(1, (ts - t0) / ART_MOVE);
+        if (t < 1) { stage.innerHTML = DA.tween(b.art, from, to, t, { label: artLabel(b.name, b.art, to) }); b.raf = requestAnimationFrame(step); }
+        else { b.raf = 0; artShow(b, to); b.next = performance.now() + ART_HOLD; }
+      };
+      b.raf = requestAnimationFrame(step);
+    });
+  }
+  function artBox(el) { const box = el.closest('.da-box'); return artBoxes.find((x) => x.el === box) || null; }
+  function artPlayButton(b) {
+    const btn = b.el.querySelector('.da-play');
+    btn.innerHTML = icon(b.playing ? 'pause' : 'run');
+    btn.setAttribute('aria-label', (b.playing ? 'Pause' : 'Play') + ' the animation');
+  }
+  // A coach's video: a thumbnail that loads YouTube's player only when tapped.
+  function drillVideo(d) {
+    const v = d.video;
+    if (!v || !/^[\w-]{11}$/.test(v.id || '')) {
+      return `<a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(d.search))}" target="_blank" rel="noopener">${icon('play')}Look it up on YouTube</a>`;
+    }
+    return `<div class="vid">
+      <button type="button" class="vid-btn" data-action="play-video" data-id="${esc(v.id)}" aria-label="Play the coach’s video: ${esc(v.title)}">
+        <img src="https://i.ytimg.com/vi/${esc(v.id)}/hqdefault.jpg" alt="" loading="lazy" decoding="async" onerror="this.remove()">
+        <span class="vid-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg></span>
+      </button>
+      <div class="vid-meta"><span class="vid-k">Coach’s video</span><span class="vid-title">${esc(v.title)}</span>
+        <span class="vid-by">${esc(v.by || '')}${v.note ? ' · ' + esc(v.note) : ''}</span></div>
+      <a class="vid-open" href="https://www.youtube.com/watch?v=${esc(v.id)}" target="_blank" rel="noopener">Open in YouTube <span aria-hidden="true">↗</span></a>
+    </div>`;
   }
   const HERO_ART = `<svg class="hero-art" viewBox="0 0 160 110" aria-hidden="true"><path d="M6 106C24 32 90 8 126 86" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray=".01 13"/><path d="M140 20v78" stroke="#fff" stroke-width="5" stroke-linecap="round"/><path d="M143 20l17 7-17 7z" fill="#fff"/><circle cx="128" cy="94" r="7" fill="#fff"/></svg>`;
   function renderTips() {
@@ -1243,9 +1349,14 @@
           ${sub ? `<span class="yr-sub">${esc(sub)}</span>` : ''}</span>
         ${icon('chevron', 'chev')}</button></li>`;
     }).join('');
-    el.innerHTML = `
-      <div class="hero">${HERO_ART}<span class="hero-k">Practice</span><h2>At the range</h2>
-        <p>Pick the club you’re hitting, aim for its numbers, and check a shot against them.</p></div>
+    const view = ['range', 'swing', 'drills'].indexOf(ui.practiceView) < 0 ? 'range' : ui.practiceView;
+    const heads = {
+      range: ['At the range', 'Pick the club you’re hitting, aim for its numbers, and check a shot against them.'],
+      swing: ['Swing reviews', 'Frames from your swing videos, marked up to show what’s happening and how to fix it.'],
+      drills: ['Tips & drills', t ? fillText(t.intro) : 'Drills for each part of the game.']
+    };
+    const latest = (data.reviews || [])[0];
+    const rangeView = `${latest ? `<button class="setting-row rv-teaser" data-action="practice-view" data-view="swing"><span class="head-ico">${icon('play')}</span><span class="set-text"><span class="set-title">Swing review: ${esc(C.fmtDate(latest.date, { short: true }))}${latest.club ? ' · ' + esc(C.clubName(latest.club, data.clubs)) : ''}</span><span class="set-desc">${esc(reviewTeaser(latest))}</span></span>${icon('chevron', 'chev')}</button>` : ''}
       ${clubs.length ? `
         <div class="card"><div class="card-head"><span class="head-ico">${icon('flag')}</span><h3 class="card-title">Your yardages</h3></div>
           <p class="note">How far a pure strike carries with each club. Tap a club for its numbers.</p>
@@ -1253,19 +1364,115 @@
           <p class="hint">A pure strike is one of your best-struck shots: solid contact with your highest ball speeds, launched at a normal height. Each club uses its most recent session, so these grow as you improve.</p></div>
         <div class="card" id="practiceCard">${practiceCard(ui.practiceClub, pc[ui.practiceClub], t)}</div>
         ${clubsCard(clubs)}`
-      : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>`}
-      ${t ? `<h2 class="lib-title">Tips &amp; drills</h2>
-        <p class="lead">${esc(fillText(t.intro))}</p>
-        ${t.focus.map((f, i) => focusCard(f, i, !clubs.length)).join('')}
-        <div class="card lesson"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Check it with a coach</h3></div><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>` : ''}`;
+      : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>`}`;
+    const drillsView = t ? `${t.focus.map((f, i) => focusCard(f, i, true)).join('')}
+        <div class="card lesson"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Check it with a coach</h3></div><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>` : '';
+    el.innerHTML = `
+      <div class="hero">${HERO_ART}<span class="hero-k">Practice</span><h2>${esc(heads[view][0])}</h2>
+        <p>${esc(heads[view][1])}</p>
+        <div class="pv" role="group" aria-label="Practice sections">${[['range', 'Range'], ['swing', 'Swing'], ['drills', 'Drills']].map(([id, label]) =>
+          `<button type="button" data-action="practice-view" data-view="${id}" aria-pressed="${id === view}">${label}</button>`).join('')}</div></div>
+      ${view === 'swing' ? swingView() : view === 'drills' ? drillsView : rangeView}`;
+    artStart();
+  }
+  // ----- Swing reviews: key frames from a swing video, marked up, with numbered notes -----
+  const SR = window.SwingReview;
+  function reviewTeaser(r) {
+    const n = (r.fixes || []).length;
+    return n ? `${n === 1 ? 'One thing' : n + ' things'} to work on` : 'See the marked-up frames';
+  }
+  function reviewById(id) { return id === 'example' ? exampleReview() : (data.reviews || []).find((r) => r.id === id) || null; }
+  function rvFrameHtml(r, i) {
+    const f = r.frames[i], mk = SR ? SR.markup(f) : { svg: '', pins: [] };
+    const ratio = Math.round(f.w / f.h * 1000) / 1000;
+    const media = f.svg || `<img src="${esc(f.src)}" alt="" width="${f.w}" height="${f.h}" decoding="async">`;
+    const pins = mk.pins.map((p) => `<span class="rv-pin ${p.kind}${p.n == null ? ' lab' : ''}" style="left:${f1(p.x)}%;top:${f1(p.y)}%">${p.n != null ? `<b>${esc(String(p.n))}</b>` : ''}${p.label ? `<span>${esc(p.label)}</span>` : ''}</span>`).join('');
+    const notes = (f.notes || []).map((n) => {
+      const kind = SR && SR.KINDS[n.kind] ? n.kind : 'ref';
+      return `<li class="${kind}"><span class="rv-num${n.n == null ? ' dot' : ''}" aria-hidden="true">${n.n != null ? esc(String(n.n)) : ''}</span><span><strong>${esc(SR ? SR.KINDS[kind] : '')}${n.n != null ? ' ' + esc(String(n.n)) : ''}:</strong> ${esc(n.text)}</span></li>`;
+    }).join('');
+    return `<div class="rv-stage"><div class="rv-media${ui.rvMarks ? '' : ' clean'}" data-swipe="${esc(r.id)}" style="aspect-ratio:${f.w} / ${f.h};max-width:calc(min(64vh, 560px) * ${ratio})" role="img" aria-label="${esc(f.label || 'Frame ' + (i + 1))}${(f.notes || []).length ? ': ' + esc(f.notes.map((n) => n.text).join(' ')) : ''}">${media}${mk.svg}${pins}</div></div>
+      <div class="rv-bar">
+        <button type="button" class="rv-nav" data-action="rv-frame" data-id="${esc(r.id)}" data-i="${i - 1}" aria-label="Previous frame"${i ? '' : ' disabled'}>${icon('chevron', 'flip')}</button>
+        <div class="rv-strip" role="group" aria-label="Frames">${r.frames.map((fr, k) => `<button type="button" class="rv-thumb" data-action="rv-frame" data-id="${esc(r.id)}" data-i="${k}" aria-pressed="${k === i}" aria-label="Frame ${k + 1}: ${esc(fr.label || '')}"><span class="rv-timg">${fr.thumb || fr.svg || `<img src="${esc(fr.src)}" alt="" loading="lazy" decoding="async">`}</span><span class="rv-tlabel">${esc(fr.label || String(k + 1))}</span></button>`).join('')}</div>
+        <button type="button" class="rv-nav" data-action="rv-frame" data-id="${esc(r.id)}" data-i="${i + 1}" aria-label="Next frame"${i < r.frames.length - 1 ? '' : ' disabled'}>${icon('chevron')}</button>
+      </div>
+      <div class="rv-tools"><span class="rv-where">Frame ${i + 1} of ${r.frames.length}${f.label ? `: <strong>${esc(f.label)}</strong>` : ''}${C.isNum(f.time_s) ? ` · ${esc(f.time_s.toFixed(2))} s` : ''}</span>
+        <button type="button" class="btn small ghost" data-action="rv-marks" aria-pressed="${ui.rvMarks}">${ui.rvMarks ? 'Hide the lines' : 'Show the lines'}</button></div>
+      ${notes ? `<ol class="rv-notes">${notes}</ol>` : ''}`;
+  }
+  function reviewCard(r) {
+    const i = Math.max(0, Math.min((ui.rvFrame[r.id] || 0), r.frames.length - 1));
+    const sess = r.session_id ? getSession(r.session_id) : null;
+    const meta = [r.id === 'example' ? '' : longDate(r.date), SR && SR.VIEWS[r.view], sess ? `from the ${C.shortDevice(sess.device)} session` : ''].filter(Boolean).join(' · ');
+    const good = (r.good || []).filter(Boolean), fixes = (r.fixes || []).filter((x) => x && x.text);
+    return `<article class="card rv" data-review="${esc(r.id)}">
+      ${r.id === 'example' ? '<span class="rv-example">Example: a drawing, not a real swing</span>' : ''}
+      <div class="cc-head">${r.club ? clubBadge(r.club, false, true) : `<span class="head-ico">${icon('play')}</span>`}<span class="cc-titles"><span class="cc-name">${esc(r.title || (r.club ? C.clubName(r.club, data.clubs) : 'Swing review'))}</span>${meta ? `<span class="cc-full">${esc(meta)}</span>` : ''}</span></div>
+      ${r.summary ? `<p class="rv-sum">${esc(r.summary)}</p>` : ''}
+      <div class="rv-viewer" data-review="${esc(r.id)}">${rvFrameHtml(r, i)}</div>
+      ${good.length ? `<h4 class="cc-sub">What’s working</h4><ul class="rv-good">${good.map((g) => `<li>${icon('check')}<span>${esc(g)}</span></li>`).join('')}</ul>` : ''}
+      ${fixes.length ? `<h4 class="cc-sub">What to work on</h4><ol class="rv-fix">${fixes.map((x, k) => {
+        const d = x.drill ? drillFor(x.drill) : null;
+        return `<li><span class="rv-fixn" aria-hidden="true">${k + 1}</span><span class="rv-fixt">${esc(x.text)}${d ? `<button class="btn small ghost" data-action="goto-tip" data-tip="${esc(x.drill.split(':')[0])}">Drill: ${esc(fillText(d.name))} ${icon('chevron')}</button>` : ''}</span></li>`;
+      }).join('')}</ol>` : ''}
+    </article>`;
+  }
+  // What a review looks like, drawn with the drill figure, until the first real one arrives.
+  const EXAMPLES = {};
+  function exampleReview() {
+    if (EXAMPLES[playerId] || !DA) return EXAMPLES[playerId] || null;
+    const art = { scene: 'swing', club: 'iron', frames: ['address', 'top', 'impact', 'finish'].map((pose) => ({ pose, cap: pose })) };
+    const fr = (i, label, marks, notes) => ({ svg: DA.render(art, i, {}), thumb: DA.render(art, i, { thumb: true }), w: 240, h: 200, label, marks, notes });
+    const headLine = { type: 'line', from: [113.4, 12], to: [113.4, 176], kind: 'ref', dash: true };
+    const ex = {
+      id: 'example', club: '7i', view: 'face-on', title: '7 iron, face-on',
+      summary: 'Send a swing video and it comes back like this: the key frames, with lines drawn on them, numbered notes, and the drills that fix what they show.',
+      frames: [
+        fr(0, 'Address', [headLine, { type: 'circle', at: [113.4, 36.4], r: 16, kind: 'good', n: 1 }],
+          [{ n: 1, kind: 'good', text: 'Head over the ball and weight even. The dashed line marks where your head starts.' }]),
+        fr(1, 'Top', [headLine, { type: 'circle', at: [107.1, 36.8], r: 16, kind: 'issue', n: 1 }, { type: 'arrow', from: [90, 64], to: [109, 64], kind: 'fix', n: 2 }],
+          [{ n: 1, kind: 'issue', text: 'Your head has slid back, away from the target, off the dashed line.' }, { n: 2, kind: 'fix', text: 'Turn your chest instead, and keep your head over the ball.' }]),
+        fr(2, 'Impact', [{ type: 'line', from: [127.9, 107], to: [127.9, 188], kind: 'ref', dash: true }, { type: 'arrow', from: [154, 132], to: [131, 112], kind: 'good', n: 1 }],
+          [{ n: 1, kind: 'good', text: 'Hands ahead of the ball at impact: the dashed line from your hands is past the ball.' }]),
+        fr(3, 'Finish', [{ type: 'line', from: [143, 176], to: [143, 58], kind: 'ref', dash: true }, { type: 'dot', at: [143, 172], r: 5, kind: 'fix', n: 1 }],
+          [{ n: 1, kind: 'fix', text: 'Finish balanced over your front foot, belt buckle to the target, and hold it.' }])
+      ],
+      good: ['Steady posture at address', 'Hands ahead at impact'],
+      fixes: (playerId === 'brother' ? [{ text: 'Keep your head still through the backswing', drill: 'basics:1' }, { text: 'Hold a balanced finish' }]
+        : [{ text: 'Keep your head still through the backswing', drill: 'turn:1' }, { text: 'Hold a balanced finish', drill: 'turn:2' }])
+        .map((x) => (x.drill && !drillFor(x.drill) ? { text: x.text } : x))
+    };
+    EXAMPLES[playerId] = ex;
+    return ex;
+  }
+  function filmTips(open) {
+    return `<details class="card rv-film"${open ? ' open' : ''}><summary><span class="head-ico">${icon('calendar')}</span><span>How to film your swing</span></summary>
+      <ul class="rv-tips">
+        <li>Phone at hip height, about 10 feet away. Lean it on your bag or use a stand.</li>
+        <li><strong>Face-on:</strong> in front of you, looking at your chest. <strong>Down the line:</strong> behind your hands, pointing at the target.</li>
+        <li>Get your whole body and the club in the picture, with room above your head.</li>
+        <li>Use slow motion if your phone has it, in good light.</li>
+        <li>Text the video to Matthew with the date and the club.</li>
+      </ul></details>`;
+  }
+  function swingView() {
+    const list = data.reviews || [];
+    if (list.length) return list.map(reviewCard).join('') + filmTips(false);
+    const ex = exampleReview();
+    return `<div class="card"><div class="card-head"><span class="head-ico">${icon('play')}</span><h3 class="card-title">No swing reviews yet</h3></div>
+        <p class="note">Film a few swings and text the video to Matthew. Claude pulls out the key frames (setup, top, impact and finish), draws on them to show what’s happening, and adds the fixes and drills here.</p></div>
+      ${filmTips(true)}
+      ${ex ? reviewCard(ex) : ''}`;
   }
   function focusCard(f, i, openFirst) {
     const call = f.callout ? C.sessionCallout(f.callout, data.sessions) : null;
-    const drills = f.drills.map((d) => `<div class="drill">
+    const drills = f.drills.map((d, di) => `<div class="drill">
         <h4>${esc(fillText(d.name))}</h4>
+        ${artHtml(d.art, f.id + ':' + di, fillText(d.name))}
         <ol>${d.steps.map((s) => `<li>${esc(fillText(s))}</li>`).join('')}</ol>
         <p class="reps"><strong>Reps:</strong> ${esc(fillText(d.reps))}</p>
-        <a class="btn ghost small look" href="${esc(C.youtubeSearchUrl(d.search))}" target="_blank" rel="noopener">${icon('play')}Look it up on YouTube</a>
+        ${drillVideo(d)}
       </div>`).join('');
     const open = ui.openTip ? f.id === ui.openTip : !!openFirst && i === 0;
     return `<details class="card focus" data-focus="${esc(f.id)}"${open ? ' open' : ''}>
@@ -1735,6 +1942,33 @@
       $$('[data-action="goal-src"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.src === ui.goalSrc)));
     },
     'goal-add'() { addGoal(); },
+    'art-step'(b) {
+      const st = artBox(b);
+      if (!st) return;
+      if (st.raf) { cancelAnimationFrame(st.raf); st.raf = 0; }
+      st.playing = false;
+      artShow(st, +b.dataset.i);
+      artPlayButton(st);
+    },
+    'art-play'(b) {
+      const st = artBox(b);
+      if (!st) return;
+      st.playing = !st.playing;
+      st.next = performance.now() + 400;
+      artPlayButton(st);
+    },
+    'play-video'(b) {
+      const id = b.dataset.id;
+      if (!/^[\w-]{11}$/.test(id || '')) return;
+      const f = document.createElement('iframe');
+      f.className = 'vid-frame';
+      f.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0&playsinline=1';
+      f.title = (b.getAttribute('aria-label') || 'Coach’s video').replace(/^Play the coach’s video: /, '');
+      f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      f.setAttribute('allowfullscreen', '');
+      f.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+      b.replaceWith(f);
+    },
     'practice-club'(b) {
       ui.practiceClub = b.dataset.club; ui.check = {}; renderTips();
       const card = $('#practiceCard'); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1776,8 +2010,27 @@
     },
     'goal-done'(b) { setGoalDone(b.dataset.id); },
     'goal-remove'(b) { removeGoal(b.dataset.id); },
+    'practice-view'(b) {
+      ui.practiceView = b.dataset.view; ui.openTip = null; hideTip(); renderTips();
+      const hero = $('#view-tips .hero');
+      if (hero && hero.getBoundingClientRect().top < 0) hero.scrollIntoView({ block: 'start' });
+    },
+    'rv-frame'(b) {
+      const r = reviewById(b.dataset.id), i = +b.dataset.i;
+      if (!r || !(i >= 0 && i < r.frames.length)) return;
+      ui.rvFrame[r.id] = i;
+      const box = $(`.rv-viewer[data-review="${r.id}"]`);
+      if (box) box.innerHTML = rvFrameHtml(r, i);
+      const t = box && box.querySelector(`.rv-thumb[data-i="${i}"]`);
+      if (t && t.scrollIntoView) t.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    },
+    'rv-marks'() {
+      ui.rvMarks = !ui.rvMarks;
+      $$('.rv-media').forEach((m) => m.classList.toggle('clean', !ui.rvMarks));
+      $$('[data-action="rv-marks"]').forEach((x) => { x.setAttribute('aria-pressed', String(ui.rvMarks)); x.textContent = ui.rvMarks ? 'Hide the lines' : 'Show the lines'; });
+    },
     'goto-tip'(b) {
-      ui.tab = 'tips'; ui.openTip = b.dataset.tip; hideTip(); render();
+      ui.tab = 'tips'; ui.practiceView = 'drills'; ui.openTip = b.dataset.tip; hideTip(); render();
       const d = $(`details[data-focus="${b.dataset.tip}"]`);
       if (d) d.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
     },
@@ -1966,6 +2219,22 @@
       toast('That file isn’t a tracker JSON file');
     }
   });
+
+  let swipe = null;
+  document.addEventListener('touchstart', (e) => {
+    const m = e.target.closest ? e.target.closest('[data-swipe]') : null;
+    swipe = m && e.touches.length === 1 ? { id: m.dataset.swipe, x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (!swipe || !e.changedTouches.length) return;
+    const dx = e.changedTouches[0].clientX - swipe.x, dy = e.changedTouches[0].clientY - swipe.y, id = swipe.id;
+    swipe = null;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const r = reviewById(id);
+    if (!r) return;
+    const i = (ui.rvFrame[id] || 0) + (dx < 0 ? 1 : -1);
+    if (i >= 0 && i < r.frames.length) actions['rv-frame']({ dataset: { id, i: String(i) } });
+  }, { passive: true });
 
   // Charts are drawn at the real pixel width, so redraw when the width changes.
   let lastW = window.innerWidth, resizeTimer;
