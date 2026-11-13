@@ -118,9 +118,10 @@
     var samples = [], N = 96;
     for (var i = 0; i < N; i++) { var ti = H * i / N, p = at(ti); samples.push({ t: ti, x: p.x, y: p.y, z: p.z }); }
     samples.push({ t: H, x: land.x, y: 0, z: C });
+    var apexT = k ? -Math.log(1 - sA * ek / C) / k : H * sA / C;
 
     return {
-      club: club, carry: C, total: C + R, apex: A, launch: L, landing: D, hang: H, roll: R, rollT: rollT,
+      club: club, carry: C, total: C + R, apex: A, launch: L, landing: D, hang: H, roll: R, rollT: rollT, apexT: apexT,
       duration: H + rollT, land: land, rest: rest, apexPoint: { x: lateral(sA), y: A, z: sA },
       estimated: est, at: at, height: height, lateral: lateral, along: along, samples: samples
     };
@@ -136,11 +137,13 @@
     }
     return (lo + hi) / 2;
   }
-  // The points a camera has to fit for one shot: tee, apex, the widest part of the
-  // flight, landing spot and resting spot.
+  // The points a camera has to fit for one shot: the tee, points all along the flight
+  // (seen from the tee, the early climb sits higher in view than the apex, being much
+  // closer), the apex, the landing spot and where it stopped.
   function keyPoints(tr) {
-    var s = tr.samples;
-    return [{ x: 0, y: 0, z: 0 }, tr.apexPoint, s[Math.round(s.length / 2)], s[Math.round(s.length * 0.8)], tr.land, tr.rest];
+    var out = [{ x: 0, y: 0, z: 0 }, tr.apexPoint, tr.land, tr.rest];
+    for (var i = 4; i < tr.samples.length; i += 6) out.push(tr.samples[i]);
+    return out;
   }
 
   // ---------------------------------------------------------------------------
@@ -165,36 +168,43 @@
     var q = project(cam, p.x, p.y, p.z);
     return !!q && q.x >= cam.w * m && q.x <= cam.w * (1 - m) && q.y >= cam.h * m && q.y <= cam.h * (1 - m);
   }
-  // Behind the tee and a little to the right, turned toward the target, like a TV camera
-  // on a tee shot. From straight behind, a ball rising and a ball flying away both move
-  // up the screen, so the arc would hide; from the side it sweeps across and the arc
-  // shows. Framed so every point fits: the tee near the bottom, the highest apex near
-  // the top, the farthest ball in view.
-  function fitBehind(points, w, h) {
-    var far = 30;
-    points.forEach(function (p) { if (p.z > far) far = p.z; });
-    var side = 3 + 0.07 * far, camH = 2 + 0.035 * far, back = 8 + 0.08 * far, cam = null;
-    for (var it = 0; it < 40; it++) {
-      var yaw = Math.atan2(-side, 0.55 * far + back);
-      var probe = camera(side, camH, -back, 0, 40 * DEG, w, h, yaw), lo = Infinity, hi = -Infinity;
-      for (var i = 0; i < points.length; i++) {
-        var v = toCam(probe, points[i].x, points[i].y, points[i].z);
-        var a = Math.atan2(v.Y, v.Z);
-        if (a < lo) lo = a;
-        if (a > hi) hi = a;
-      }
-      var want = (hi - lo) / 0.76;
-      cam = camera(side, camH, -back, (hi + lo) / 2, clamp(want, 24 * DEG, 54 * DEG), w, h, yaw);
-      if (want <= 54 * DEG && points.every(function (p) { return inside(cam, p, 0.05); })) return cam;
-      back *= 1.1;
-      side *= 1.04;
-      camH *= 1.03;
+  // Tilt (and zoom) a camera at a fixed spot and heading so every point fits, from the
+  // lowest near the bottom to the highest near the top; null if they can't all fit.
+  function aim(x, y, z, yaw, points, w, h, minFov, maxFov, margin) {
+    var probe = camera(x, y, z, 0, 40 * DEG, w, h, yaw), lo = Infinity, hi = -Infinity;
+    for (var i = 0; i < points.length; i++) {
+      var v = toCam(probe, points[i].x, points[i].y, points[i].z);
+      if (v.Z < NEAR) return null;
+      var a = Math.atan2(v.Y, v.Z);
+      if (a < lo) lo = a;
+      if (a > hi) hi = a;
     }
-    return cam;
+    var want = (hi - lo) / (1 - 2.4 * margin);
+    if (want > maxFov) return null;
+    var cam = camera(x, y, z, (hi + lo) / 2, Math.max(want, minFov), w, h, yaw);
+    return points.every(function (p) { return inside(cam, p, margin); }) ? cam : null;
   }
-  // High above, tilted down steeply, centred on the points (where the ball finished and
-  // the pin), so the result reads like a hole map.
-  function fitOverhead(points, w, h) {
+  // From the tee box: standing at the back of it, 8 yds behind the ball, at eye height
+  // (a little over 6 ft; tee boxes sit a touch above the fairway), looking down the
+  // target line the way the golfer sees the hole. Steps back if the shot won't fit.
+  function fitTee(points, w, h) {
+    var back = 8, cam = null;
+    for (var it = 0; it < 30 && !cam; it++) { cam = aim(-0.6, 2.4, -back, 0, points, w, h, 30 * DEG, 62 * DEG, 0.04); back *= 1.15; }
+    return cam || camera(-0.6, 2.4, -back, -8 * DEG, 62 * DEG, w, h, 0);
+  }
+  // From the side: well off to the right of the hole and square to it, tee on the left,
+  // so the whole arc shows against the sky: launch, peak height, the drop and the roll.
+  function fitSide(points, w, h) {
+    var z0 = Infinity, z1 = -Infinity, top = 0;
+    points.forEach(function (p) { z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); top = Math.max(top, p.y); });
+    var hf = Math.atan(Math.tan(17 * DEG) * w / h);
+    var dist = Math.max(((z1 - z0) / 2 + 12) / Math.tan(hf), 40), camH = 3 + 0.35 * top, cam = null;
+    for (var it = 0; it < 30 && !cam; it++) { cam = aim(dist, camH, (z0 + z1) / 2, -90 * DEG, points, w, h, 16 * DEG, 50 * DEG, 0.06); dist *= 1.1; }
+    return cam || camera(dist, camH, (z0 + z1) / 2, -4 * DEG, 50 * DEG, w, h, -90 * DEG);
+  }
+  // Above the green, tilted down steeply and centred on the points (where the ball
+  // finished and the green), so the result reads like a hole map.
+  function fitGreen(points, w, h) {
     var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     points.forEach(function (p) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); });
     var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, pitch = -62 * DEG, vfov = 42 * DEG;
@@ -208,14 +218,6 @@
     }
     return cam;
   }
-  // Part of the way from camera a to camera b, easing in and out.
-  function lerpCam(a, b, t) {
-    var e = clamp(t, 0, 1);
-    e = e * e * (3 - 2 * e);
-    function m(p, q) { return p + (q - p) * e; }
-    return camera(m(a.x, b.x), m(a.y, b.y), m(a.z, b.z), m(a.pitch, b.pitch), m(a.vfov, b.vfov), a.w, a.h, m(a.yaw || 0, b.yaw || 0));
-  }
-
   // ---------------------------------------------------------------------------
   // The course: laid out from the pin distance, the same every time for one seed
   // ---------------------------------------------------------------------------
@@ -376,7 +378,7 @@
     }
     if (hy > 0) drawSky(ctx, cam, c, hy);
 
-    fillGround(ctx, cam, rectPts(-5, -4, 5, 3), COL.tee);
+    fillGround(ctx, cam, rectPts(-6, -12, 6, 3), COL.tee);
     var fw = c.fairway, cap = Math.min(10, (fw.z1 - fw.z0) / 3);
     if (fw.z1 - fw.z0 > 6) {
       fillGround(ctx, cam, stadiumPts(c.half, fw.z0, fw.z1, cap), COL.fairway);
@@ -395,8 +397,11 @@
     });
     drawMarkers(ctx, cam, c);
 
-    // Trees and the flag, farthest first so nearer ones overlap them.
-    var things = c.trees.map(function (t) { return { t: t, q: project(cam, t.x, 0, t.z) }; })
+    // Trees and the flag, farthest first so nearer ones overlap them. A camera off to the
+    // side of the hole leaves out the trees between it and the hole, which would hide it.
+    var aside = Math.abs(cam.x) > c.half + 30;
+    var things = c.trees.filter(function (t) { return !(aside && t.x * cam.x > 0); })
+      .map(function (t) { return { t: t, q: project(cam, t.x, 0, t.z) }; })
       .filter(function (o) { return o.q && o.q.x > -60 && o.q.x < w + 60; });
     var flag = project(cam, 0, 0, c.pin);
     if (flag) things.push({ flag: true, q: flag });
@@ -547,39 +552,51 @@
       return;
     }
   }
+  function toPin(tr, c) { return Math.hypot(tr.rest.x, tr.rest.z - c.pin); }
   // The readout in the top corner: how far out and how high the ball is while it flies,
-  // then the carry and total once it stops.
-  function hudText(tr, t) {
-    if (!(t > 0)) return '';
+  // then the carry and total once it stops (and, from the tee, how close to the pin).
+  function hudLines(tr, t, c, view) {
+    if (!(t > 0)) return [];
     var p = tr.at(t);
-    if (p.phase === 'flight') return Math.round(p.z) + ' yds · ' + Math.round(p.y * 3) + ' ft high';
-    if (p.phase === 'roll') return Math.round(tr.carry) + ' carry · rolling';
-    return Math.round(tr.carry) + ' carry · ' + Math.round(tr.total) + ' total';
+    if (p.phase === 'flight') return [Math.round(p.z) + ' yds · ' + Math.round(p.y * 3) + ' ft high'];
+    if (p.phase === 'roll') return [Math.round(tr.carry) + ' carry · rolling'];
+    var out = [Math.round(tr.carry) + ' carry · ' + Math.round(tr.total) + ' total'];
+    if (view === 'tee') { var d = toPin(tr, c); out.push(d < 1 ? 'Next to the pin' : yds(d) + ' to the pin'); }
+    return out;
   }
-  function drawHud(ctx, cam, text) {
-    if (!text) return;
+  function drawHud(ctx, cam, lines) {
     ctx.font = FONT;
-    var pw = Math.ceil(ctx.measureText(text).width) + 20;
-    pill(ctx, cam, 10 + pw / 2, 10 + 28 + 10, text);
+    lines.forEach(function (text, i) {
+      var pw = Math.ceil(ctx.measureText(text).width) + 20;
+      pill(ctx, cam, 10 + pw / 2, 48 + i * 34, text);
+    });
   }
-  // One frame. o: { cam, course, bg (the course already drawn for this camera, or null),
-  // past: [trajectories], cur: trajectory, t: seconds into it, hud: true for the corner
-  // readout, result: 'overhead' to show the distance to the pin }
+  // From the side, the peak height is labelled once the ball has been over the top.
+  function drawApex(ctx, cam, tr, t) {
+    if (t < tr.apexT || tr.apex * 3 < 6) return;
+    var q = project(cam, tr.apexPoint.x, tr.apexPoint.y, tr.apexPoint.z);
+    if (q) pill(ctx, cam, q.x, q.y - 4, Math.round(tr.apex * 3) + ' ft');
+  }
+  var VIEWS = ['tee', 'side', 'green'];
+  // One frame. o: { cam, view: 'tee' | 'side' | 'green', course, bg (the course already
+  // drawn for this camera, or null), past: [trajectories], cur: trajectory, t: seconds
+  // into it, hud: false to leave out the corner readout }
   function drawFrame(ctx, o) {
-    var cam = o.cam;
+    var cam = o.cam, t = o.t || 0, tr = o.cur;
     if (o.bg) ctx.drawImage(o.bg, 0, 0, cam.w, cam.h);
     else drawCourse(ctx, cam, o.course);
-    (o.past || []).forEach(function (tr) { drawShot(ctx, cam, tr, tr.duration, true); });
-    if (o.cur) {
-      drawShot(ctx, cam, o.cur, o.t || 0, false);
-      if (o.result === 'overhead') drawResult(ctx, cam, o.cur, o.course, 'overhead');
-      if (o.hud) drawHud(ctx, cam, hudText(o.cur, o.t || 0));
-    }
+    (o.past || []).forEach(function (p) { drawShot(ctx, cam, p, p.duration, true); });
+    if (!tr) return;
+    drawShot(ctx, cam, tr, t, false);
+    var done = t >= tr.duration;
+    if (o.view === 'side') drawApex(ctx, cam, tr, t);
+    if (o.view === 'green' && done) drawResult(ctx, cam, tr, o.course, 'overhead');
+    if (o.hud !== false && !(o.view === 'green' && done)) drawHud(ctx, cam, hudLines(tr, t, o.course, o.view));
   }
 
   return {
     trajectory: trajectory, keyPoints: keyPoints, solveK: solveK,
-    camera: camera, project: project, horizonY: horizonY, fitBehind: fitBehind, fitOverhead: fitOverhead, lerpCam: lerpCam,
+    camera: camera, project: project, inside: inside, horizonY: horizonY, fitTee: fitTee, fitSide: fitSide, fitGreen: fitGreen, VIEWS: VIEWS,
     course: course, rng: rng, FAIRWAY_HALF: FAIRWAY_HALF,
     drawCourse: drawCourse, drawShot: drawShot, drawFrame: drawFrame, COL: COL
   };

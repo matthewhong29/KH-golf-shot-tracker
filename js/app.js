@@ -46,7 +46,7 @@
   function freshUI() {
     return {
       tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
-      rp: { club: 'All', idx: 0, speed: 1 },
+      rp: { club: 'All', idx: 0, speed: 1, view: 'tee' },
       goalsEdit: false, goalsAll: false, goalSrc: 'me', practiceClub: null, check: {}, practiceView: 'range', rvFrame: {}, rvMarks: true,
       sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
       entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
@@ -1005,12 +1005,15 @@
   }
 
   // ----- Shot replay: each shot's flight drawn from its numbers, on a course -----
-  // The pin sits where a pure strike with that club finishes. Each shot flies from the
-  // tee (the camera behind and a little to the right), rolls out, then the camera rises
-  // over the green to show how close it finished. "Play all" runs the shots in order
-  // and keeps the earlier tracers of the same club, like a range session's pattern.
+  // The pin sits where a pure strike with that club finishes. Pick the camera: from the
+  // tee box (the golfer's view, the default), from the side (the whole arc), or above
+  // the green (where it landed and how close it finished). Switching mid-shot cuts to
+  // the new camera without restarting. "Play all" runs the shots in order and keeps
+  // the earlier tracers of the same club, like a range session's pattern.
   const FL = window.GolfFlight;
-  const RP_HOLD = 0.8, RP_GLIDE = 1.6, RP_NEXT = 1.2, RP_SPEEDS = [1, 2, 4];
+  const RP_NEXT = 1.2, RP_SPEEDS = [1, 2, 4];
+  const RP_VIEWS = [['tee', 'Tee box'], ['side', 'Side'], ['green', 'Green']];
+  const RP_VIEW_WORDS = { tee: 'from the tee box', side: 'from the side', green: 'above the green' };
   let rp = null;
   function rpItems(sessions) {
     const out = [];
@@ -1032,6 +1035,8 @@
       <div class="card replay" id="replay">
         <p class="note">Watch each shot fly on a course, drawn from the range screen’s numbers.</p>
         ${chips}
+        <div class="seg rp-views" role="group" aria-label="Camera">${RP_VIEWS.map(([id, label]) =>
+          `<button type="button" data-action="rp-view" data-view="${id}" aria-pressed="${id === ui.rp.view}">${label}</button>`).join('')}</div>
         <div class="rp-stage">
           <canvas class="rp-canvas" role="img" aria-label="Shot replay"></canvas>
           <button type="button" class="rp-big" data-action="rp-play" aria-label="Play this shot">${icon('run')}</button>
@@ -1063,7 +1068,8 @@
     if (!card || !FL) return;
     const canvas = $('.rp-canvas', card), ctx = canvas.getContext ? canvas.getContext('2d') : null;
     if (!ctx) { card.hidden = true; return; }
-    rp = { card, canvas, ctx, items, entries, list: [], clubs: {}, idx: 0, t: 0, playing: false, autoPaused: false, phase: 'idle', past: [], all: false, raf: 0, last: 0, cam: null, over: null };
+    if (RP_VIEWS.every(([id]) => id !== ui.rp.view)) ui.rp.view = 'tee';
+    rp = { card, canvas, ctx, items, entries, list: [], clubs: {}, bgs: new Map(), idx: 0, t: 0, playing: false, autoPaused: false, phase: 'idle', past: [], all: false, raf: 0, last: 0, shotGreen: null };
     rpSize();
     rpFilter();
     rpShow(ui.rp.idx, false);
@@ -1084,7 +1090,7 @@
     rp.canvas.height = Math.round(h * dpr);
     rp.canvas.style.height = h + 'px';
     rp.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    Object.assign(rp, { w, h, dpr, clubs: {} });
+    Object.assign(rp, { w, h, dpr, clubs: {}, bgs: new Map() });
   }
   function rpFilter() { rp.list = ui.rp.club === 'All' ? rp.items : rp.items.filter((i) => i.shot.club === ui.rp.club); }
   function rpTraj(item) {
@@ -1102,28 +1108,45 @@
     if (!C.isNum(v)) v = C.median(rp.items.filter((i) => i.shot.club === club).map((i) => (C.isNum(i.shot.total_yds) ? i.shot.total_yds : i.shot.carry_yds)));
     return Math.max(25, Math.round(C.isNum(v) ? v : 100));
   }
-  // The course, the camera behind the tee and the drawn background, once per club:
-  // framed to fit every shot with that club, so the view holds still from shot to shot.
+  // The green and the ground around it, for framing the view above the green.
+  function rpGreenPts(pin) { return [{ x: -20, y: 0, z: pin - 22 }, { x: 20, y: 0, z: pin - 22 }, { x: -20, y: 0, z: pin + 22 }, { x: 20, y: 0, z: pin + 22 }]; }
+  // The course and a camera for each view, once per club, framed to fit every shot with
+  // that club so the view holds still from shot to shot. Above the green, it frames the
+  // shots that finished near the green; a shot that finished farther away gets its own.
   function rpClub(club) {
     if (rp.clubs[club]) return rp.clubs[club];
-    const pin = rpPin(club);
-    const pts = [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: pin + 15 }, { x: -13, y: 0, z: pin }, { x: 13, y: 0, z: pin }];
-    rp.items.forEach((i) => { if (i.shot.club === club) { const t = rpTraj(i); if (t) FL.keyPoints(t).forEach((p) => pts.push(p)); } });
+    const pin = rpPin(club), trs = [];
+    rp.items.forEach((i) => { if (i.shot.club === club) { const t = rpTraj(i); if (t) trs.push(t); } });
+    const pts = [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: pin + 15 }, { x: -13, y: 0, z: pin }, { x: 13, y: 0, z: pin }, { x: 0, y: 2.4, z: pin }];
+    trs.forEach((t) => FL.keyPoints(t).forEach((p) => pts.push(p)));
+    const near = rpGreenPts(pin);
+    trs.forEach((t) => { [t.land, t.rest].forEach((p) => { if (Math.hypot(p.x, p.z - pin) <= 40) near.push(p); }); });
     let seed = pin * 131;
     for (let k = 0; k < club.length; k++) seed = (seed * 31 + club.charCodeAt(k)) >>> 0;
     const course = FL.course(pin, Math.max(...pts.map((p) => p.z)), seed);
-    const cam = FL.fitBehind(pts, rp.w, rp.h);
-    const bg = document.createElement('canvas');
-    bg.width = rp.canvas.width;
-    bg.height = rp.canvas.height;
-    const b = bg.getContext('2d');
-    b.setTransform(rp.dpr, 0, 0, rp.dpr, 0, 0);
-    FL.drawCourse(b, cam, course);
-    return (rp.clubs[club] = { club, pin, course, cam, bg });
+    return (rp.clubs[club] = { club, pin, course, tee: FL.fitTee(pts, rp.w, rp.h), side: FL.fitSide(pts, rp.w, rp.h), green: FL.fitGreen(near, rp.w, rp.h) });
   }
-  function rpOver() {
-    const tr = rp.cur, pin = rp.c.pin;
-    return FL.fitOverhead([tr.rest, tr.land, { x: 0, y: 0, z: pin }, { x: -20, y: 0, z: Math.min(pin, tr.rest.z) - 22 }, { x: 20, y: 0, z: Math.max(pin, tr.rest.z) + 22 }], rp.w, rp.h);
+  // The camera for the chosen view and this shot.
+  function rpCam() {
+    const v = ui.rp.view, c = rp.c, tr = rp.cur;
+    if (v !== 'green') return c[v];
+    if ([tr.land, tr.rest].every((p) => FL.inside(c.green, p, 0.06))) return c.green;
+    if (!rp.shotGreen) rp.shotGreen = FL.fitGreen(rpGreenPts(c.pin).concat([tr.land, tr.rest]), rp.w, rp.h);
+    return rp.shotGreen;
+  }
+  // The course drawn once for each camera, so a frame only adds the ball and tracers.
+  function rpBg(cam) {
+    let bg = rp.bgs.get(cam);
+    if (!bg) {
+      bg = document.createElement('canvas');
+      bg.width = rp.canvas.width;
+      bg.height = rp.canvas.height;
+      const b = bg.getContext('2d');
+      b.setTransform(rp.dpr, 0, 0, rp.dpr, 0, 0);
+      FL.drawCourse(b, cam, rp.c.course);
+      rp.bgs.set(cam, bg);
+    }
+    return bg;
   }
   function rpShow(i, play) {
     if (!rp || !rp.list.length) return;
@@ -1132,21 +1155,20 @@
     rp.item = rp.list[rp.idx];
     rp.cur = rpTraj(rp.item);
     rp.c = rpClub(rp.item.shot.club);
-    Object.assign(rp, { cam: rp.c.cam, over: null, t: 0, phase: 'idle', playing: false, autoPaused: false });
+    Object.assign(rp, { shotGreen: null, t: 0, phase: 'idle', playing: false, autoPaused: false });
     rpInfo();
     if (play) rpPlay();
     else { rpDraw(); rpControls(); }
   }
   function rpDraw() {
     if (!rp || !rp.cur) return;
-    const cam = rp.cam || rp.c.cam, behind = cam === rp.c.cam;
+    const cam = rpCam();
     rp.ctx.clearRect(0, 0, rp.w, rp.h);
-    FL.drawFrame(rp.ctx, { cam, course: rp.c.course, bg: behind ? rp.c.bg : null, past: behind ? rp.past : [], cur: rp.cur, t: rp.t,
-      hud: behind && rp.phase !== 'idle', result: rp.phase === 'done' && !behind ? 'overhead' : null });
+    FL.drawFrame(rp.ctx, { cam, view: ui.rp.view, course: rp.c.course, bg: rpBg(cam), past: rp.past, cur: rp.cur, t: rp.t, hud: rp.phase !== 'idle' });
   }
   function rpPlay() {
     if (!rp || !rp.cur) return;
-    if (rp.phase === 'idle' || rp.phase === 'done') Object.assign(rp, { t: 0, cam: rp.c.cam, over: null, phase: 'flight' });
+    if (rp.phase === 'idle' || rp.phase === 'done') Object.assign(rp, { t: 0, phase: 'flight' });
     if (REDUCED) { rpEnd(); return; }
     Object.assign(rp, { playing: true, autoPaused: false, last: 0 });
     rpControls();
@@ -1160,23 +1182,17 @@
     rp.t += dt * ui.rp.speed;
     const T = rp.cur.duration;
     if (rp.t < T) rp.phase = 'flight';
-    else if (rp.all) {
+    else if (!rp.all) { Object.assign(rp, { t: T, phase: 'done', playing: false }); rpDraw(); rpControls(); return; }
+    else {
       rp.phase = 'hold';
       if (rp.t >= T + RP_NEXT) { rpAdvance(); return; }
-    } else if (rp.t < T + RP_HOLD) rp.phase = 'hold';
-    else {
-      if (!rp.over) rp.over = rpOver();
-      const g = (rp.t - T - RP_HOLD) / RP_GLIDE;
-      if (g < 1) { rp.phase = 'glide'; rp.cam = FL.lerpCam(rp.c.cam, rp.over, g); }
-      else { Object.assign(rp, { cam: rp.over, phase: 'done', playing: false }); rpDraw(); rpControls(); return; }
     }
     rpDraw();
     rp.raf = requestAnimationFrame(rpTick);
   }
   // Straight to the end: for phones that ask for less motion.
   function rpEnd() {
-    Object.assign(rp, { playing: false, t: rp.cur.duration + 1, phase: 'done' });
-    if (!rp.all) rp.cam = rp.over = rpOver();
+    Object.assign(rp, { playing: false, t: rp.cur.duration, phase: 'done' });
     rpDraw();
     rpControls();
   }
@@ -1198,7 +1214,7 @@
     const past = same.slice(0, -1).map(rpTraj).filter(Boolean);
     rp.all = false;
     rpShow(rp.list.indexOf(same[same.length - 1]), false);
-    Object.assign(rp, { past, t: rp.cur.duration + 1, phase: 'done' });
+    Object.assign(rp, { past, t: rp.cur.duration, phase: 'done' });
     rpDraw();
     rpControls();
   }
@@ -1266,7 +1282,12 @@
     const est = tr.estimated.filter((k) => words[k]).map((k) => words[k]);
     $('.rp-hint', rp.card).textContent = `The pin is where a pure strike with your ${name.toLowerCase()} finishes: ${pin} yds, carry plus roll. ` +
       (est.length ? `Not on the screen, so estimated: ${est.join(', ')}.` : 'Everything is drawn from the screen’s numbers.');
-    rp.canvas.setAttribute('aria-label', `Replay of shot ${rp.idx + 1} of ${rp.list.length}, ${name}: ${C.fmtRaw(s.carry_yds)} yards carry, finished ${Math.round(d)} yards from the pin${away ? ' (' + away + ')' : ''}.`);
+    rpLabel();
+  }
+  // What the picture shows, for screen readers.
+  function rpLabel() {
+    const s = rp.item.shot, tr = rp.cur, pin = rp.c.pin, d = Math.hypot(tr.rest.x, tr.rest.z - pin);
+    rp.canvas.setAttribute('aria-label', `Replay ${RP_VIEW_WORDS[ui.rp.view]} of shot ${rp.idx + 1} of ${rp.list.length}, ${C.clubName(s.club, data.clubs)}: ${C.fmtRaw(s.carry_yds)} yards carry, finished ${Math.round(d)} yards from the pin.`);
   }
 
   function renderStats() {
@@ -2297,6 +2318,14 @@
       rpShow(rp.idx >= rp.list.length - 1 ? 0 : rp.idx, true);
     },
     'rp-speed'() { ui.rp.speed = RP_SPEEDS[(RP_SPEEDS.indexOf(ui.rp.speed) + 1) % RP_SPEEDS.length]; rpControls(); },
+    // A new camera picks up where the shot is, so it can change mid-flight.
+    'rp-view'(b) {
+      if (!rp) return;
+      ui.rp.view = b.dataset.view;
+      $$('[data-action="rp-view"]', rp.card).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.view === ui.rp.view)));
+      rpDraw();
+      rpLabel();
+    },
     'focus-club'(b) {
       ui.statClub = b.dataset.club; renderStats();
       const sec = $('#clubSection'); if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });

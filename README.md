@@ -30,7 +30,7 @@ The four tabs are:
 
 - **Stats** for one session, or all sessions pooled:
   - Session summary: big-number tiles for shots, solid contact and on line (within 10 yds), each with the change from the previous session, and the longest carry. Then a "Needs work" box listing clubs to practise (tap one to jump to it) and highlights: thin or topped shots, average miss per club, and change since the baseline.
-  - **Shot replay:** watch each shot fly on a course, drawn from its numbers (see "Shot replay" below). Pick a club or all of them, step through the shots, **Play all** to run the session in order, and change the speed (1×, 2×, 4×). Under the picture: the carry, total, distance to the pin and peak height.
+  - **Shot replay:** watch each shot fly on a course, drawn from its numbers (see "Shot replay" below). Pick a club or all of them and a camera: **Tee box**, **Side** or **Green**. Step through the shots, **Play all** to run the session in order, and change the speed (1×, 2×, 4×). Under the picture: the carry, total, distance to the pin and peak height.
   - Club by club, one club at a time: tiles for its average carry, pure-strike carry, solid contact and average miss, its "Needs work" notes, **Goals** for the range (a focus, a distance zone around its pure-strike carry, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
   - A carry gapping chart.
   - Dispersion: offline vs. carry. All clubs show as one panel each on the same scale, or pick one club.
@@ -181,10 +181,12 @@ The Stats tab replays each shot from the numbers the range screen gave; nothing 
   - It leaves at its ball speed and slows the way drag slows it. The time in the air is the hang time, or, when the screen doesn't show one (Toptracer's "All shots" screen doesn't), an estimate from the apex height.
   - Any other number missing from the screen is estimated from the club too, and the hint under the replay lists what was estimated.
 - **The course** is laid out for each club: a 30-yard fairway (the same as the dispersion charts), rough, bunkers, trees and a green. The pin sits where a pure strike with that club finishes, carry plus roll, so "to the pin" shows how close the shot would have been. It's the same course every time for a club.
-- **The cameras:**
-  - During the flight, the view is from behind the tee and a little to the right, like a TV camera on a tee shot, so the arc shows. A corner readout counts the distance and height, then shows the carry and total.
-  - Once the ball stops, the camera glides up over the green to show the distance to the pin and where the ball landed.
-  - The view from behind holds still for a club, so in **Play all** each new shot flies over the faded tracers of the ones before it, like the pattern on a range screen.
+- **The cameras:** pick one above the picture. The camera stays put until you pick another; switching mid-shot cuts to it without restarting.
+  - **Tee box** (the default): standing at the back of the tee box, 8 yds behind the ball at eye height, looking down the hole the way the golfer sees it. It ends with the carry, the total and the distance to the pin.
+  - **Side:** off to the right of the hole and square to it, tee on the left, so the whole arc shows. The peak height is marked once the ball is over the top.
+  - **Green:** above the green. The ball drops in, lands and rolls, then a dashed line shows the distance to the pin and where it landed. A shot that finished well away from the green gets its own framing, so it's always in view.
+  - A corner readout counts the distance and height while the ball flies.
+  - Each club keeps the same cameras from shot to shot, so in **Play all** each new shot flies over the faded tracers of the ones before it, like the pattern on a range screen. From the green, that shows where the shots finished around the pin.
 - It pauses while it's off screen or the page is in the background. On phones set to reduce motion, Play goes straight to the result and Play all draws every shot at once.
 
 ## Tests
@@ -203,7 +205,7 @@ The tests check:
 - the tips callouts and content;
 - the player registry and data files;
 - the paste parser, against the Toptracer screenshot rows (both whitespace and tab-separated) and a Rapsodo CSV;
-- the shot replay: every real shot in the data files lands at its carry and offline, peaks at its apex and stops at its total; launch and landing angles; estimates for missing numbers; both cameras keep the shot in view; and drawing runs in every view.
+- the shot replay: every real shot in the data files lands at its carry and offline, peaks at its apex and stops at its total; launch and landing angles; estimates for missing numbers; the tee box, side and green cameras keep the shot in view; and drawing runs in every view.
 
 ## Saving goals to GitHub
 

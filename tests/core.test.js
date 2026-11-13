@@ -461,17 +461,22 @@ let flown = 0, wrong = [];
   }));
 });
 eq(wrong, [], `every real shot (${flown}) lands at its carry and offline, peaks at its apex, stops at its total`);
-// Cameras: the view from behind the tee fits the whole shot; the view from above fits the ball and the pin.
+// Cameras: from the tee box and from the side the whole flight fits, every point of it;
+// above the green, the ball and the pin.
 const camPts = FL.keyPoints(t7).concat([{ x: 0, y: 0, z: 145 }, { x: -13, y: 0, z: 130 }, { x: 13, y: 0, z: 130 }]);
+const allIn = (cam, pts, w, h) => pts.every((p) => { const q = FL.project(cam, p.x, p.y, p.z); return q && q.x >= 0 && q.x <= w && q.y >= 0 && q.y <= h; });
+const flightPts = t7.samples.concat([t7.rest, { x: 0, y: 0, z: 0 }]);
 [[358, 222], [268, 200], [600, 372]].forEach(([w, h]) => {
-  const cam = FL.fitBehind(camPts, w, h);
-  ok(camPts.every((p) => { const q = FL.project(cam, p.x, p.y, p.z); return q && q.x >= 0 && q.x <= w && q.y >= 0 && q.y <= h; }), `behind the tee at ${w}×${h}: tee, apex, landing and pin all in view`);
-  ok(cam.x > 0 && cam.yaw < 0 && cam.pitch < 0, `${w}×${h}: camera right of the tee, turned toward the target, looking down`);
-  const over = FL.fitOverhead([t7.rest, t7.land, { x: 0, y: 0, z: 128 }], w, h);
-  ok([t7.rest, { x: 0, y: 0, z: 128 }].every((p) => { const q = FL.project(over, p.x, p.y, p.z); return q && q.x > 0 && q.x < w && q.y > 0 && q.y < h; }), `from above at ${w}×${h}: ball and pin in view`);
+  const tee = FL.fitTee(camPts, w, h), side = FL.fitSide(camPts, w, h);
+  ok(allIn(tee, flightPts, w, h) && allIn(tee, camPts, w, h), `tee box at ${w}×${h}: the ball on the tee, the whole climb and drop, the landing and the pin in view`);
+  ok(tee.z < -3 && tee.z > -25 && Math.abs(tee.x) < 1 && tee.y > 2 && tee.y < 3 && tee.yaw === 0, `${w}×${h}: tee box camera stands behind the ball at eye height, facing down the line`);
+  ok(allIn(side, flightPts, w, h), `side at ${w}×${h}: the whole arc in view`);
+  const lo = FL.project(side, 0, 0, 0), hi = FL.project(side, 0, 0, 130);
+  ok(side.x > 30 && lo.x < hi.x, `${w}×${h}: side camera off to the right, tee on the left`);
+  const green = FL.fitGreen([t7.rest, t7.land, { x: 0, y: 0, z: 128 }], w, h);
+  ok(allIn(green, [t7.rest, { x: 0, y: 0, z: 128 }], w, h) && green.pitch < -50 * Math.PI / 180, `above the green at ${w}×${h}: ball and pin in view, looking down`);
 });
-const midCam = FL.lerpCam(FL.fitBehind(camPts, 358, 222), FL.fitOverhead([t7.rest, { x: 0, y: 0, z: 128 }], 358, 222), 0.5);
-ok(midCam && Number.isFinite(midCam.F) && midCam.pitch < 0, 'camera glides between the two views');
+eq(FL.VIEWS, ['tee', 'side', 'green'], 'three camera views');
 const crs = FL.course(128, 150, 42);
 eq(JSON.stringify(FL.course(128, 150, 42)), JSON.stringify(crs), 'the same course every time for one club');
 ok(crs.trees.every((t) => Math.abs(t.x) > crs.half + 15 || t.z > crs.pin + crs.green.rz + 20), 'trees stay off the fairway and the green');
@@ -484,10 +489,9 @@ const fakeCtx = new Proxy({}, {
 });
 let drewAll = true;
 try {
-  const camB = FL.fitBehind(camPts, 358, 222), camO = FL.fitOverhead([t7.rest, t7.land, { x: 0, y: 0, z: 128 }], 358, 222);
-  [0, 1, 3, t7.hang, t7.hang + 0.5, t7.duration + 1].forEach((t) => FL.drawFrame(fakeCtx, { cam: camB, course: crs, cur: t7, t, hud: true, past: [top3w, back] }));
-  FL.drawFrame(fakeCtx, { cam: FL.lerpCam(camB, camO, 0.4), course: crs, cur: t7, t: t7.duration + 1 });
-  FL.drawFrame(fakeCtx, { cam: camO, course: crs, cur: t7, t: t7.duration + 1, result: 'overhead' });
+  const cams = { tee: FL.fitTee(camPts, 358, 222), side: FL.fitSide(camPts, 358, 222), green: FL.fitGreen([t7.rest, t7.land, { x: 0, y: 0, z: 128 }], 358, 222) };
+  FL.VIEWS.forEach((view) => [0, 1, t7.apexT + 0.1, t7.hang, t7.hang + 0.5, t7.duration].forEach((t) =>
+    FL.drawFrame(fakeCtx, { cam: cams[view], view, course: crs, cur: t7, t, past: [top3w, back] })));
 } catch (e) { drewAll = false; console.error(e); }
 ok(drewAll && drawCalls > 500, 'draws the course, tracer, ball and labels in every view');
 
