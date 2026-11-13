@@ -1025,8 +1025,10 @@
     });
     return out;
   }
-  function replayCard(items) {
+  function replayCard(items, scopeId) {
     if (!FL || !items.length) return '';
+    // A different session (or all of them) starts again from its first shot.
+    if (ui.rp.scope !== scopeId) Object.assign(ui.rp, { scope: scopeId, idx: 0 });
     const clubs = C.sortClubs(Array.from(new Set(items.map((i) => i.shot.club))));
     if (ui.rp.club !== 'All' && clubs.indexOf(ui.rp.club) < 0) { ui.rp.club = 'All'; ui.rp.idx = 0; }
     const chips = clubs.length > 1 ? `<div class="chips rp-clubs" role="group" aria-label="Club to replay">${['All'].concat(clubs).map((c) =>
@@ -1038,7 +1040,7 @@
         <div class="seg rp-views" role="group" aria-label="Camera">${RP_VIEWS.map(([id, label]) =>
           `<button type="button" data-action="rp-view" data-view="${id}" aria-pressed="${id === ui.rp.view}">${label}</button>`).join('')}</div>
         <div class="rp-stage">
-          <canvas class="rp-canvas" role="img" aria-label="Shot replay"></canvas>
+          <canvas class="rp-canvas" role="img" aria-label="Shot replay" data-action="rp-play"></canvas>
           <button type="button" class="rp-big" data-action="rp-play" aria-label="Play this shot">${icon('run')}</button>
         </div>
         <div class="rp-bar">
@@ -1154,6 +1156,10 @@
     rp.idx = ui.rp.idx = Math.max(0, Math.min(rp.list.length - 1, i));
     rp.item = rp.list[rp.idx];
     rp.cur = rpTraj(rp.item);
+    // Keep only this club's drawn backgrounds (each is a full-size picture), and drop
+    // the last shot's own view of the green.
+    if (rp.c && rp.c.club !== rp.item.shot.club) rp.bgs.clear();
+    if (rp.shotGreen) rp.bgs.delete(rp.shotGreen);
     rp.c = rpClub(rp.item.shot.club);
     Object.assign(rp, { shotGreen: null, t: 0, phase: 'idle', playing: false, autoPaused: false });
     rpInfo();
@@ -1274,7 +1280,7 @@
       kpi({ label: 'To the pin', value: String(Math.round(d)), unit: Math.round(d) === 1 ? 'yd' : 'yds', sub: d < 1 ? 'next to the pin' : onGreen ? `on the green · ${away}` : away }),
       kpi({ label: 'Peak height', value: C.isNum(s.apex_ft) ? C.fmtRaw(s.apex_ft) : '—', unit: C.isNum(s.apex_ft) ? 'ft' : '', sub: [C.isNum(s.launch_deg) ? `launch ${C.fmtRaw(s.launch_deg)}°` : '', C.isNum(s.landing_deg) ? `lands ${C.fmtRaw(s.landing_deg)}°` : ''].filter(Boolean).join(' · ') })
     ].join('');
-    const bend = ftDir(s.curve_ft, 'curved'), side = ftDir(s.offline_ft, 'landed');
+    const bend = ftDir(s.curve_ft, 'curved'), side = ftDir(s.offline_ft, 'finished');
     $('.rp-line', rp.card).textContent = bend && side ? `${cap(bend)} in the air and ${side} of the target line.`
       : bend ? `${cap(bend)} in the air.` : side ? `${cap(side)} of the target line.`
         : C.isNum(s.curve_ft) || C.isNum(s.offline_ft) ? 'Straight down the target line.' : '';
@@ -1345,7 +1351,7 @@
       <div class="filters"><label for="scope">Session</label><select id="scope" data-change="scope">${scopeOptions(sc.id)}</select></div>
       ${sc.id === 'all' && data.sessions.some((s) => C.isSummaryOnly(s)) ? '<p class="note" style="margin-bottom:14px">“All sessions” pools sessions with individual shots. Sessions with ranges only are left out; pick one in the menu to see its ranges.</p>' : ''}
       ${sessionSummary(sc, hl, work)}
-      ${replayCard(replayItems)}
+      ${replayCard(replayItems, sc.id)}
       ${clubs.length ? `<h2 id="clubSection">Club by club</h2>
       <div class="card">
         <div class="chips" role="group" aria-label="Club">${clubChips}</div>

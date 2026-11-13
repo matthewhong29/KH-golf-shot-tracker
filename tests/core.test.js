@@ -421,13 +421,15 @@ const FL = require('../js/flight.js');
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
 const peakOf = (tr) => { let m = 0; for (let i = 0; i <= 2000; i++) m = Math.max(m, tr.at(tr.hang * i / 2000).y); return m; };
 const slopeDeg = (tr, s0, s1) => Math.atan2(tr.height(s1) - tr.height(s0), s1 - s0) * 180 / Math.PI;
+const top3w0 = FL.trajectory({ club: '3w', carry_yds: 65, total_yds: 145, ball_speed_mph: 115, launch_deg: 2, apex_ft: 2, landing_deg: 3, curve_ft: 0, offline_ft: 15 }, { kind: 'wood' });
 const t7 = FL.trajectory({ club: '7i', carry_yds: 125, total_yds: 130, ball_speed_mph: 94, launch_deg: 22, apex_ft: 63, landing_deg: 40, hang_time_s: null, curve_ft: -16, offline_ft: 6 }, { kind: 'iron' });
 ok(near(peakOf(t7) * 3, 63, 0.2), 'peaks at the apex height (63 ft)');
 ok(near(slopeDeg(t7, 0, 0.05), 22, 0.3), 'leaves the ground at the launch angle');
 ok(near(-slopeDeg(t7, 124.95, 125), 40, 0.5), 'comes down at the landing angle');
 ok(t7.apexPoint.z > 0.5 * 125 && t7.apexPoint.z < 0.7 * 125, 'apex a little past halfway');
-eq([Math.round(t7.at(t7.hang).z), t7.land.x, t7.rest.z], [125, 2, 130], 'lands at the carry, 6 ft right (offline) and stops at the total');
-ok(near(t7.at(t7.hang * 0.999999).x, 2, 0.01), 'reaches the offline number as it lands');
+eq([Math.round(t7.at(t7.hang).z), t7.rest.x, t7.rest.z, t7.at(t7.duration).x], [125, 2, 130, 2], 'lands at the carry, then finishes at the total, 6 ft right (offline is where it finished)');
+ok(near(t7.land.x, 2, 0.2), 'the roll moves it only a little sideways');
+ok(near((top3w0.rest.x - top3w0.land.x) / top3w0.roll, 0.6 * (top3w0.lateral(65) - top3w0.lateral(64.99)) / 0.01, 1e-3), 'it rolls on the way it was heading as it landed, a bit straighter');
 ok(near(t7.lateral(125) - 125 * t7.lateral(0.01) / 0.01, -16 / 3, 0.05), 'bends 16 ft left of its start line (curve)');
 ok(t7.samples.every((p, i, a) => !i || p.z > a[i - 1].z), 'always moving away from the tee');
 ok(t7.estimated.join() === 'hang' && t7.hang > 4 && t7.hang < 6, 'no hang time on the screen: estimated from the apex (about 5 s)');
@@ -436,7 +438,7 @@ ok(t7.along(1) > 30 && t7.along(1) < 45, 'first second: about the ball speed (94
 const top3w = FL.trajectory({ club: '3w', carry_yds: 65, total_yds: 145, ball_speed_mph: 115, launch_deg: 2, apex_ft: 2, landing_deg: 3, curve_ft: 0, offline_ft: 15 }, { kind: 'wood' });
 ok(top3w.hang >= 65 / (115 * 1760 / 3600) && peakOf(top3w) * 3 <= 2.01 && top3w.rest.z === 145, 'topped 3 wood: low, never faster than it left the club, runs out to 145');
 const bare = FL.trajectory({ club: 'PW', carry_yds: 90 }, { kind: 'iron' });
-eq(bare.estimated, ['launch', 'apex', 'landing', 'curve', 'offline', 'hang', 'total'], 'only a carry: everything else estimated');
+eq(bare.estimated, ['launch', 'apex', 'landing', 'total', 'curve', 'offline', 'hang'], 'only a carry: everything else estimated');
 ok(near(bare.launch, 30, 1e-9) && near(bare.rest.z, 90 * 1.03, 1e-9) && bare.land.x === 0, 'wedge defaults: 30° launch, 3% roll, on line');
 const back = FL.trajectory({ club: 'SW', carry_yds: 60, total_yds: 57, launch_deg: 34, apex_ft: 50, landing_deg: 50, curve_ft: 0, offline_ft: 0 }, { kind: 'iron' });
 ok(back.rest.z === 57 && back.at(back.duration).z === 57, 'spins back to a total shorter than the carry');
@@ -453,14 +455,16 @@ let flown = 0, wrong = [];
     if (!tr || Math.abs(tr.at(tr.hang).z - x.carry_yds) > 1e-6) bad.push('carry');
     else {
       if (C.isNum(x.total_yds) && Math.abs(tr.rest.z - x.total_yds) > 1e-6) bad.push('total');
-      if (C.isNum(x.offline_ft) && Math.abs(tr.land.x - x.offline_ft / 3) > 1e-6) bad.push('offline');
+      if (C.isNum(x.offline_ft) && (Math.abs(tr.rest.x - x.offline_ft / 3) > 1e-6 || Math.abs(tr.at(tr.duration).x - x.offline_ft / 3) > 1e-6)) bad.push('offline');
+      if (C.isNum(x.curve_ft) && Math.abs(tr.lateral(x.carry_yds) - x.carry_yds * tr.lateral(1e-3) / 1e-3 - x.curve_ft / 3) > 0.01) bad.push('curve');
       if (C.isNum(x.apex_ft) && Math.abs(peakOf(tr) * 3 - x.apex_ft) > Math.max(0.3, 0.01 * x.apex_ft)) bad.push('apex');
       if (!(tr.duration > 0 && tr.duration < 20)) bad.push('time');
+      if (tr.at(tr.duration).phase !== 'rest') bad.push('still moving at the end');
     }
     if (bad.length) wrong.push(`${pid} ${x.id || x.time}: ${bad.join(', ')}`);
   }));
 });
-eq(wrong, [], `every real shot (${flown}) lands at its carry and offline, peaks at its apex, stops at its total`);
+eq(wrong, [], `every real shot (${flown}) lands at its carry, bends by its curve, peaks at its apex, and finishes at its total and offline`);
 // Cameras: from the tee box and from the side the whole flight fits, every point of it;
 // above the green, the ball and the pin.
 const camPts = FL.keyPoints(t7).concat([{ x: 0, y: 0, z: 145 }, { x: -13, y: 0, z: 130 }, { x: 13, y: 0, z: 130 }]);

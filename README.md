@@ -177,11 +177,11 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
 The Stats tab replays each shot from the numbers the range screen gave; nothing extra needs recording. `js/flight.js` does the work:
 
 - **The flight** leaves the tee at the launch angle, peaks at the apex height and comes down at the landing angle, landing at the carry. The apex sits a little past halfway, as drag makes it in a real flight.
-  - Sideways, the ball starts on the line that, with the curve added, lands it at the offline number. Then it hops and rolls out to the total, or spins back when the total is shorter than the carry.
+  - Sideways, it bends by the curve in the air and finishes at the offline number (in the data files, offline is where the ball finished), so "to the pin" left or right always matches the screen. It hops and rolls out to the total, or spins back when the total is shorter than the carry.
   - It leaves at its ball speed and slows the way drag slows it. The time in the air is the hang time, or, when the screen doesn't show one (Toptracer's "All shots" screen doesn't), an estimate from the apex height.
   - Any other number missing from the screen is estimated from the club too, and the hint under the replay lists what was estimated.
 - **The course** is laid out for each club: a 30-yard fairway (the same as the dispersion charts), rough, bunkers, trees and a green. The pin sits where a pure strike with that club finishes, carry plus roll, so "to the pin" shows how close the shot would have been. It's the same course every time for a club.
-- **The cameras:** pick one above the picture. The camera stays put until you pick another; switching mid-shot cuts to it without restarting.
+- **The cameras:** pick one above the picture. The camera stays put until you pick another; switching mid-shot cuts to it without restarting. Tap the picture to play or pause, like a video.
   - **Tee box** (the default): standing at the back of the tee box, 8 yds behind the ball at eye height, looking down the hole the way the golfer sees it. It ends with the carry, the total and the distance to the pin.
   - **Side:** off to the right of the hole and square to it, tee on the left, so the whole arc shows. The peak height is marked once the ball is over the top.
   - **Green:** above the green. The ball drops in, lands and rolls, then a dashed line shows the distance to the pin and where it landed. A shot that finished well away from the green gets its own framing, so it's always in view.
@@ -205,7 +205,7 @@ The tests check:
 - the tips callouts and content;
 - the player registry and data files;
 - the paste parser, against the Toptracer screenshot rows (both whitespace and tab-separated) and a Rapsodo CSV;
-- the shot replay: every real shot in the data files lands at its carry and offline, peaks at its apex and stops at its total; launch and landing angles; estimates for missing numbers; the tee box, side and green cameras keep the shot in view; and drawing runs in every view.
+- the shot replay: every real shot in the data files lands at its carry, bends by its curve, peaks at its apex and finishes at its total and offline; launch and landing angles; estimates for missing numbers; the tee box, side and green cameras keep the shot in view; and drawing runs in every view.
 
 ## Saving goals to GitHub
 

@@ -33,8 +33,9 @@
   // meets the ground at the landing angle, at the carry. The apex sits a little past
   // halfway, more so when the ball comes down much steeper than it went up, as drag
   // makes it in a real flight.
-  // Sideways: the ball starts on the line that, with the curve added, lands it at the
-  // offline number. The bend grows with the square of the distance.
+  // Sideways: offline is where the ball finished (the data files' convention), so the
+  // ball starts on the line that, with the curve in the air (growing with the square of
+  // the distance) and then the roll, finishes it at the offline number.
   // Time: the ball leaves at its ball speed and slows the way drag slows it (speed
   // falling off exponentially), reaching the carry at the hang time. Without a hang
   // time, that's estimated from the apex height.
@@ -74,10 +75,18 @@
       return A * (1 - v * v * (3 - 2 * v)) + tD * (C - sA) * v * v * (1 - v);
     }
 
+    var T = num(shot.total_yds), R;
+    if (T == null) { R = C * (wedge ? 0.03 : kind === 'iron' ? 0.06 : 0.09); est.push('total'); }
+    else R = T - C;
+
+    // The roll carries on 60% of the way the ball was heading as it landed (the slope of
+    // the line below at the carry), so solving for the start line that finishes it at
+    // the offline number: start·(C + 0.6R) + curve·(1 + 1.2R/C) = offline.
     var curve = num(shot.curve_ft), off = num(shot.offline_ft);
     if (curve == null) { curve = 0; est.push('curve'); }
     if (off == null) { off = curve; est.push('offline'); }
-    var cY = curve / 3, oY = off / 3, start = (oY - cY) / C;
+    var cY = curve / 3, oY = off / 3;
+    var start = (oY - cY * (1 + 1.2 * R / C)) / (C + 0.6 * R);
     function lateral(s) { var r = s / C; return start * s + cY * r * r; }
 
     var V = num(shot.ball_speed_mph);
@@ -93,12 +102,8 @@
     function along(t) { return t >= H ? C : k ? C * (1 - Math.exp(-k * t)) / ek : C * t / H; }
     function speed(t) { return k ? C * k * Math.exp(-k * t) / ek : C / H; }
 
-    var T = num(shot.total_yds), R;
-    if (T == null) { R = C * (wedge ? 0.03 : kind === 'iron' ? 0.06 : 0.09); est.push('total'); }
-    else R = T - C;
-    var head = clamp(start + 2 * cY / C, -0.6, 0.6); // which way it's heading as it lands
-    var land = { x: oY, y: 0, z: C };
-    var rest = { x: oY + R * head * 0.6, y: 0, z: C + R };
+    var land = { x: lateral(C), y: 0, z: C };
+    var rest = { x: oY, y: 0, z: C + R };
     var aR = Math.abs(R);
     var rollT = aR < 0.3 ? 0.3 : clamp(2 * aR / Math.max(0.45 * speed(H), 1.5), 0.4, 4);
     var hop = aR < 0.3 ? 0.04 : clamp(0.15 + 0.035 * aR, 0.1, 1.6);
@@ -107,7 +112,7 @@
       if (!(t > 0)) return { x: 0, y: 0, z: 0, phase: 'tee' };
       if (t < H) { var s = along(t); return { x: lateral(s), y: height(s), z: s, phase: 'flight' }; }
       var u = (t - H) / rollT;
-      if (u >= 1) return { x: rest.x, y: 0, z: rest.z, phase: 'rest' };
+      if (u >= 1 || t >= H + rollT) return { x: rest.x, y: 0, z: rest.z, phase: 'rest' };
       var d = 1 - (1 - u) * (1 - u), y = 0, z = C + R * d;
       if (u < 0.36) { var a = u / 0.36; y = hop * 4 * a * (1 - a); }
       else if (u < 0.58) { var b = (u - 0.36) / 0.22; y = hop * 1.2 * b * (1 - b); }
@@ -395,7 +400,7 @@
       ctx.lineWidth = 1.5;
       ctx.stroke();
     });
-    drawMarkers(ctx, cam, c);
+    var labels = drawMarkers(ctx, cam, c);
 
     // Trees and the flag, farthest first so nearer ones overlap them. A camera off to the
     // side of the hole leaves out the trees between it and the hole, which would hide it.
@@ -407,6 +412,7 @@
     if (flag) things.push({ flag: true, q: flag });
     things.sort(function (a, b) { return b.q.z - a.q.z; });
     things.forEach(function (o) { if (o.flag) drawFlag(ctx, cam, c); else drawTree(ctx, cam, o.t, o.q); });
+    if (cam.pitch > -40 * DEG) drawMarkerLabels(ctx, labels); // from above the green, the labels there say the distances
   }
   function drawTree(ctx, cam, t, base) {
     var top = project(cam, t.x, t.h, t.z);
@@ -452,12 +458,10 @@
     ctx.closePath();
     ctx.fill();
   }
-  // White posts beside the fairway every 50 yds, numbered when there's room.
+  // White posts beside the fairway every 50 yds. Returns where their numbers go; those
+  // are drawn after the trees, so a tree never hides one.
   function drawMarkers(ctx, cam, c) {
-    var used = [];
-    ctx.font = FONT;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'alphabetic';
+    var labels = [];
     c.markers.forEach(function (d) {
       var b = project(cam, -c.half - 2.5, 0, d);
       if (!b || b.x < 30 || b.x > cam.w || b.y < 20 || b.y > cam.h) return;
@@ -465,13 +469,21 @@
       ctx.fillStyle = COL.post;
       ctx.fillRect(b.x - 1.5, b.y - len, 3, len);
       var ty = b.y - 1;
-      if (used.some(function (u) { return Math.abs(u.y - ty) < 18 && Math.abs(u.x - b.x) < 48; })) return;
-      used.push({ x: b.x, y: ty });
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.strokeText(String(d), b.x - 5, ty);
+      if (!labels.some(function (u) { return Math.abs(u.y - ty) < 18 && Math.abs(u.x - b.x) < 48; })) labels.push({ x: b.x - 5, y: ty, text: String(d) });
+    });
+    return labels;
+  }
+  function drawMarkerLabels(ctx, labels) {
+    ctx.font = FONT;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'alphabetic';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+    labels.forEach(function (l) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.strokeText(l.text, l.x, l.y);
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(String(d), b.x - 5, ty);
+      ctx.fillText(l.text, l.x, l.y);
     });
   }
   function strokePath(ctx, pts, color, width) {
@@ -548,7 +560,7 @@
       } else if (pin) box = pill(ctx, cam, rest.x, rest.y - 30, 'Next to the pin');
       if (box) boxes.push(box);
       var lq = project(cam, tr.land.x, 0, tr.land.z);
-      if (lq && Math.abs(tr.roll) >= 3) pill(ctx, cam, lq.x, Math.max(lq.y, rest.y) + 52, 'Landed at ' + Math.round(tr.carry), boxes);
+      if (lq && Math.abs(tr.roll) >= 3) pill(ctx, cam, lq.x, Math.max(lq.y, rest.y) + 52, 'Landed at ' + yds(tr.carry), boxes);
       return;
     }
   }
@@ -566,16 +578,17 @@
   }
   function drawHud(ctx, cam, lines) {
     ctx.font = FONT;
-    lines.forEach(function (text, i) {
+    return lines.map(function (text, i) {
       var pw = Math.ceil(ctx.measureText(text).width) + 20;
-      pill(ctx, cam, 10 + pw / 2, 48 + i * 34, text);
+      return pill(ctx, cam, 10 + pw / 2, 48 + i * 34, text);
     });
   }
   // From the side, the peak height is labelled once the ball has been over the top.
-  function drawApex(ctx, cam, tr, t) {
+  // Above the apex, or just under it when the corner readout is in the way.
+  function drawApex(ctx, cam, tr, t, avoid) {
     if (t < tr.apexT || tr.apex * 3 < 6) return;
-    var q = project(cam, tr.apexPoint.x, tr.apexPoint.y, tr.apexPoint.z);
-    if (q) pill(ctx, cam, q.x, q.y - 4, Math.round(tr.apex * 3) + ' ft');
+    var q = project(cam, tr.apexPoint.x, tr.apexPoint.y, tr.apexPoint.z), text = Math.round(tr.apex * 3) + ' ft';
+    if (q && !pill(ctx, cam, q.x, q.y - 4, text, avoid)) pill(ctx, cam, q.x, q.y + 46, text, avoid);
   }
   var VIEWS = ['tee', 'side', 'green'];
   // One frame. o: { cam, view: 'tee' | 'side' | 'green', course, bg (the course already
@@ -588,10 +601,10 @@
     (o.past || []).forEach(function (p) { drawShot(ctx, cam, p, p.duration, true); });
     if (!tr) return;
     drawShot(ctx, cam, tr, t, false);
-    var done = t >= tr.duration;
-    if (o.view === 'side') drawApex(ctx, cam, tr, t);
+    var done = t >= tr.duration, hud = [];
     if (o.view === 'green' && done) drawResult(ctx, cam, tr, o.course, 'overhead');
-    if (o.hud !== false && !(o.view === 'green' && done)) drawHud(ctx, cam, hudLines(tr, t, o.course, o.view));
+    else if (o.hud !== false) hud = drawHud(ctx, cam, hudLines(tr, t, o.course, o.view));
+    if (o.view === 'side') drawApex(ctx, cam, tr, t, hud);
   }
 
   return {
