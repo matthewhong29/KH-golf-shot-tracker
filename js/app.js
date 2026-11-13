@@ -286,9 +286,15 @@
   function svg(w, h, label, body) {
     return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}">${body}</svg>`;
   }
-  function dotMark(cx, cy, r, tip, mis) {
-    return `<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}"><circle class="dot${mis ? ' mis' : ''}" cx="${f1(cx)}" cy="${f1(cy)}" r="${r}"/><circle class="hit" cx="${f1(cx)}" cy="${f1(cy)}" r="14"/></g>`;
+  // kind: '' (counts in the numbers), 'mis' (likely mis-hit: hollow) or 'out' (outlier: ringed).
+  function dotMark(cx, cy, r, tip, kind) {
+    const ring = kind === 'out' ? `<circle class="ring" cx="${f1(cx)}" cy="${f1(cy)}" r="${r + 4}"/>` : '';
+    return `<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}">${ring}<circle class="dot${kind ? ' ' + kind : ''}" cx="${f1(cx)}" cy="${f1(cy)}" r="${r}"/><circle class="hit" cx="${f1(cx)}" cy="${f1(cy)}" r="14"/></g>`;
   }
+  // How a shot counts: 'mis', 'out' or ''.
+  function shotKind(entry, s) { return entry.mis.indexOf(s) >= 0 ? 'mis' : (entry.outliers || []).indexOf(s) >= 0 ? 'out' : ''; }
+  // "2 mis-hits and 1 outlier"; '' when none.
+  function leftOut(nMis, nOut, sep) { return [nMis ? plural(nMis, 'mis-hit') : '', nOut ? plural(nOut, 'outlier') : ''].filter(Boolean).join(sep || ' and '); }
   function rangeMark(x0, x1, cy, tip) {
     return `<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}"><rect class="rng" x="${f1(x0)}" y="${f1(cy - 5)}" width="${f1(Math.max(10, x1 - x0))}" height="10" rx="5"/><rect class="hit" x="${f1(x0 - 6)}" y="${f1(cy - 14)}" width="${f1(x1 - x0 + 12)}" height="28"/></g>`;
   }
@@ -305,22 +311,35 @@
     });
     return out;
   }
-  function shotTip(s, mis) {
+  function shotTip(s, kind) {
     return tipAttr([
       `${C.fmtRaw(s.carry_yds)} yds carry` + (C.isNum(s.offline_ft) ? ` · ${dirU(s.offline_ft, 'ft')} (${dirU(s.offline_ft / 3, 'yds', 1)})` : ''),
       [s.club, s.time].filter(Boolean).join(' · '),
-      mis ? 'Likely thin or topped, left out of the numbers' : ''
+      kind === 'mis' ? 'Likely thin or topped, left out of the numbers'
+        : kind === 'out' ? 'Outlier: far off the usual carry, left out of the numbers but still solid contact' : ''
     ]);
   }
 
-  // Carry gapping: a row per club (label above, so the bar gets the full width).
-  function drawGap(el, entries, clubs) {
+  // True when a row label runs into the value at the other end of its line.
+  function labelsCollide(el) {
+    const s = el.querySelector('svg');
+    if (!s || !s.getBBox) return false;
+    const vals = $$('text.val, text.sub', s).map((v) => v.getBBox());
+    return $$('text.rowlbl', s).some((l) => {
+      const a = l.getBBox();
+      return vals.some((b) => Math.abs(b.y - a.y) < 6 && a.x + a.width + 12 > b.x);
+    });
+  }
+  // Carry gapping: a row per club (label above, so the bar gets the full width). When a
+  // club name would run into its numbers (long names on small phones), the numbers get
+  // their own line.
+  function drawGap(el, entries, clubs, twoLine) {
     const rows = clubs.map((c) => {
       const e = entries[c];
-      return { club: c, e, st: C.metricStat(e, 'carry_yds'), pts: e.shots.filter((s) => C.isNum(s.carry_yds)), mis: new Set(e.mis) };
+      return { club: c, e, st: C.metricStat(e, 'carry_yds'), pts: e.shots.filter((s) => C.isNum(s.carry_yds)) };
     }).filter((r) => r.pts.length || (r.st && C.isNum(r.st.min)));
     if (!rows.length) { el.innerHTML = '<p class="empty">No carry data in this session.</p>'; return; }
-    const W = chartWidth(el), rowH = 94, top = 2, axisH = 32, padL = 16, padR = 20;
+    const W = chartWidth(el), rowH = twoLine ? 116 : 94, top = 2, axisH = 32, padL = 16, padR = 20;
     const H = top + rows.length * rowH + axisH;
     const vals = [];
     rows.forEach((r) => { r.pts.forEach((s) => vals.push(s.carry_yds)); if (r.st && C.isNum(r.st.min)) vals.push(r.st.min, r.st.max); });
@@ -330,35 +349,35 @@
     t.ticks.forEach((v) => { g.push(line('grid', x(v), top, x(v), H - axisH)); g.push(text('tick', x(v), H - 10, C.fmtRaw(v), 'middle')); });
     let prev = null;
     rows.forEach((r, i) => {
-      const y0 = top + i * rowH, ty = y0 + 22, cy = y0 + 62;
+      const y0 = top + i * rowH, ty = y0 + 22, tv = twoLine ? y0 + 46 : ty, cy = twoLine ? y0 + 84 : y0 + 62;
       g.push(text('rowlbl', padL, ty, r.club));
       if (r.st && C.isNum(r.st.avg)) {
         const gap = prev != null ? `${C.fmtSigned(r.st.avg - prev, 1)} gap` : '';
-        g.push(`<text class="val" x="${f1(W - padR)}" y="${f1(ty)}" text-anchor="end">${esc(C.fmtNum(r.st.avg, 1))} yds${gap ? `<tspan class="sub"> · ${esc(gap)}</tspan>` : ''}</text>`);
+        g.push(`<text class="val" x="${f1(W - padR)}" y="${f1(tv)}" text-anchor="end">${esc(C.fmtNum(r.st.avg, 1))} yds${gap ? `<tspan class="sub"> · ${esc(gap)}</tspan>` : ''}</text>`);
         prev = r.st.avg;
       } else if (r.st && r.st.allMis) {
-        g.push(text('sub', W - padR, ty, `all ${r.st.total} were mis-hits`, 'end'));
+        g.push(text('sub', W - padR, tv, `all ${r.st.total} were mis-hits`, 'end'));
       } else {
-        g.push(text('sub', W - padR, ty, 'recorded range', 'end'));
+        g.push(text('sub', W - padR, tv, 'recorded range', 'end'));
       }
       if (r.st && C.isNum(r.st.min) && C.isNum(r.st.max)) {
         g.push(rangeMark(x(r.st.min), x(r.st.max), cy, tipAttr([`${C.fmtRange(r.st.min, r.st.max)} yds`,
           `${r.club} carry range` + (r.st.summaryOnly ? ' (recorded, includes any topped shots)' : ` · ${plural(r.st.n, 'solid shot')}`)])));
       }
       const dys = swarm(r.pts.map((s) => x(s.carry_yds)), 6);
-      r.pts.forEach((s, k) => { const mis = r.mis.has(s); g.push(dotMark(x(s.carry_yds), cy + dys[k], 6, shotTip(s, mis), mis)); });
+      r.pts.forEach((s, k) => { const kind = shotKind(r.e, s); g.push(dotMark(x(s.carry_yds), cy + dys[k], 6, shotTip(s, kind), kind)); });
       if (r.st && C.isNum(r.st.avg)) {
         const xa = x(r.st.avg);
         g.push(line('halo', xa, cy - 17, xa, cy + 17), line('avg', xa, cy - 17, xa, cy + 17));
       }
     });
     el.innerHTML = svg(W, H, 'Carry by club: range and average of solid shots, plus every shot', g.join(''));
+    if (!twoLine && labelsCollide(el)) drawGap(el, entries, clubs, true);
   }
 
   // Dispersion. Offline is converted from feet to yards so both axes share one scale.
   function dispPoints(entry) {
-    const mis = new Set(entry.mis);
-    return entry.shots.filter((s) => C.isNum(s.offline_ft) && C.isNum(s.carry_yds)).map((s) => ({ s, x: s.offline_ft / 3, y: s.carry_yds, mis: mis.has(s) }));
+    return entry.shots.filter((s) => C.isNum(s.offline_ft) && C.isNum(s.carry_yds)).map((s) => ({ s, x: s.offline_ft / 3, y: s.carry_yds, kind: shotKind(entry, s) }));
   }
   function dispBody(pts, o) {
     const sx = (v) => o.padL + (v + o.xMax) * o.k;
@@ -378,8 +397,8 @@
       g.push(text('tick', o.padL - 7, sy(v) + 5, C.fmtRaw(v), 'end'));
     });
     g.push(line('target', sx(0), o.padT, sx(0), plotB));
-    pts.forEach((p) => g.push(dotMark(sx(p.x), sy(p.y), 6, shotTip(p.s, p.mis), p.mis)));
-    const solid = pts.filter((p) => !p.mis);
+    pts.forEach((p) => g.push(dotMark(sx(p.x), sy(p.y), 6, shotTip(p.s, p.kind), p.kind)));
+    const solid = pts.filter((p) => !p.kind);
     if (solid.length >= 2) {
       const mx = solid.reduce((a, p) => a + p.x, 0) / solid.length, my = solid.reduce((a, p) => a + p.y, 0) / solid.length;
       const cx = sx(mx), cy = sy(my), a = 10;
@@ -411,9 +430,9 @@
     const items = clubs.map((c) => ({ c, e: entries[c], pts: dispPoints(entries[c]) })).filter((i) => i.pts.length);
     box.innerHTML = items.map((i) => {
       const car = C.summarize(i.e.solid, 'carry_yds'), off = C.summarize(i.e.solid, 'offline_ft');
-      const nm = i.e.mis.length;
+      const left = leftOut(i.e.mis.length, i.e.outliers.length, ', ');
       const nums = car.n ? ` · ${C.fmtNum(car.avg, 1)} yds · ${dirU(off.avg / 3, 'yds', 1)}` : ' · all mis-hits';
-      return `<div class="facet"><h4>${esc(i.c)}</h4><div class="fmeta">${plural(i.e.shots.length, 'shot')}${nm ? ` (${plural(nm, 'mis-hit')})` : ''}${esc(nums)}</div><div class="chart" data-facet="${esc(i.c)}"></div></div>`;
+      return `<div class="facet"><h4>${esc(i.c)}</h4><div class="fmeta">${plural(i.e.shots.length, 'shot')}${left ? ` (${left})` : ''}${esc(nums)}</div><div class="chart" data-facet="${esc(i.c)}"></div></div>`;
     }).join('');
     if (!items.length) return;
     const fw = chartWidth($('[data-facet]', box), 200), padL = 44, padR = 22, padT = 10, padB = 34;
@@ -457,9 +476,9 @@
           ? `M${f1(cx)} ${f1(y0)}H${f1(x1 - rr)}Q${f1(x1)} ${f1(y0)} ${f1(x1)} ${f1(y0 + rr)}V${f1(y1 - rr)}Q${f1(x1)} ${f1(y1)} ${f1(x1 - rr)} ${f1(y1)}H${f1(cx)}Z`
           : `M${f1(cx)} ${f1(y0)}H${f1(x1 + rr)}Q${f1(x1)} ${f1(y0)} ${f1(x1)} ${f1(y0 + rr)}V${f1(y1 - rr)}Q${f1(x1)} ${f1(y1)} ${f1(x1 + rr)} ${f1(y1)}H${f1(cx)}Z`;
       }
-      const nm = r.e.mis.filter((s) => C.isNum(s.offline_ft)).length;
+      const left = leftOut(r.e.mis.filter((s) => C.isNum(s.offline_ft)).length, r.e.outliers.filter((s) => C.isNum(s.offline_ft)).length);
       const tip = tipAttr([`${dirU(v, 'yds', 1)} (${dirU(r.st.avg, 'ft', 1)})`, `${r.club} average miss · ${plural(r.st.n, 'solid shot')}`,
-        `Range ${C.fmtRange(r.st.min, r.st.max, true)} ft`, nm ? `Leaves out ${plural(nm, 'mis-hit')}` : '']);
+        `Range ${C.fmtRange(r.st.min, r.st.max, true)} ft`, left ? `Leaves out ${left}` : '']);
       g.push(text('rowlbl', padL - 12, cy + 6, r.club, 'end'));
       g.push(`<g class="pt" tabindex="0" data-tip="${tip}" aria-label="${tip}">${path ? `<path class="bar" d="${path}"/>` : ''}<rect class="hit" x="${f1(Math.min(cx, x1) - 6)}" y="${f1(cy - 15)}" width="${f1(w + 12)}" height="30"/></g>`);
       if (flagged.has(r.club)) {
@@ -503,14 +522,15 @@
       let value, sub;
       if (solidMode) {
         value = row.p == null ? 'unknown' : C.roundHalfEven(row.p, 0) + '%';
-        sub = row.p == null ? 'ranges only' : `${e.solid.length} of ${plural(e.shots.length, 'shot')}`;
+        sub = row.p == null ? 'ranges only' : `${C.solidCount(e)} of ${plural(e.shots.length, 'shot')}`;
         if (row.p != null) {
-          g.push(rangeMark(x(0), x(row.p), cy, tipAttr([`${C.roundHalfEven(row.p, 0)}% solid contact`, `${e.solid.length} of ${plural(e.shots.length, 'shot')} · ${C.fmtDate(s.date)}`])));
+          g.push(rangeMark(x(0), x(row.p), cy, tipAttr([`${C.roundHalfEven(row.p, 0)}% solid contact`, `${C.solidCount(e)} of ${plural(e.shots.length, 'shot')} · ${C.fmtDate(s.date)}`])));
           g.push(dotMark(x(row.p), cy, 6, tipAttr([`${C.roundHalfEven(row.p, 0)}% solid contact`, C.fmtDate(s.date)]), false));
         }
       } else {
         value = st.allMis ? '—' : C.isNum(st.avg) ? withUnit(m, st.avg) : C.fmtRange(st.min, st.max, m.dir);
-        sub = st.allMis ? `all ${st.total} were mis-hits` : st.summaryOnly ? 'recorded range' : e.mis.length ? `${st.n} solid of ${e.shots.length}` : plural(st.n, 'shot');
+        sub = st.allMis ? `all ${st.total} were mis-hits` : st.summaryOnly ? 'recorded range'
+          : e.outliers.length ? `${st.n} of ${plural(e.shots.length, 'shot')}` : e.mis.length ? `${st.n} solid of ${e.shots.length}` : plural(st.n, 'shot');
         if (C.isNum(st.min) && C.isNum(st.max)) {
           g.push(rangeMark(x(st.min), x(st.max), cy, tipAttr([`${C.fmtRange(st.min, st.max, m.dir)} ${m.dir ? 'ft' : m.unit}`.trim(),
             `${m.label} range · ${C.fmtDate(s.date)}` + (st.summaryOnly ? ' (includes any topped shots)' : '')])));
@@ -787,7 +807,7 @@
     const shotsRow = `<tr><th scope="row">Shots</th>${clubs.map((c) => {
       const e = entries[c];
       if (!e.shots.length) return '<td><span class="v">—</span><span class="n">ranges only</span></td>';
-      return `<td><span class="v">${e.shots.length}</span>${e.mis.length ? `<span class="n">${plural(e.mis.length, 'mis-hit')}</span>` : ''}</td>`;
+      return `<td><span class="v">${e.shots.length}</span>${e.mis.length ? `<span class="n">${plural(e.mis.length, 'mis-hit')}</span>` : ''}${e.outliers.length ? `<span class="n">${plural(e.outliers.length, 'outlier')}</span>` : ''}</td>`;
     }).join('')}</tr>`;
     const rows = [shotsRow], missing = [];
     C.METRICS.forEach((m) => {
@@ -795,10 +815,11 @@
       if (stats.every((s) => !s)) { missing.push(m.label.toLowerCase()); return; }
       rows.push(`<tr><th scope="row">${esc(m.label)}${m.unit ? `<span class="u">${esc(unitLabel(m))}</span>` : ''}</th>${stats.map((s) => cellHtml(m, s)).join('')}</tr>`);
     });
-    const anyMis = clubs.some((c) => entries[c].mis.length);
+    const anyMis = clubs.some((c) => entries[c].mis.length), anyOut = clubs.some((c) => entries[c].outliers.length);
+    const leftOutText = [anyMis ? 'likely mis-hits (the hollow dots on the charts)' : '', anyOut ? 'outliers (the ringed dots)' : ''].filter(Boolean).join(' and ');
     const swipe = clubs.length > 2 ? `<p class="swipe-hint">Swipe the table sideways to see all ${clubs.length} clubs →</p>` : '';
     return `${swipe}<div class="table-wrap"><table class="matrix">${head}<tbody>${rows.join('')}</tbody></table></div>
-      <p class="hint">Each cell shows the average, then lowest–highest. ${anyMis ? 'Averages and ranges leave out likely mis-hits (the hollow dots on the charts). ' : ''}“3 of 9” means only some ${anyMis ? 'solid ' : ''}shots had that number. Curve and offline are in feet; L = left, R = right.${missing.length ? ' Not measured: ' + esc(missing.join(', ')) + '.' : ''}</p>`;
+      <p class="hint">Each cell shows the average, then lowest–highest. ${leftOutText ? `Averages and ranges leave out ${leftOutText}. ` : ''}“3 of 9” means only some ${anyMis || anyOut ? 'solid ' : ''}shots had that number. Curve and offline are in feet; L = left, R = right.${missing.length ? ' Not measured: ' + esc(missing.join(', ')) + '.' : ''}</p>`;
   }
   // ----- One club at a time: goals, "needs work" and plain-language numbers -----
   const PLAIN = {
@@ -859,13 +880,16 @@
     const flags = C.needsWork(e);
     const flagKeys = new Set(flags.map((f) => f.key));
     const G = C.clubGoals(e, club, data.equipment);
+    const nMis = e.mis.length, nOut = e.outliers.length;
     const shotsLine = !e.shots.length ? 'Ranges only; individual shots weren’t recorded.'
-      : e.mis.length ? `${plural(e.shots.length, 'shot')}: ${e.solid.length} solid, ${plural(e.mis.length, 'likely mis-hit')} (left out of the numbers)`
-        : `${plural(e.shots.length, 'shot')}, all solid`;
+      : (nMis ? `${plural(e.shots.length, 'shot')}: ${C.solidCount(e)} solid, ${plural(nMis, 'likely mis-hit')}` : `${plural(e.shots.length, 'shot')}, all solid`)
+        + (nMis && nOut ? ` (the mis-hit${nMis > 1 ? 's' : ''} and ${plural(nOut, 'outlier')} are left out of the numbers)`
+          : nMis ? ' (left out of the numbers)'
+            : nOut ? `; ${plural(nOut, 'outlier')}, far off the usual carry, ${nOut > 1 ? 'are' : 'is'} left out of the numbers` : '');
     const rows = [];
     if (e.shots.length) {
       rows.push(statRow(PLAIN.solid_pct[0], PLAIN.solid_pct[1], C.roundHalfEven(C.solidPct(e), 0) + '%',
-        `${e.solid.length} of ${plural(e.shots.length, 'shot')}`, flagKeys.has('solid_pct')));
+        `${C.solidCount(e)} of ${plural(e.shots.length, 'shot')}`, flagKeys.has('solid_pct')));
     }
     C.METRICS.forEach((m) => {
       const s = C.metricStat(e, m.key);
@@ -889,7 +913,7 @@
       const t = [];
       if (car && C.isNum(car.avg)) t.push(kpi({ label: 'Average carry', value: C.fmtNum(car.avg, 1), unit: 'yds', sub: `range ${C.fmtRange(car.min, car.max)}\u00a0yds`, flag: flagKeys.has('carry_yds') }));
       if (ref) t.push(kpi({ label: 'Pure strike', value: String(ref.carry), unit: 'yds', sub: `from your best ${plural(ref.n, 'shot')}` }));
-      t.push(kpi({ label: 'Solid contact', value: C.roundHalfEven(sp, 0) + '%', meter: sp, sub: `${e.solid.length} of ${e.shots.length}`, flag: flagKeys.has('solid_pct') }));
+      t.push(kpi({ label: 'Solid contact', value: C.roundHalfEven(sp, 0) + '%', meter: sp, sub: `${C.solidCount(e)} of ${e.shots.length}`, flag: flagKeys.has('solid_pct') }));
       if (off && C.isNum(off.avg)) {
         const d = dirSplit(off.avg / 3, 'yds', 1);
         t.push(kpi({ label: 'Average miss', value: d.value, unit: d.unit, sub: `${dirU(off.avg, 'ft', 1)} on the screen`, flag: flagKeys.has('offline_ft') }));
@@ -912,7 +936,7 @@
       ${goals}
       <h4 class="cc-sub">The numbers</h4>
       <dl class="stat-list">${rows.join('')}</dl>
-      <p class="hint">Averages and ranges leave out likely mis-hits. Curve and offline are in feet; L = left, R = right.</p>
+      <p class="hint">Averages and ranges leave out likely mis-hits${nOut ? ' and outliers (shots far off the usual carry, which still count as solid contact)' : ''}. Curve and offline are in feet; L = left, R = right.</p>
     </div>`;
   }
   function workBox(work) {
@@ -940,8 +964,13 @@
   }
   // The session at a glance: big numbers, then what needs work, then the highlights.
   function sessionSummary(sc, hl, work) {
-    const isAll = sc.id === 'all', shots = [], mis = new Set();
-    sc.sessions.forEach((s) => { C.sessionShots(s).forEach((x) => shots.push(x)); C.sessionMishits([s]).forEach((x) => mis.add(x)); });
+    const isAll = sc.id === 'all', shots = [], mis = new Set(), odd = new Set();
+    sc.sessions.forEach((s) => {
+      C.sessionShots(s).forEach((x) => shots.push(x));
+      C.sessionMishits([s]).forEach((x) => mis.add(x));
+      C.sessionOutliers([s]).forEach((x) => odd.add(x));
+    });
+    // Solid contact and on line count outliers; the longest carry leaves them out.
     const solid = shots.filter((x) => !mis.has(x));
     const tiles = [], skip = new Set(['work']);
     if (shots.length) {
@@ -955,7 +984,7 @@
         const on = off.filter((x) => Math.abs(x.offline_ft) <= C.GOALS.lineFt).length, lp = on / off.length * 100;
         tiles.push(kpi({ label: 'On line', value: C.roundHalfEven(lp, 0) + '%', meter: lp, sub: `${on} of ${off.length} within 10 yds`, delta: prev && prev.linePct != null ? pctDelta(lp, prev.linePct, prev.session) : null }));
       }
-      const carried = solid.filter((x) => C.isNum(x.carry_yds));
+      const carried = solid.filter((x) => C.isNum(x.carry_yds) && !odd.has(x));
       if (carried.length) {
         const best = carried.reduce((a, b) => (b.carry_yds > a.carry_yds ? b : a));
         tiles.push(kpi({ label: 'Longest carry', value: C.fmtRaw(best.carry_yds), unit: 'yds', sub: C.clubName(best.club, data.clubs) }));
@@ -984,7 +1013,7 @@
     const single = dispClubs.length === 1 ? dispClubs[0] : (ui.dispClub !== 'All' ? ui.dispClub : null);
     const missRows = clubs.map((c) => ({ club: c, e: entries[c], st: C.summarize(entries[c].solid, 'offline_ft') })).filter((r) => r.st.n);
     const notes = sc.session ? C.asList(sc.session.coaching_notes) : [];
-    const hasMis = clubs.some((c) => entries[c].mis.length);
+    const hasMis = clubs.some((c) => entries[c].mis.length), hasOut = clubs.some((c) => entries[c].outliers.length);
     const flagsBy = {};
     clubs.forEach((c) => { flagsBy[c] = C.needsWork(entries[c]); });
     if (!ui.statClub || clubs.indexOf(ui.statClub) < 0) ui.statClub = clubs[0];
@@ -1004,7 +1033,7 @@
         const spread = C.isNum(off.min) ? off.max - off.min : null;
         const miss = dirSplit(off.avg / 3, 'yds', 1);
         inner = `<div class="kpis four">
-            ${kpi({ label: 'Shots', value: String(e.shots.length), sub: e.mis.length ? `${e.solid.length} solid · ${plural(e.mis.length, 'mis-hit')}` : C.clubName(single, data.clubs) })}
+            ${kpi({ label: 'Shots', value: String(e.shots.length), sub: [e.mis.length ? `${C.solidCount(e)} solid · ${plural(e.mis.length, 'mis-hit')}` : '', e.outliers.length ? plural(e.outliers.length, 'outlier') : ''].filter(Boolean).join(' · ') || C.clubName(single, data.clubs) })}
             ${kpi({ label: 'Average carry', value: car.n ? C.fmtNum(car.avg, 1) : '—', unit: car.n ? 'yds' : '', sub: car.n ? `${C.fmtRange(car.min, car.max)} yds` : 'all mis-hits' })}
             ${kpi({ label: 'Average miss', value: miss.value, unit: miss.unit, sub: C.isNum(off.avg) ? `${dirU(off.avg, 'ft', 1)} on the screen` : '' })}
             ${kpi({ label: 'Left to right spread', value: C.isNum(spread) ? C.fmtNum(spread / 3, 1) : '—', unit: C.isNum(spread) ? 'yds' : '', sub: C.isNum(spread) ? `${C.fmtRange(off.min, off.max, true)} ft` : '' })}
@@ -1013,12 +1042,12 @@
         inner = '<div class="facets" id="facets"></div>';
       }
       const shotsForTable = single ? entries[single].shots : [].concat(...clubs.map((c) => entries[c].shots));
-      const misSet = new Set([].concat(...clubs.map((c) => entries[c].mis)));
+      const misSet = new Set([].concat(...clubs.map((c) => entries[c].mis))), outSet = new Set([].concat(...clubs.map((c) => entries[c].outliers)));
       disp = `<h2>Dispersion</h2><div class="card">
         ${dispClubs.length > 1 ? `<div class="chips" role="group" aria-label="Club">${['All'].concat(dispClubs).map((c) => `<button class="chip" data-action="disp-club" data-club="${esc(c)}" aria-pressed="${c === (single || 'All')}">${c === 'All' ? 'All clubs' : esc(c)}</button>`).join('')}</div>` : ''}
         ${inner}
-        <p class="hint">${single ? '' : 'Each panel is one club, all drawn to the same scale. '}Up is carry in yards; across is yards left or right of the target line. The cross is the average of solid shots. The grey band is a 30-yard-wide fairway.${hasMis ? ' Hollow dots are likely mis-hits.' : ''}</p>
-        <details class="more"><summary>Show as a table</summary>${shotTable(shotsForTable, misSet)}</details>
+        <p class="hint">${single ? '' : 'Each panel is one club, all drawn to the same scale. '}Up is carry in yards; across is yards left or right of the target line. The cross is the average of solid shots${hasOut ? ', leaving out outliers' : ''}. The grey band is a 30-yard-wide fairway.${hasMis ? ' Hollow dots are likely mis-hits.' : ''}${hasOut ? ' Ringed dots are outliers: solid, but far off the usual carry.' : ''}</p>
+        <details class="more"><summary>Show as a table</summary>${shotTable(shotsForTable, misSet, outSet)}</details>
       </div>`;
     }
 
@@ -1035,9 +1064,11 @@
       </div>` : ''}
       <h2>Carry gapping</h2>
       <div class="card"><div class="chart" id="gapChart"></div>
-        <p class="hint">Carry in yards. Bar: shortest to longest solid shot. Black line and number: average of solid shots. Dots: every shot${hasMis ? ' (hollow = likely mis-hit, left out of the numbers)' : ''}. “Gap” is the change from the next-shorter club.</p></div>
+        <p class="hint">Carry in yards. Bar: shortest to longest solid shot. Black line and number: average of solid shots. Dots: every shot${hasMis && hasOut ? ' (hollow = likely mis-hit; ringed = outlier, solid but far off the usual carry; both are left out of the numbers)'
+          : hasMis ? ' (hollow = likely mis-hit, left out of the numbers)'
+            : hasOut ? ' (ringed = outlier, solid but far off the usual carry, left out of the numbers)' : ''}. “Gap” is the change from the next-shorter club.</p></div>
       ${disp}
-      ${missRows.length >= 2 ? `<h2>Average miss by club</h2><div class="card"><div class="chart" id="missChart"></div><p class="hint">Average offline of solid shots, in yards. Bars to the right are misses right of the target line.${missRows.some((r) => dirFlagged.has(r.club)) ? ` Clubs marked “needs work” average ${C.NEEDS_WORK.missYds} yds or more off line.` : ''}</p></div>` : ''}
+      ${missRows.length >= 2 ? `<h2>Average miss by club</h2><div class="card"><div class="chart" id="missChart"></div><p class="hint">Average offline of solid shots${hasOut ? ' (outliers left out)' : ''}, in yards. Bars to the right are misses right of the target line.${missRows.some((r) => dirFlagged.has(r.club)) ? ` Clubs marked “needs work” average ${C.NEEDS_WORK.missYds} yds or more off line.` : ''}</p></div>` : ''}
       ${sc.session ? `<h2>Coaching notes</h2><div class="card">${notes.length ? `<ul class="plain">${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '<p class="empty">No coaching notes for this session.</p>'}
         <div class="row-actions"><button class="btn small ghost" data-action="goto-notes" data-id="${esc(sc.session.id)}">${notes.length ? 'Edit notes' : 'Add notes'}</button></div></div>` : ''}
     `;
@@ -1046,11 +1077,11 @@
     if ($('#facets')) drawFacets($('#facets'), entries, dispClubs);
     if ($('#missChart')) drawMiss($('#missChart'), missRows, dirFlagged);
   }
-  function shotTable(shots, misSet) {
+  function shotTable(shots, misSet, outSet) {
     const rows = C.sortClubs(Array.from(new Set(shots.map((s) => s.club)))).map((c) => shots.filter((s) => s.club === c))
       .reduce((a, b) => a.concat(b), [])
       .filter((s) => C.isNum(s.carry_yds) || C.isNum(s.offline_ft))
-      .map((s) => `<tr><td>${esc(s.club)}</td><td>${esc(s.time || '')}</td><td>${C.fmtRaw(s.carry_yds)}</td><td>${esc(C.fmtRawDir(s.offline_ft))}</td><td>${esc(C.fmtRawDir(s.curve_ft))}</td><td>${misSet.has(s) ? 'mis-hit' : ''}</td></tr>`);
+      .map((s) => `<tr><td>${esc(s.club)}</td><td>${esc(s.time || '')}</td><td>${C.fmtRaw(s.carry_yds)}</td><td>${esc(C.fmtRawDir(s.offline_ft))}</td><td>${esc(C.fmtRawDir(s.curve_ft))}</td><td>${misSet.has(s) ? 'mis-hit' : outSet && outSet.has(s) ? 'outlier' : ''}</td></tr>`);
     return `<div class="table-wrap"><table class="matrix"><thead><tr><th>Club</th><th>Time</th><th>Carry yds</th><th>Offline ft</th><th>Curve ft</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
   }
 
@@ -1089,7 +1120,7 @@
     const lb = (word, r) => `${word} · ${C.fmtDate(r.session.date, { short: true })}`;
     if (m.key === C.SOLID_METRIC.key) {
       const pa = C.solidPct(b.entry), pl = C.solidPct(l.entry);
-      const v = (pc, e) => (pc == null ? { value: '—', sub: 'ranges only' } : { value: C.roundHalfEven(pc, 0) + '%', meter: pc, sub: `${e.solid.length} of ${e.shots.length}` });
+      const v = (pc, e) => (pc == null ? { value: '—', sub: 'ranges only' } : { value: C.roundHalfEven(pc, 0) + '%', meter: pc, sub: `${C.solidCount(e)} of ${e.shots.length}` });
       const t = pa != null && pl != null ? C.trend('solid_pct', { avg: pa }, { avg: pl }) : null;
       const extra = t ? trendBadge(t) + `<span class="kpi-s">${esc(C.fmtSigned(C.roundHalfEven(pl, 0) - C.roundHalfEven(pa, 0), 0))} points since the baseline</span>` : '';
       return `<div class="kpis">${kpi(Object.assign({ label: lb('Baseline', b) }, v(pa, b.entry)))}${kpi(Object.assign({ label: lb('Latest', l), html: extra }, v(pl, l.entry)))}</div>`;
@@ -1128,7 +1159,7 @@
       </div>
       ${P.fallback && P.baseline ? `<p class="note" style="margin-bottom:14px">${base ? `The ${esc(C.fmtDate(base.date))} baseline has no ${esc(club)}, so` : 'No baseline session is set, so'} the first ${esc(club)} session (${esc(C.fmtDate(P.baseline.session.date))}) is its baseline.</p>` : ''}
       <div class="card"><h3 class="card-title">${esc(club)}: ${esc(m.label.toLowerCase())}${m.key === C.SOLID_METRIC.key ? ' %' : ''} by session</h3>${progKpis(P, m)}<div class="chart" id="progChart"></div>
-        <p class="hint">${m.key === C.SOLID_METRIC.key ? 'Share of shots that weren’t likely mis-hits.' : 'Bar: lowest to highest. Dot and number: average. Solid shots only.'}${m.dir ? ' Feet; L = left, R = right.' : ''}${rangeOnly.length ? ` ${esc(rangeOnly.join(', '))} recorded ranges only, so ${rangeOnly.length > 1 ? 'their' : 'its'} numbers include any topped shots and ${rangeOnly.length > 1 ? 'their' : 'its'} solid-contact rate is unknown.` : ''}</p></div>
+        <p class="hint">${m.key === C.SOLID_METRIC.key ? `Share of shots that weren’t likely mis-hits${P.rows.some((r) => r.entry.outliers.length) ? ' (outliers count as solid)' : ''}.` : `Bar: lowest to highest. Dot and number: average. Solid shots only${P.rows.some((r) => r.entry.outliers.length) ? ', leaving out outliers' : ''}.`}${m.dir ? ' Feet; L = left, R = right.' : ''}${rangeOnly.length ? ` ${esc(rangeOnly.join(', '))} recorded ranges only, so ${rangeOnly.length > 1 ? 'their' : 'its'} numbers include any topped shots and ${rangeOnly.length > 1 ? 'their' : 'its'} solid-contact rate is unknown.` : ''}</p></div>
       ${P.rows.length < 2
         ? `<div class="card"><p class="note">Only one session with the ${esc(club)} so far. Progress shows up after the next one.</p></div>`
         : `<h2>Since the baseline</h2><div class="card">${progTable(P)}</div>`}
@@ -1143,7 +1174,7 @@
   function progTable(P) {
     const b = P.baseline, l = P.latest;
     const pa = C.solidPct(b.entry), pl = C.solidPct(l.entry);
-    const pctCell = (p, e) => p == null ? '<span class="v">—</span><span class="n">unknown (ranges only)</span>' : `<span class="v">${C.roundHalfEven(p, 0)}%</span><span class="r">${e.solid.length} of ${e.shots.length}</span>`;
+    const pctCell = (p, e) => p == null ? '<span class="v">—</span><span class="n">unknown (ranges only)</span>' : `<span class="v">${C.roundHalfEven(p, 0)}%</span><span class="r">${C.solidCount(e)} of ${e.shots.length}</span>`;
     const solidT = pa != null && pl != null ? C.trend('solid_pct', { avg: pa }, { avg: pl }) : null;
     const solidRow = (b.entry.shots.length || l.entry.shots.length)
       ? `<tr><th scope="row">Solid contact</th><td>${pctCell(pa, b.entry)}</td><td>${pctCell(pl, l.entry)}${trendBadge(solidT)}${pa != null && pl != null ? `<span class="chg">${esc(C.fmtSigned(pl - pa, 0))} points</span>` : ''}</td></tr>` : '';
@@ -1641,15 +1672,15 @@
   function shotList(s) {
     const shots = s.shots || [];
     if (!C.sessionShots(s).length) return `<p class="empty">${C.isSummaryOnly(s) ? 'Ranges only. Individual shots weren’t recorded.' : 'No shots yet.'}</p>`;
-    const mis = C.sessionMishits([s]);
+    const mis = C.sessionMishits([s]), odd = C.sessionOutliers([s]);
     const clubs = C.sortClubs(Array.from(new Set(C.sessionShots(s).map((x) => x.club))));
     return clubs.map((c) => {
       const items = [];
-      shots.forEach((x, idx) => { if (x && x.club === c) items.push(shotRow(x, idx, mis.has(x))); });
+      shots.forEach((x, idx) => { if (x && x.club === c) items.push(shotRow(x, idx, mis.has(x) ? 'mis' : odd.has(x) ? 'out' : '')); });
       return `<details class="club-group" open><summary>${esc(c)} · ${plural(items.length, 'shot')}</summary>${items.join('')}</details>`;
     }).join('');
   }
-  function shotRow(x, idx, mis) {
+  function shotRow(x, idx, kind) {
     const main = [x.time, C.isNum(x.carry_yds) ? C.fmtRaw(x.carry_yds) + ' carry' : null, C.isNum(x.total_yds) ? C.fmtRaw(x.total_yds) + ' total' : null,
       C.isNum(x.offline_ft) ? 'offline ' + dirU(x.offline_ft, 'ft') : null].filter(Boolean).join(' · ');
     const sub = [
@@ -1661,7 +1692,8 @@
       C.isNum(x.hang_time_s) ? C.fmtRaw(x.hang_time_s) + ' s hang' : null,
       C.isNum(x.club_speed_mph) ? C.fmtRaw(x.club_speed_mph) + ' mph club' : null,
       C.isNum(x.spin_rpm) ? C.fmtRaw(x.spin_rpm) + ' rpm' : null,
-      mis ? 'likely mis-hit (left out of the numbers)' : null
+      kind === 'mis' ? 'likely mis-hit (left out of the numbers)' : null,
+      kind === 'out' ? 'outlier: far off the usual carry (left out of the numbers, still solid contact)' : null
     ].filter(Boolean).join(' · ');
     return `<div class="shot"><div class="main">${esc(main)}</div><div class="meta">${esc(sub)}${x.note ? ' — ' + esc(x.note) : ''}</div>
       <button class="icon-btn" data-action="delete-shot" data-idx="${idx}" aria-label="Delete shot ${esc(x.club)} ${esc(x.time || '')}">×</button></div>`;
@@ -1908,13 +1940,13 @@
   }
   function exportName(ext) { return (playerInfo().file.split('/').pop() || playerId + '_golf_data.json').replace(/\.json$/, '') + ext; }
   function exportCSV() {
-    const cols = ['session_id', 'date', 'device', 'shot_id', 'time', 'club'].concat(C.METRICS.map((m) => m.key), ['likely_mishit', 'note']);
+    const cols = ['session_id', 'date', 'device', 'shot_id', 'time', 'club'].concat(C.METRICS.map((m) => m.key), ['likely_mishit', 'outlier', 'note']);
     const q = (v) => v == null ? '' : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
     const lines = [cols.join(',')];
     data.sessions.forEach((s) => {
-      const mis = C.sessionMishits([s]);
+      const mis = C.sessionMishits([s]), odd = C.sessionOutliers([s]);
       C.sessionShots(s).forEach((x) => {
-        lines.push([s.id, s.date, s.device, x.id, x.time, x.club].concat(C.METRICS.map((m) => C.metricValue(x, m.key)), [mis.has(x) ? 'yes' : '', x.note]).map(q).join(','));
+        lines.push([s.id, s.date, s.device, x.id, x.time, x.club].concat(C.METRICS.map((m) => C.metricValue(x, m.key)), [mis.has(x) ? 'yes' : '', odd.has(x) ? 'yes' : '', x.note]).map(q).join(','));
       });
     });
     download(exportName('.csv'), lines.join('\n'), 'text/csv');

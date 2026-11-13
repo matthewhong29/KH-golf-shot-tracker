@@ -239,19 +239,26 @@
     (sessions || []).forEach(function (s) { mishits(sessionShots(s)).forEach(function (m) { set.add(m.shot); }); });
     return set;
   }
+  // Outliers, judged within each session the same way.
+  function sessionOutliers(sessions) {
+    var set = new Set();
+    (sessions || []).forEach(function (s) { outliers(sessionShots(s)).forEach(function (o) { set.add(o.shot); }); });
+    return set;
+  }
 
-  // { club: { club, shots: [all], solid: [...], mis: [...], ranges: { metric: {min,max,avg?} } } }
-  // Every computed number uses the solid shots; mis-hits stay in `shots` for the charts.
+  // { club: { club, shots: [all], solid: [...], mis: [...], outliers: [...], ranges: { metric: {min,max,avg?} } } }
+  // Every computed number uses `solid`. Mis-hits and outliers stay in `shots` for
+  // the charts, and outliers still count as solid contact (see solidCount).
   function clubData(sessions) {
     var out = {};
-    var mis = sessionMishits(sessions);
-    function get(c) { return out[c] || (out[c] = { club: c, shots: [], solid: [], mis: [], ranges: {} }); }
+    var mis = sessionMishits(sessions), odd = sessionOutliers(sessions);
+    function get(c) { return out[c] || (out[c] = { club: c, shots: [], solid: [], mis: [], outliers: [], ranges: {} }); }
     (sessions || []).forEach(function (s) {
       sessionShots(s).forEach(function (shot) {
         if (!shot.club) return;
         var e = get(shot.club);
         e.shots.push(shot);
-        (mis.has(shot) ? e.mis : e.solid).push(shot);
+        (mis.has(shot) ? e.mis : odd.has(shot) ? e.outliers : e.solid).push(shot);
       });
       if (hasSummary(s)) {
         Object.keys(s.summary).forEach(function (club) {
@@ -266,7 +273,9 @@
     return out;
   }
   function entryHasData(e) { return !!e && (e.shots.length > 0 || Object.keys(e.ranges).length > 0); }
-  function solidPct(entry) { return entry && entry.shots && entry.shots.length ? 100 * entry.solid.length / entry.shots.length : null; }
+  // Shots with solid contact: every shot but the likely mis-hits, so outliers count.
+  function solidCount(entry) { return entry && entry.shots ? entry.shots.length - (entry.mis || []).length : 0; }
+  function solidPct(entry) { return entry && entry.shots && entry.shots.length ? 100 * solidCount(entry) / entry.shots.length : null; }
   var SOLID_METRIC = { key: 'solid_pct', label: 'Solid contact', unit: '%', dec: 0 };
 
   // "Needs work" flags for one club, from its solid shots. Three simple rules a
@@ -459,7 +468,7 @@
       var status = la.avg > win[1] ? 'high' : la.avg < win[0] ? 'low' : 'ok';
       add({ id: 'launch', label: 'Launch', lo: win[0], hi: win[1], avg: la.avg, status: status, met: status === 'ok' });
     }
-    add({ id: 'contact', label: 'Solid contact', n: entry.solid.length, of: entry.shots.length, met: solidPct(entry) >= GOALS.solidPct });
+    add({ id: 'contact', label: 'Solid contact', n: solidCount(entry), of: entry.shots.length, met: solidPct(entry) >= GOALS.solidPct });
 
     var flags = needsWork(entry);
     var focus;
@@ -555,6 +564,54 @@
     });
     return out;
   }
+
+  // Outliers: solid shots whose carry is far off that club's usual in the session,
+  // like a soft warm-up swing or a freak long one. They're left out of the
+  // numbers (averages, ranges, pure strike, gapping) but still count as solid
+  // contact, and in hit rates such as on line and in the carry zone.
+  // The rule, for a club with 5+ solid shots: carry more than 3.5 robust standard
+  // deviations from the median, i.e. 0.6745 × |carry − median| / MAD > 3.5, where
+  // MAD is the median distance from the median. MAD is never taken below 3% of
+  // the median, so a tight group can't turn ordinary shots into outliers: an
+  // outlier is always at least about 16% shorter or longer than usual.
+  var OUTLIER = { z: 3.5, minShots: 5, madFloor: 0.03 };
+  function outliers(shots) {
+    var bad = new Set(mishits(shots).map(function (m) { return m.shot; }));
+    var by = {};
+    (shots || []).forEach(function (s) { if (s && s.club && !bad.has(s) && isNum(s.carry_yds)) (by[s.club] || (by[s.club] = [])).push(s); });
+    var hit = new Map();
+    Object.keys(by).forEach(function (c) {
+      var list = by[c];
+      if (list.length < OUTLIER.minShots) return;
+      var carries = list.map(function (s) { return s.carry_yds; });
+      var med = median(carries);
+      var mad = Math.max(median(carries.map(function (v) { return Math.abs(v - med); })), OUTLIER.madFloor * Math.abs(med));
+      if (!(mad > 0)) return;
+      list.forEach(function (s) {
+        var z = 0.6745 * (s.carry_yds - med) / mad;
+        if (Math.abs(z) > OUTLIER.z) hit.set(s, { shot: s, side: z < 0 ? 'short' : 'long', usual: med });
+      });
+    });
+    return (shots || []).filter(function (s) { return hit.has(s); }).map(function (s) { return hit.get(s); });
+  }
+  // " Mis-hits are left out." and the like, for lines built from the numbers.
+  function leftOutNote(nMis, nOut) {
+    if (!nMis && !nOut) return '';
+    return ' ' + (nMis && nOut ? 'Mis-hits and outliers are' : nMis ? 'Mis-hits are' : 'Outliers are') + ' left out.';
+  }
+  // "1 outlier, far off the usual carry: Driver 132 yds (usually 162). …"
+  // usual: { club: typical carry } from the shots that count.
+  function outlierText(odd, usual) {
+    var clubs = sortClubs(odd.map(function (o) { return o.shot.club; }).filter(function (c, i, a) { return a.indexOf(c) === i; }));
+    var parts = clubs.map(function (c) {
+      var v = odd.filter(function (o) { return o.shot.club === c; }).map(function (o) { return o.shot.carry_yds; }).sort(function (a, b) { return a - b; });
+      var vals = v.length <= 6 ? joinList(v.map(fmtRaw)) : v.length + ' shots from ' + fmtRaw(v[0]) + ' to ' + fmtRaw(v[v.length - 1]);
+      return c + ' ' + vals + ' yds' + (usual && isNum(usual[c]) ? ' (usually ' + fmtRaw(roundHalfEven(usual[c], 0)) + ')' : '');
+    });
+    var one = odd.length === 1;
+    return plural(odd.length, 'outlier') + ', far off the usual carry: ' + parts.join('; ') + '. ' +
+      (one ? 'It’s' : 'They’re') + ' left out of the numbers but still count' + (one ? 's' : '') + ' as solid contact.';
+  }
   function joinList(a) { return a.length < 3 ? a.join(' and ') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
   function minOf(arr) { var a = arr.filter(isNum); return a.length ? Math.min.apply(null, a) : null; }
   function pct(n, of) { return roundHalfEven(100 * n / of, 0) + '%'; }
@@ -577,10 +634,11 @@
   function buildHighlights(scope, baseline) {
     var out = [];
     scope = scope || [];
-    var shots = [], bad = [];
+    var shots = [], bad = [], odd = [];
     scope.forEach(function (s) {
       sessionShots(s).forEach(function (x) { shots.push(x); });
       mishits(sessionShots(s)).forEach(function (m) { bad.push(m); });
+      outliers(sessionShots(s)).forEach(function (o) { odd.push(o); });
     });
     var data = clubData(scope);
     var clubs = sortClubs(Object.keys(data));
@@ -597,6 +655,11 @@
       } else {
         out.push({ id: 'contact', text: contactText(bad) });
       }
+      if (odd.length) {
+        var usual = {};
+        shotClubs.forEach(function (c) { usual[c] = median(data[c].solid.map(function (x) { return x.carry_yds; })); });
+        out.push({ id: 'outliers', text: outlierText(odd, usual) });
+      }
 
       var miss = shotClubs.map(function (c) { return { club: c, st: summarize(data[c].solid, 'offline_ft') }; })
         .filter(function (x) { return x.st.n; });
@@ -607,7 +670,7 @@
           if (a.every(function (v, i) { return !i || v > a[i - 1]; })) text += ' The miss moves farther right as the clubs get longer.';
           else if (a.every(function (v, i) { return !i || v < a[i - 1]; })) text += ' The miss moves farther left as the clubs get longer.';
         }
-        if (bad.length) text += ' Mis-hits are left out.';
+        text += leftOutNote(bad.length, odd.length);
         out.push({ id: 'miss', text: text });
       }
 
@@ -739,7 +802,7 @@
     var data = clubData([s]);
     var clubs = sortClubs(Object.keys(data)).filter(function (c) { return data[c].shots.length; });
     var bad = mishits(shots);
-    var note = bad.length ? ' Mis-hits are left out.' : '';
+    var note = leftOutNote(bad.length, outliers(shots).length);
     function per(key, fmt) {
       return clubs.map(function (c) { var st = summarize(data[c].solid, key); return st.n ? c + ' ' + fmt(st.avg) : null; }).filter(Boolean);
     }
@@ -1211,7 +1274,8 @@
     normClub: normClub, clubRank: clubRank, sortClubs: sortClubs, clubName: clubName, launchFloor: launchFloor,
     sessionShots: sessionShots, hasSummary: hasSummary, isSummaryOnly: isSummaryOnly, compareSessions: compareSessions,
     asList: asList, clubData: clubData, entryHasData: entryHasData, metricStat: metricStat, mishits: mishits,
-    sessionMishits: sessionMishits, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
+    sessionMishits: sessionMishits, outliers: outliers, sessionOutliers: sessionOutliers, OUTLIER: OUTLIER,
+    solidCount: solidCount, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
     mergeGoals: mergeGoals, applyGoals: applyGoals,
     bestStrikes: bestStrikes, strikeReference: strikeReference, checkShot: checkShot,

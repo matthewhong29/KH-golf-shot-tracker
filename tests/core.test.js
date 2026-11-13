@@ -176,6 +176,36 @@ eq(C.buildHighlights([allMis], null).map((h) => h.text), [
 ], 'highlights with an all-mis club');
 eq(C.progressFor([allMis], '7i', null).rows.length, 1, 'progress still lists an all-mis club');
 
+section('Outliers: far off the usual carry, still solid contact');
+const ol = (carries, club, extra) => carries.map((c, i) => Object.assign({ id: 'o' + i, club: club || '7i', carry_yds: c, launch_deg: 20, offline_ft: 0 }, extra ? extra(c) : {}));
+const olShots = ol([118, 120, 121, 119, 122, 120, 117, 123, 90, 150]);
+eq(C.outliers(olShots).map((o) => [o.shot.carry_yds, o.side, o.usual]), [[90, 'short', 120], [150, 'long', 120]], 'a far-short and a far-long shot are outliers');
+eq(C.outliers(ol([58, 61, 63, 66, 77, 77, 78, 82, 89, 92, 93, 94, 98, 102], 'PW')).length, 0, 'a wide spread has no outliers: the yardstick grows with it');
+eq(C.outliers(ol([100, 100, 100, 101, 100, 110])).length, 0, 'tight group: 10% long is not an outlier (MAD floor)');
+eq(C.outliers(ol([100, 100, 100, 101, 100, 117])).map((o) => o.shot.carry_yds), [117], 'tight group: 17% long is');
+eq(C.outliers(ol([120, 121, 119, 90])).length, 0, 'needs 5 solid shots');
+eq(C.outliers(ol([118, 120, 150, 119]).concat([{ id: 'm', club: '7i', carry_yds: 40, launch_deg: 4 }])).length, 0,
+  'a mis-hit is never an outlier, and only solid shots count toward the 5');
+eq(C.outliers(C.sessionShots(nov)).length, 0, 'Nov 1: no outliers, so the numbers above are unchanged');
+const olSession = { id: 'ol', date: '2026-12-02', shots: olShots };
+const olE = C.clubData([olSession])['7i'];
+eq([olE.shots.length, olE.solid.length, olE.outliers.length, olE.mis.length, C.solidCount(olE), C.solidPct(olE)], [10, 8, 2, 0, 10, 100],
+  'outliers stay out of the numbers but count as solid contact');
+eq([C.metricStat(olE, 'carry_yds').avg, C.metricStat(olE, 'carry_yds').min, C.metricStat(olE, 'carry_yds').max], [120, 117, 123], 'average and range leave outliers out');
+const olG = C.clubGoals(olE, '7i', null);
+const olGoal = (id) => olG.goals.find((g) => g.id === id);
+eq([olGoal('contact').n, olGoal('contact').of, olGoal('contact').met, olGoal('carry').of, olGoal('line').of], [10, 10, true, 10, 10],
+  'goals: outliers count as solid, and in the carry-zone and on-line counts');
+const olFast = C.clubData([{ id: 'f', shots: ol([118, 120, 121, 119, 122, 120, 117, 123, 150], '7i', (c) => ({ ball_speed_mph: c === 150 ? 105 : 88 + (c - 117) })) }])['7i'];
+eq(C.strikeReference(olFast, '7i', null).metrics.carry_yds.max, 123, 'pure strike leaves out a long outlier, even with the fastest ball speed');
+eq(C.buildHighlights([olSession], null).map((h) => h.text).slice(1, 4), [
+  'Solid contact: 10 of 10 shots (100%).',
+  'No thin or topped shots, lowest launch 20° (7i).',
+  '2 outliers, far off the usual carry: 7i 90 and 150 yds (usually 120). They’re left out of the numbers but still count as solid contact.',
+], 'highlights list the outliers');
+eq(C.sessionCallout('carry', [olSession]).text, 'Average carry: 7i 120.0 yds. Outliers are left out.', 'callout says outliers are left out');
+eq(C.sessionCallout('mishits', [olSession]).text, 'No thin or topped shots in 10 shots.', 'outliers are not thin or topped');
+
 section('Needs work and per-club goals');
 const novE = C.clubData([nov]);
 eq(C.sortClubs(Object.keys(novE)).map((c) => [c, C.needsWork(novE[c]).map((f) => f.kind)]),
@@ -328,6 +358,9 @@ const bro = JSON.parse(fs.readFileSync(path.join(root, 'data', 'brother_golf_dat
 eq([bro.player.relationship, bro.player.level, bro.player.age, bro.player.height_in, bro.baseline_session_id],
   ["Matthew's brother", 'beginner', 14, 60, null], 'brother file: player details, baseline is each club’s first session');
 ok(bro.sessions.every((s) => (s.shots || []).every((x) => bro.clubs[x.club])), 'brother file: every club he has hit is in the clubs map');
+const broNov12 = bro.sessions.find((s) => s.id === '2026-11-12-toptracer');
+eq(C.outliers(C.sessionShots(broNov12)).map((o) => [o.shot.id, o.shot.club, o.shot.carry_yds, o.side]), [['2026-11-12-toptracer-071', 'Driver', 132, 'short']],
+  'M3 Nov 12: the 132-yd driver is the one outlier');
 eq(Object.keys(bro), Object.keys(data).filter((k) => k !== 'equipment'), 'brother file has the same top-level keys as Dad’s (equipment is optional)');
 eq([data.player.age, data.player.height_in], [56, 73], 'Dad: age and height');
 eq([C.buildHighlights([], null), C.sessionCallout('carry', []), C.progressFor([], 'PW', null).rows.length], [[], null, 0], 'no data: no highlights, callouts or progress rows');

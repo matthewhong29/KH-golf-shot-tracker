@@ -139,6 +139,12 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
   - A club whose shots were all mis-hits shows "—" with "all N were mis-hits".
   - The highlights give the solid-contact rate (e.g. "Solid contact: 45 of 48 shots (94%)"), and Progress tracks it per club and session.
   - Sessions with ranges only, like the Aug 2026 Rapsodo one, can't be split this way. Their recorded ranges include any topped shots, and their solid-contact rate shows as unknown.
+- An **outlier** is a solid shot whose carry is far off that club's usual for the session, like a soft warm-up swing or a freak long one. It's judged within its own session, for a club with 5 or more solid shots:
+  - carry more than 3.5 robust standard deviations from the median: 0.6745 × |carry − median| ÷ MAD > 3.5, where MAD is the median distance from the median;
+  - MAD is never taken below 3% of the median, so a tight group can't turn ordinary shots into outliers. An outlier is always at least about 16% shorter or longer than usual.
+- **Outliers are left out of the numbers too** (averages, ranges, pure strike, gaps, longest carry, dispersion averages, miss by club, progress), **but they still count as solid contact**. They also count in the hit rates: on line, shots landing in the carry zone, and the solid-contact goal.
+  - They show as ringed dots on the charts and are marked "outlier" in the shot list, the shot table and the CSV export.
+  - The highlights list them with the club's usual carry, e.g. "1 outlier, far off the usual carry: Driver 132 yds (usually 162)".
 - Averages are rounded half to even. An exact 147.25 shows as 147.2, matching the numbers checked from the Toptracer screen.
 - The dispersion plots convert offline from feet to yards, so both axes share one scale.
 - **Needs work** (a soft yellow highlight, always labelled) marks a club when any of these is true (`needsWork` in `js/core.js`):
@@ -175,7 +181,7 @@ node scripts/check-data.js
 
 The tests check:
 - every average and range in the hand-checked tables: the brief's table against shots 001–036, and the full Nov 1 session, where the 5w uses only its 2 solid shots;
-- the mis-hit rule, solid-contact rates and the highlight text;
+- the mis-hit and outlier rules, solid-contact rates and the highlight text;
 - the progress baseline;
 - the tips callouts and content;
 - the player registry and data files;
