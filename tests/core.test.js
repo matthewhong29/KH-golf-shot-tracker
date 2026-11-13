@@ -325,11 +325,12 @@ for (const p of players) {
   eq([d.player.name, Array.isArray(d.sessions)], [p.name, true], `${p.id}: data file name matches and has sessions`);
 }
 const bro = JSON.parse(fs.readFileSync(path.join(root, 'data', 'brother_golf_data.json'), 'utf8'));
-eq([bro.player.relationship, bro.player.level, bro.player.age, bro.player.height_in, bro.baseline_session_id, bro.sessions.length, Object.keys(bro.clubs).length],
-  ["Matthew's brother", 'beginner', 14, 60, null, 0, 0], 'brother file: empty, same schema');
+eq([bro.player.relationship, bro.player.level, bro.player.age, bro.player.height_in, bro.baseline_session_id],
+  ["Matthew's brother", 'beginner', 14, 60, null], 'brother file: player details, baseline is each club’s first session');
+ok(bro.sessions.every((s) => (s.shots || []).every((x) => bro.clubs[x.club])), 'brother file: every club he has hit is in the clubs map');
 eq(Object.keys(bro), Object.keys(data).filter((k) => k !== 'equipment'), 'brother file has the same top-level keys as Dad’s (equipment is optional)');
 eq([data.player.age, data.player.height_in], [56, 73], 'Dad: age and height');
-eq([C.buildHighlights(bro.sessions, null), C.sessionCallout('carry', bro.sessions), C.progressFor(bro.sessions, 'PW', null).rows.length], [[], null, 0], 'no data: no highlights, callouts or progress rows');
+eq([C.buildHighlights([], null), C.sessionCallout('carry', []), C.progressFor([], 'PW', null).rows.length], [[], null, 0], 'no data: no highlights, callouts or progress rows');
 eq([C.resolvePlayer(players, 'brother', 'dad'), C.resolvePlayer(players, 'nobody', 'brother'), C.resolvePlayer(players, null, null), C.resolvePlayer([], 'x', 'y')],
   ['brother', 'brother', 'dad', null], 'resolvePlayer: URL, then last used, then first');
 eq([C.fmtHeight(73), C.fmtHeight(60), C.fmtHeight(null)], ['6′1″', '5′0″', ''], 'fmtHeight');
