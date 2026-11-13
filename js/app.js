@@ -46,6 +46,7 @@
   function freshUI() {
     return {
       tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
+      rp: { club: 'All', idx: 0, speed: 1 },
       goalsEdit: false, goalsAll: false, goalSrc: 'me', practiceClub: null, check: {}, practiceView: 'range', rvFrame: {}, rvMarks: true,
       sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
       entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
@@ -166,6 +167,7 @@
     stack: '<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="M3 12l9 4.5 9-4.5"/><path d="M3 16.5 12 21l9-4.5"/>',
     trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
     pause: '<path d="M9 5.5v13M15 5.5v13"/>',
+    replay: '<path d="M4.6 13a7.5 7.5 0 1 0 2.1-6.4"/><path d="M4.5 4.2v4.6h4.6"/>',
     run: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>'
   };
   function icon(name, cls) {
@@ -548,6 +550,7 @@
   // ---------------------------------------------------------------------------
   function render() {
     artStop();
+    rpStop();
     renderHeader();
     renderGoals();
     renderBanner();
@@ -1001,6 +1004,271 @@
     </div>`;
   }
 
+  // ----- Shot replay: each shot's flight drawn from its numbers, on a course -----
+  // The pin sits where a pure strike with that club finishes. Each shot flies from the
+  // tee (the camera behind and a little to the right), rolls out, then the camera rises
+  // over the green to show how close it finished. "Play all" runs the shots in order
+  // and keeps the earlier tracers of the same club, like a range session's pattern.
+  const FL = window.GolfFlight;
+  const RP_HOLD = 0.8, RP_GLIDE = 1.6, RP_NEXT = 1.2, RP_SPEEDS = [1, 2, 4];
+  let rp = null;
+  function rpItems(sessions) {
+    const out = [];
+    sessions.slice().sort(C.compareSessions).forEach((s) => {
+      const mis = C.sessionMishits([s]), odd = C.sessionOutliers([s]);
+      C.sessionShots(s).forEach((x) => {
+        if (x.club && C.isNum(x.carry_yds) && x.carry_yds > 0) out.push({ shot: x, session: s, kind: mis.has(x) ? 'mis' : odd.has(x) ? 'out' : '' });
+      });
+    });
+    return out;
+  }
+  function replayCard(items) {
+    if (!FL || !items.length) return '';
+    const clubs = C.sortClubs(Array.from(new Set(items.map((i) => i.shot.club))));
+    if (ui.rp.club !== 'All' && clubs.indexOf(ui.rp.club) < 0) { ui.rp.club = 'All'; ui.rp.idx = 0; }
+    const chips = clubs.length > 1 ? `<div class="chips rp-clubs" role="group" aria-label="Club to replay">${['All'].concat(clubs).map((c) =>
+      `<button class="chip" data-action="rp-club" data-club="${esc(c)}" aria-pressed="${c === ui.rp.club}">${c === 'All' ? 'All clubs' : esc(c)}</button>`).join('')}</div>` : '';
+    return `<h2>Shot replay</h2>
+      <div class="card replay" id="replay">
+        <p class="note">Watch each shot fly on a course, drawn from the range screen’s numbers.</p>
+        ${chips}
+        <div class="rp-stage">
+          <canvas class="rp-canvas" role="img" aria-label="Shot replay"></canvas>
+          <button type="button" class="rp-big" data-action="rp-play" aria-label="Play this shot">${icon('run')}</button>
+        </div>
+        <div class="rp-bar">
+          <button type="button" class="rp-nav prev" data-action="rp-step" data-d="-1" aria-label="Previous shot">${icon('chevron')}</button>
+          <div class="rp-what" aria-live="polite"></div>
+          <button type="button" class="rp-nav" data-action="rp-step" data-d="1" aria-label="Next shot">${icon('chevron')}</button>
+        </div>
+        <div class="rp-ctrl">
+          <button type="button" class="btn small rp-play" data-action="rp-play"></button>
+          <button type="button" class="btn small ghost rp-all" data-action="rp-all" aria-pressed="false">Play all</button>
+          <button type="button" class="btn small ghost rp-speed" data-action="rp-speed"></button>
+        </div>
+        <div class="kpis four rp-nums"></div>
+        <p class="rp-line"></p>
+        <p class="hint rp-hint"></p>
+      </div>`;
+  }
+  function rpStop() {
+    if (!rp) return;
+    if (rp.raf) cancelAnimationFrame(rp.raf);
+    if (rp.io) rp.io.disconnect();
+    rp = null;
+  }
+  function rpMount(items, entries) {
+    rpStop();
+    const card = $('#replay');
+    if (!card || !FL) return;
+    const canvas = $('.rp-canvas', card), ctx = canvas.getContext ? canvas.getContext('2d') : null;
+    if (!ctx) { card.hidden = true; return; }
+    rp = { card, canvas, ctx, items, entries, list: [], clubs: {}, idx: 0, t: 0, playing: false, autoPaused: false, phase: 'idle', past: [], all: false, raf: 0, last: 0, cam: null, over: null };
+    rpSize();
+    rpFilter();
+    rpShow(ui.rp.idx, false);
+    if ('IntersectionObserver' in window) {
+      rp.io = new IntersectionObserver((en) => en.forEach((e) => {
+        if (!rp) return;
+        if (!e.isIntersecting && rp.playing) rpPause(true);
+        else if (e.isIntersecting && rp.autoPaused) rpResume();
+      }), { threshold: 0.3 });
+      rp.io.observe(canvas);
+    }
+  }
+  function rpSize() {
+    const w = Math.max(240, Math.floor(rp.canvas.parentElement.getBoundingClientRect().width));
+    const h = Math.round(Math.min(460, Math.max(200, w * 0.62)));
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    rp.canvas.width = Math.round(w * dpr);
+    rp.canvas.height = Math.round(h * dpr);
+    rp.canvas.style.height = h + 'px';
+    rp.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    Object.assign(rp, { w, h, dpr, clubs: {} });
+  }
+  function rpFilter() { rp.list = ui.rp.club === 'All' ? rp.items : rp.items.filter((i) => i.shot.club === ui.rp.club); }
+  function rpTraj(item) {
+    if (item.traj === undefined) {
+      const club = item.shot.club, win = C.launchWindow(club, data.equipment);
+      item.traj = FL.trajectory(item.shot, { kind: C.clubKind(club), club, launch: win ? (win[0] + win[1]) / 2 : null });
+    }
+    return item.traj;
+  }
+  // Where a pure strike with the club finishes (its carry plus roll); without one, the
+  // middle of his shots with it.
+  function rpPin(club) {
+    const e = rp.entries[club], ref = e ? C.strikeReference(e, club, data.equipment) : null;
+    let v = ref ? (ref.metrics.total_yds && C.isNum(ref.metrics.total_yds.avg) ? ref.metrics.total_yds.avg : ref.carry) : null;
+    if (!C.isNum(v)) v = C.median(rp.items.filter((i) => i.shot.club === club).map((i) => (C.isNum(i.shot.total_yds) ? i.shot.total_yds : i.shot.carry_yds)));
+    return Math.max(25, Math.round(C.isNum(v) ? v : 100));
+  }
+  // The course, the camera behind the tee and the drawn background, once per club:
+  // framed to fit every shot with that club, so the view holds still from shot to shot.
+  function rpClub(club) {
+    if (rp.clubs[club]) return rp.clubs[club];
+    const pin = rpPin(club);
+    const pts = [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: pin + 15 }, { x: -13, y: 0, z: pin }, { x: 13, y: 0, z: pin }];
+    rp.items.forEach((i) => { if (i.shot.club === club) { const t = rpTraj(i); if (t) FL.keyPoints(t).forEach((p) => pts.push(p)); } });
+    let seed = pin * 131;
+    for (let k = 0; k < club.length; k++) seed = (seed * 31 + club.charCodeAt(k)) >>> 0;
+    const course = FL.course(pin, Math.max(...pts.map((p) => p.z)), seed);
+    const cam = FL.fitBehind(pts, rp.w, rp.h);
+    const bg = document.createElement('canvas');
+    bg.width = rp.canvas.width;
+    bg.height = rp.canvas.height;
+    const b = bg.getContext('2d');
+    b.setTransform(rp.dpr, 0, 0, rp.dpr, 0, 0);
+    FL.drawCourse(b, cam, course);
+    return (rp.clubs[club] = { club, pin, course, cam, bg });
+  }
+  function rpOver() {
+    const tr = rp.cur, pin = rp.c.pin;
+    return FL.fitOverhead([tr.rest, tr.land, { x: 0, y: 0, z: pin }, { x: -20, y: 0, z: Math.min(pin, tr.rest.z) - 22 }, { x: 20, y: 0, z: Math.max(pin, tr.rest.z) + 22 }], rp.w, rp.h);
+  }
+  function rpShow(i, play) {
+    if (!rp || !rp.list.length) return;
+    if (rp.raf) { cancelAnimationFrame(rp.raf); rp.raf = 0; }
+    rp.idx = ui.rp.idx = Math.max(0, Math.min(rp.list.length - 1, i));
+    rp.item = rp.list[rp.idx];
+    rp.cur = rpTraj(rp.item);
+    rp.c = rpClub(rp.item.shot.club);
+    Object.assign(rp, { cam: rp.c.cam, over: null, t: 0, phase: 'idle', playing: false, autoPaused: false });
+    rpInfo();
+    if (play) rpPlay();
+    else { rpDraw(); rpControls(); }
+  }
+  function rpDraw() {
+    if (!rp || !rp.cur) return;
+    const cam = rp.cam || rp.c.cam, behind = cam === rp.c.cam;
+    rp.ctx.clearRect(0, 0, rp.w, rp.h);
+    FL.drawFrame(rp.ctx, { cam, course: rp.c.course, bg: behind ? rp.c.bg : null, past: behind ? rp.past : [], cur: rp.cur, t: rp.t,
+      hud: behind && rp.phase !== 'idle', result: rp.phase === 'done' && !behind ? 'overhead' : null });
+  }
+  function rpPlay() {
+    if (!rp || !rp.cur) return;
+    if (rp.phase === 'idle' || rp.phase === 'done') Object.assign(rp, { t: 0, cam: rp.c.cam, over: null, phase: 'flight' });
+    if (REDUCED) { rpEnd(); return; }
+    Object.assign(rp, { playing: true, autoPaused: false, last: 0 });
+    rpControls();
+    rp.raf = requestAnimationFrame(rpTick);
+  }
+  function rpTick(ts) {
+    if (!rp || !rp.playing) return;
+    rp.raf = 0;
+    const dt = rp.last ? Math.min(0.05, (ts - rp.last) / 1000) : 0;
+    rp.last = ts;
+    rp.t += dt * ui.rp.speed;
+    const T = rp.cur.duration;
+    if (rp.t < T) rp.phase = 'flight';
+    else if (rp.all) {
+      rp.phase = 'hold';
+      if (rp.t >= T + RP_NEXT) { rpAdvance(); return; }
+    } else if (rp.t < T + RP_HOLD) rp.phase = 'hold';
+    else {
+      if (!rp.over) rp.over = rpOver();
+      const g = (rp.t - T - RP_HOLD) / RP_GLIDE;
+      if (g < 1) { rp.phase = 'glide'; rp.cam = FL.lerpCam(rp.c.cam, rp.over, g); }
+      else { Object.assign(rp, { cam: rp.over, phase: 'done', playing: false }); rpDraw(); rpControls(); return; }
+    }
+    rpDraw();
+    rp.raf = requestAnimationFrame(rpTick);
+  }
+  // Straight to the end: for phones that ask for less motion.
+  function rpEnd() {
+    Object.assign(rp, { playing: false, t: rp.cur.duration + 1, phase: 'done' });
+    if (!rp.all) rp.cam = rp.over = rpOver();
+    rpDraw();
+    rpControls();
+  }
+  // Play all: on to the next shot, keeping this tracer when the club stays the same.
+  function rpAdvance() {
+    if (rp.idx >= rp.list.length - 1) {
+      Object.assign(rp, { all: false, playing: false, phase: 'done' });
+      rpDraw();
+      rpControls();
+      return;
+    }
+    const next = rp.list[rp.idx + 1];
+    if (next.shot.club === rp.item.shot.club) { rp.past.push(rp.cur); if (rp.past.length > 40) rp.past.shift(); } else rp.past = [];
+    rpShow(rp.idx + 1, true);
+  }
+  // With reduced motion, Play all draws every shot with the club at once.
+  function rpAllAtOnce() {
+    const same = rp.list.filter((i) => i.shot.club === rp.item.shot.club);
+    const past = same.slice(0, -1).map(rpTraj).filter(Boolean);
+    rp.all = false;
+    rpShow(rp.list.indexOf(same[same.length - 1]), false);
+    Object.assign(rp, { past, t: rp.cur.duration + 1, phase: 'done' });
+    rpDraw();
+    rpControls();
+  }
+  function rpPause(auto) {
+    if (!rp || !rp.playing) return;
+    if (rp.raf) cancelAnimationFrame(rp.raf);
+    Object.assign(rp, { raf: 0, playing: false, autoPaused: !!auto });
+    rpControls();
+  }
+  function rpResume() {
+    if (!rp || rp.playing) return;
+    Object.assign(rp, { playing: true, autoPaused: false, last: 0 });
+    rpControls();
+    rp.raf = requestAnimationFrame(rpTick);
+  }
+  function rpToggle() {
+    if (!rp) return;
+    if (rp.playing) rpPause(false);
+    else if (rp.phase === 'idle' || rp.phase === 'done') rpPlay();
+    else rpResume();
+  }
+  function rpControls() {
+    if (!rp) return;
+    const started = rp.phase !== 'idle' && rp.phase !== 'done';
+    const label = rp.playing ? 'Pause' : started ? 'Resume' : rp.phase === 'done' ? 'Replay' : 'Play';
+    const pb = $('.rp-play', rp.card);
+    pb.innerHTML = `${icon(rp.playing ? 'pause' : rp.phase === 'done' ? 'replay' : 'run')}<span>${label}</span>`;
+    const big = $('.rp-big', rp.card);
+    big.hidden = rp.playing || rp.phase === 'done';
+    big.setAttribute('aria-label', started ? 'Resume the shot' : 'Play this shot');
+    $('.rp-all', rp.card).setAttribute('aria-pressed', String(rp.all));
+    const sp = $('.rp-speed', rp.card);
+    sp.textContent = ui.rp.speed + '× speed';
+    const nav = $$('.rp-nav', rp.card);
+    nav[0].disabled = rp.idx <= 0;
+    nav[1].disabled = rp.idx >= rp.list.length - 1;
+  }
+  function ftDir(ft, what) {
+    if (!C.isNum(ft)) return '';
+    const r = Math.round(Math.abs(ft));
+    return r ? `${what} ${r} ft ${ft < 0 ? 'left' : 'right'}` : '';
+  }
+  // The shot's numbers under the picture, and what the picture says for screen readers.
+  function rpInfo() {
+    const it = rp.item, s = it.shot, tr = rp.cur, pin = rp.c.pin, name = C.clubName(s.club, data.clubs);
+    const many = new Set(rp.items.map((i) => i.session.id)).size > 1;
+    const tag = it.kind === 'mis' ? 'Likely mis-hit' : it.kind === 'out' ? 'Outlier' : '';
+    $('.rp-what', rp.card).innerHTML = `<span class="t">${esc(name)} · shot ${rp.idx + 1} of ${rp.list.length}</span>
+      <span class="s">${esc([many ? C.fmtDate(it.session.date, { short: true }) : '', s.time, tag].filter(Boolean).join(' · '))}</span>`;
+    const dz = tr.rest.z - pin, dx = tr.rest.x, d = Math.hypot(dx, dz);
+    const onGreen = (dx / 11) * (dx / 11) + (dz / 13) * (dz / 13) <= 1;
+    const away = [Math.abs(dz) >= 1 ? `${Math.round(Math.abs(dz))} ${dz < 0 ? 'short' : 'long'}` : '', Math.abs(dx) >= 1 ? `${Math.round(Math.abs(dx))} ${dx < 0 ? 'left' : 'right'}` : ''].filter(Boolean).join(' · ');
+    const rolled = C.isNum(s.total_yds) ? (tr.roll >= 0.5 ? `rolled ${Math.round(tr.roll)} yds` : tr.roll <= -0.5 ? `spun back ${Math.round(-tr.roll)} yds` : 'stopped where it landed') : 'total not on the screen';
+    $('.rp-nums', rp.card).innerHTML = [
+      kpi({ label: 'Carry', value: C.fmtRaw(s.carry_yds), unit: 'yds', sub: C.isNum(s.ball_speed_mph) ? `${C.fmtRaw(s.ball_speed_mph)} mph ball speed` : '' }),
+      kpi({ label: 'Total', value: C.isNum(s.total_yds) ? C.fmtRaw(s.total_yds) : '—', unit: C.isNum(s.total_yds) ? 'yds' : '', sub: rolled }),
+      kpi({ label: 'To the pin', value: String(Math.round(d)), unit: Math.round(d) === 1 ? 'yd' : 'yds', sub: d < 1 ? 'next to the pin' : onGreen ? `on the green · ${away}` : away }),
+      kpi({ label: 'Peak height', value: C.isNum(s.apex_ft) ? C.fmtRaw(s.apex_ft) : '—', unit: C.isNum(s.apex_ft) ? 'ft' : '', sub: [C.isNum(s.launch_deg) ? `launch ${C.fmtRaw(s.launch_deg)}°` : '', C.isNum(s.landing_deg) ? `lands ${C.fmtRaw(s.landing_deg)}°` : ''].filter(Boolean).join(' · ') })
+    ].join('');
+    const bend = ftDir(s.curve_ft, 'curved'), side = ftDir(s.offline_ft, 'landed');
+    $('.rp-line', rp.card).textContent = bend && side ? `${cap(bend)} in the air and ${side} of the target line.`
+      : bend ? `${cap(bend)} in the air.` : side ? `${cap(side)} of the target line.`
+        : C.isNum(s.curve_ft) || C.isNum(s.offline_ft) ? 'Straight down the target line.' : '';
+    const words = { launch: 'launch angle', apex: 'peak height', landing: 'landing angle', hang: 'time in the air', total: 'roll', curve: 'curve', offline: 'direction' };
+    const est = tr.estimated.filter((k) => words[k]).map((k) => words[k]);
+    $('.rp-hint', rp.card).textContent = `The pin is where a pure strike with your ${name.toLowerCase()} finishes: ${pin} yds, carry plus roll. ` +
+      (est.length ? `Not on the screen, so estimated: ${est.join(', ')}.` : 'Everything is drawn from the screen’s numbers.');
+    rp.canvas.setAttribute('aria-label', `Replay of shot ${rp.idx + 1} of ${rp.list.length}, ${name}: ${C.fmtRaw(s.carry_yds)} yards carry, finished ${Math.round(d)} yards from the pin${away ? ' (' + away + ')' : ''}.`);
+  }
+
   function renderStats() {
     const el = $('#view-stats');
     if (!data.sessions.length) { el.innerHTML = emptyState(); return; }
@@ -1019,6 +1287,7 @@
     if (!ui.statClub || clubs.indexOf(ui.statClub) < 0) ui.statClub = clubs[0];
     const dirFlagged = new Set(clubs.filter((c) => flagsBy[c].some((f) => f.kind === 'direction')));
     const work = hl.find((h) => h.id === 'work');
+    const replayItems = rpItems(sc.sessions);
     const clubChips = clubs.map((c) => {
       const nw = flagsBy[c].length;
       return `<button class="chip${nw ? ' nw' : ''}" data-action="stat-club" data-club="${esc(c)}" aria-pressed="${c === ui.statClub}"${nw ? ` aria-label="${esc(c)}, needs work"` : ''}>${esc(c)}${nw ? '<span class="nw-dot" aria-hidden="true"></span>' : ''}</button>`;
@@ -1055,6 +1324,7 @@
       <div class="filters"><label for="scope">Session</label><select id="scope" data-change="scope">${scopeOptions(sc.id)}</select></div>
       ${sc.id === 'all' && data.sessions.some((s) => C.isSummaryOnly(s)) ? '<p class="note" style="margin-bottom:14px">“All sessions” pools sessions with individual shots. Sessions with ranges only are left out; pick one in the menu to see its ranges.</p>' : ''}
       ${sessionSummary(sc, hl, work)}
+      ${replayCard(replayItems)}
       ${clubs.length ? `<h2 id="clubSection">Club by club</h2>
       <div class="card">
         <div class="chips" role="group" aria-label="Club">${clubChips}</div>
@@ -1072,6 +1342,7 @@
       ${sc.session ? `<h2>Coaching notes</h2><div class="card">${notes.length ? `<ul class="plain">${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '<p class="empty">No coaching notes for this session.</p>'}
         <div class="row-actions"><button class="btn small ghost" data-action="goto-notes" data-id="${esc(sc.session.id)}">${notes.length ? 'Edit notes' : 'Add notes'}</button></div></div>` : ''}
     `;
+    rpMount(replayItems, entries);
     drawGap($('#gapChart'), entries, clubs);
     if ($('#dispChart')) drawDispersion($('#dispChart'), entries[single], single);
     if ($('#facets')) drawFacets($('#facets'), entries, dispClubs);
@@ -2001,6 +2272,31 @@
     player(b) { if (b.dataset.id !== playerId) switchPlayer(b.dataset.id); },
     'disp-club'(b) { ui.dispClub = b.dataset.club; renderStats(); },
     'stat-club'(b) { ui.statClub = b.dataset.club; renderStats(); },
+    // The replay updates in place, so a shot that's playing keeps playing.
+    'rp-play'() { rpToggle(); },
+    'rp-step'(b) {
+      if (!rp) return;
+      const go = rp.playing || rp.all;
+      rp.past = [];
+      rpShow(rp.idx + Number(b.dataset.d), go);
+    },
+    'rp-club'(b) {
+      if (!rp) return;
+      ui.rp.club = b.dataset.club;
+      Object.assign(rp, { all: false, past: [] });
+      $$('[data-action="rp-club"]', rp.card).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.club === ui.rp.club)));
+      rpFilter();
+      rpShow(0, false);
+    },
+    'rp-all'() {
+      if (!rp) return;
+      rp.all = !rp.all;
+      rp.past = [];
+      if (!rp.all) { rpControls(); return; }
+      if (REDUCED) { rpAllAtOnce(); return; }
+      rpShow(rp.idx >= rp.list.length - 1 ? 0 : rp.idx, true);
+    },
+    'rp-speed'() { ui.rp.speed = RP_SPEEDS[(RP_SPEEDS.indexOf(ui.rp.speed) + 1) % RP_SPEEDS.length]; rpControls(); },
     'focus-club'(b) {
       ui.statClub = b.dataset.club; renderStats();
       const sec = $('#clubSection'); if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2307,6 +2603,13 @@
     const i = (ui.rvFrame[id] || 0) + (dx < 0 ? 1 : -1);
     if (i >= 0 && i < r.frames.length) actions['rv-frame']({ dataset: { id, i: String(i) } });
   }, { passive: true });
+
+  // A replay pauses while the page is in the background, and picks up when it's back.
+  document.addEventListener('visibilitychange', () => {
+    if (!rp) return;
+    if (document.hidden && rp.playing) rpPause(true);
+    else if (!document.hidden && rp.autoPaused) rpResume();
+  });
 
   // Charts are drawn at the real pixel width, so redraw when the width changes.
   let lastW = window.innerWidth, resizeTimer;

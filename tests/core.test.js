@@ -416,6 +416,81 @@ eq(DA.validate(film), [], 'filming guide spec is valid');
 ok(/da-cam on/.test(DA.render(film, 0)) && /Face-on/.test(DA.render(film, 0)) && /Down the line/.test(DA.render(film, 2)), 'filming guide: the active camera and its label');
 ok(/da-phone/.test(DA.render(film, 1)) && /da-phone/.test(DA.render(film, 3)), 'filming guide: what goes in the picture');
 
+section('Shot replay: the flight from the numbers');
+const FL = require('../js/flight.js');
+const near = (a, b, tol) => Math.abs(a - b) <= tol;
+const peakOf = (tr) => { let m = 0; for (let i = 0; i <= 2000; i++) m = Math.max(m, tr.at(tr.hang * i / 2000).y); return m; };
+const slopeDeg = (tr, s0, s1) => Math.atan2(tr.height(s1) - tr.height(s0), s1 - s0) * 180 / Math.PI;
+const t7 = FL.trajectory({ club: '7i', carry_yds: 125, total_yds: 130, ball_speed_mph: 94, launch_deg: 22, apex_ft: 63, landing_deg: 40, hang_time_s: null, curve_ft: -16, offline_ft: 6 }, { kind: 'iron' });
+ok(near(peakOf(t7) * 3, 63, 0.2), 'peaks at the apex height (63 ft)');
+ok(near(slopeDeg(t7, 0, 0.05), 22, 0.3), 'leaves the ground at the launch angle');
+ok(near(-slopeDeg(t7, 124.95, 125), 40, 0.5), 'comes down at the landing angle');
+ok(t7.apexPoint.z > 0.5 * 125 && t7.apexPoint.z < 0.7 * 125, 'apex a little past halfway');
+eq([Math.round(t7.at(t7.hang).z), t7.land.x, t7.rest.z], [125, 2, 130], 'lands at the carry, 6 ft right (offline) and stops at the total');
+ok(near(t7.at(t7.hang * 0.999999).x, 2, 0.01), 'reaches the offline number as it lands');
+ok(near(t7.lateral(125) - 125 * t7.lateral(0.01) / 0.01, -16 / 3, 0.05), 'bends 16 ft left of its start line (curve)');
+ok(t7.samples.every((p, i, a) => !i || p.z > a[i - 1].z), 'always moving away from the tee');
+ok(t7.estimated.join() === 'hang' && t7.hang > 4 && t7.hang < 6, 'no hang time on the screen: estimated from the apex (about 5 s)');
+eq(['tee', 'flight', 'roll', 'rest'].map((ph, i) => t7.at([0, 1, t7.hang + 0.1, t7.duration + 1][i]).phase), ['tee', 'flight', 'roll', 'rest'], 'tee, flight, roll, rest');
+ok(t7.along(1) > 30 && t7.along(1) < 45, 'first second: about the ball speed (94 mph is 46 yd/s across the ground at 22°)');
+const top3w = FL.trajectory({ club: '3w', carry_yds: 65, total_yds: 145, ball_speed_mph: 115, launch_deg: 2, apex_ft: 2, landing_deg: 3, curve_ft: 0, offline_ft: 15 }, { kind: 'wood' });
+ok(top3w.hang >= 65 / (115 * 1760 / 3600) && peakOf(top3w) * 3 <= 2.01 && top3w.rest.z === 145, 'topped 3 wood: low, never faster than it left the club, runs out to 145');
+const bare = FL.trajectory({ club: 'PW', carry_yds: 90 }, { kind: 'iron' });
+eq(bare.estimated, ['launch', 'apex', 'landing', 'curve', 'offline', 'hang', 'total'], 'only a carry: everything else estimated');
+ok(near(bare.launch, 30, 1e-9) && near(bare.rest.z, 90 * 1.03, 1e-9) && bare.land.x === 0, 'wedge defaults: 30° launch, 3% roll, on line');
+const back = FL.trajectory({ club: 'SW', carry_yds: 60, total_yds: 57, launch_deg: 34, apex_ft: 50, landing_deg: 50, curve_ft: 0, offline_ft: 0 }, { kind: 'iron' });
+ok(back.rest.z === 57 && back.at(back.duration).z === 57, 'spins back to a total shorter than the carry');
+eq([FL.trajectory({ club: '7i' }), FL.trajectory({ club: '7i', carry_yds: 0 })], [null, null], 'no replay without a carry');
+// Every real shot in both data files flies to its own numbers.
+let flown = 0, wrong = [];
+['dad', 'brother'].forEach((pid) => {
+  const d = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', `${pid}_golf_data.json`), 'utf8'));
+  d.sessions.forEach((s) => C.sessionShots(s).forEach((x) => {
+    if (!C.isNum(x.carry_yds)) return;
+    const tr = FL.trajectory(x, { kind: C.clubKind(x.club) });
+    flown++;
+    const bad = [];
+    if (!tr || Math.abs(tr.at(tr.hang).z - x.carry_yds) > 1e-6) bad.push('carry');
+    else {
+      if (C.isNum(x.total_yds) && Math.abs(tr.rest.z - x.total_yds) > 1e-6) bad.push('total');
+      if (C.isNum(x.offline_ft) && Math.abs(tr.land.x - x.offline_ft / 3) > 1e-6) bad.push('offline');
+      if (C.isNum(x.apex_ft) && Math.abs(peakOf(tr) * 3 - x.apex_ft) > Math.max(0.3, 0.01 * x.apex_ft)) bad.push('apex');
+      if (!(tr.duration > 0 && tr.duration < 20)) bad.push('time');
+    }
+    if (bad.length) wrong.push(`${pid} ${x.id || x.time}: ${bad.join(', ')}`);
+  }));
+});
+eq(wrong, [], `every real shot (${flown}) lands at its carry and offline, peaks at its apex, stops at its total`);
+// Cameras: the view from behind the tee fits the whole shot; the view from above fits the ball and the pin.
+const camPts = FL.keyPoints(t7).concat([{ x: 0, y: 0, z: 145 }, { x: -13, y: 0, z: 130 }, { x: 13, y: 0, z: 130 }]);
+[[358, 222], [268, 200], [600, 372]].forEach(([w, h]) => {
+  const cam = FL.fitBehind(camPts, w, h);
+  ok(camPts.every((p) => { const q = FL.project(cam, p.x, p.y, p.z); return q && q.x >= 0 && q.x <= w && q.y >= 0 && q.y <= h; }), `behind the tee at ${w}×${h}: tee, apex, landing and pin all in view`);
+  ok(cam.x > 0 && cam.yaw < 0 && cam.pitch < 0, `${w}×${h}: camera right of the tee, turned toward the target, looking down`);
+  const over = FL.fitOverhead([t7.rest, t7.land, { x: 0, y: 0, z: 128 }], w, h);
+  ok([t7.rest, { x: 0, y: 0, z: 128 }].every((p) => { const q = FL.project(over, p.x, p.y, p.z); return q && q.x > 0 && q.x < w && q.y > 0 && q.y < h; }), `from above at ${w}×${h}: ball and pin in view`);
+});
+const midCam = FL.lerpCam(FL.fitBehind(camPts, 358, 222), FL.fitOverhead([t7.rest, { x: 0, y: 0, z: 128 }], 358, 222), 0.5);
+ok(midCam && Number.isFinite(midCam.F) && midCam.pitch < 0, 'camera glides between the two views');
+const crs = FL.course(128, 150, 42);
+eq(JSON.stringify(FL.course(128, 150, 42)), JSON.stringify(crs), 'the same course every time for one club');
+ok(crs.trees.every((t) => Math.abs(t.x) > crs.half + 15 || t.z > crs.pin + crs.green.rz + 20), 'trees stay off the fairway and the green');
+eq([crs.green.z, crs.markers], [128, [50, 100]], 'green at the pin; yardage markers before it');
+// Drawing runs start to finish on a stand-in canvas, for every view.
+let drawCalls = 0;
+const fakeCtx = new Proxy({}, {
+  get: (o, k) => (k in o ? o[k] : k === 'measureText' ? (s) => ({ width: String(s).length * 8 }) : k === 'createLinearGradient' ? () => ({ addColorStop() {} }) : () => { drawCalls++; }),
+  set: (o, k, v) => { o[k] = v; return true; }
+});
+let drewAll = true;
+try {
+  const camB = FL.fitBehind(camPts, 358, 222), camO = FL.fitOverhead([t7.rest, t7.land, { x: 0, y: 0, z: 128 }], 358, 222);
+  [0, 1, 3, t7.hang, t7.hang + 0.5, t7.duration + 1].forEach((t) => FL.drawFrame(fakeCtx, { cam: camB, course: crs, cur: t7, t, hud: true, past: [top3w, back] }));
+  FL.drawFrame(fakeCtx, { cam: FL.lerpCam(camB, camO, 0.4), course: crs, cur: t7, t: t7.duration + 1 });
+  FL.drawFrame(fakeCtx, { cam: camO, course: crs, cur: t7, t: t7.duration + 1, result: 'overhead' });
+} catch (e) { drewAll = false; console.error(e); }
+ok(drewAll && drawCalls > 500, 'draws the course, tracer, ball and labels in every view');
+
 section('Swing reviews');
 const SR = require('../js/review.js');
 const rf = { src: 'media/dad/r1/1-top.jpg', w: 720, h: 1280, label: 'Top', marks: [

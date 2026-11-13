@@ -74,7 +74,7 @@ Don't change `coaching_notes` or the tips in `js/tips.js` unless asked. Don't co
 
 ## Code
 
-- `index.html`: markup and styles. `js/app.js`: the UI. `js/core.js`: stats, the mis-hit and outlier rules, rounding and the paste parser; the node tests load it too. `js/tips.js`: the Tips & drills content for each player, shown under the Practice tab (the tab's internal id is still `tips`; its sections are Range, Swing and Drills). `js/drillart.js`: the drill animations. `js/review.js`: swing review markup and its checks.
+- `index.html`: markup and styles. `js/app.js`: the UI. `js/core.js`: stats, the mis-hit and outlier rules, rounding and the paste parser; the node tests load it too. `js/tips.js`: the Tips & drills content for each player, shown under the Practice tab (the tab's internal id is still `tips`; its sections are Range, Swing and Drills). `js/drillart.js`: the drill animations. `js/review.js`: swing review markup and its checks. `js/flight.js`: the Stats tab's shot replay (each shot's flight rebuilt from its numbers, the course and the cameras); it needs nothing beyond the usual shot keys, so there's nothing extra to record.
 - Scripts: `scripts/swing-frames.py` pulls frames from a swing video; `scripts/review-preview.js` screenshots a review's frames as the page draws them.
 - Tests: `node tests/core.test.js`. Data check: `node scripts/check-data.js`.
 - Preview: run `python3 -m http.server 8000` in the repo root and open http://localhost:8000 (add `?player=brother` for M3).

@@ -30,6 +30,7 @@ The four tabs are:
 
 - **Stats** for one session, or all sessions pooled:
   - Session summary: big-number tiles for shots, solid contact and on line (within 10 yds), each with the change from the previous session, and the longest carry. Then a "Needs work" box listing clubs to practise (tap one to jump to it) and highlights: thin or topped shots, average miss per club, and change since the baseline.
+  - **Shot replay:** watch each shot fly on a course, drawn from its numbers (see "Shot replay" below). Pick a club or all of them, step through the shots, **Play all** to run the session in order, and change the speed (1×, 2×, 4×). Under the picture: the carry, total, distance to the pin and peak height.
   - Club by club, one club at a time: tiles for its average carry, pure-strike carry, solid contact and average miss, its "Needs work" notes, **Goals** for the range (a focus, a distance zone around its pure-strike carry, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
   - A carry gapping chart.
   - Dispersion: offline vs. carry. All clubs show as one panel each on the same scale, or pick one club.
@@ -57,12 +58,13 @@ js/tips.js                   tips & drills for each player, keyed by player id
 js/app.js                    the interface
 js/drillart.js               drill animations (SVG, no DOM; the tests load it)
 js/review.js                 swing review markup and checks (no DOM; the tests and data check load it)
+js/flight.js                 shot replay: each shot's flight from its numbers, the cameras, the course, canvas drawing (the tests load it)
 media/<player>/<review>/     frames for swing reviews (never the videos)
 scripts/swing-frames.py      pulls frames from a swing video: probe, sheet, extract (with --blur), grid
 scripts/review-preview.js    screenshots a review's frames as the page draws them
 data/players.json            the list of players: id (used in ?player=), name, data file
 data/dad_golf_data.json      Dad's sessions
-data/brother_golf_data.json  M3's sessions (none yet)
+data/brother_golf_data.json  M3's sessions
 tests/core.test.js           node tests; run: node tests/core.test.js
 scripts/check-data.js        data check; run: node scripts/check-data.js
 CLAUDE.md                    how Claude adds shots from screen photos
@@ -170,6 +172,21 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
   - Carry is checked against the distance zone, launch against the launch window, and offline against the 10-yd (30 ft) target.
   - The verdict is "Pure strike!" when the ball speed and the carry both match. It's "Looks thin or topped" when the shot would count as a mis-hit: launch under the floor, or carry under 60% of the pure-strike carry.
 
+## Shot replay
+
+The Stats tab replays each shot from the numbers the range screen gave; nothing extra needs recording. `js/flight.js` does the work:
+
+- **The flight** leaves the tee at the launch angle, peaks at the apex height and comes down at the landing angle, landing at the carry. The apex sits a little past halfway, as drag makes it in a real flight.
+  - Sideways, the ball starts on the line that, with the curve added, lands it at the offline number. Then it hops and rolls out to the total, or spins back when the total is shorter than the carry.
+  - It leaves at its ball speed and slows the way drag slows it. The time in the air is the hang time, or, when the screen doesn't show one (Toptracer's "All shots" screen doesn't), an estimate from the apex height.
+  - Any other number missing from the screen is estimated from the club too, and the hint under the replay lists what was estimated.
+- **The course** is laid out for each club: a 30-yard fairway (the same as the dispersion charts), rough, bunkers, trees and a green. The pin sits where a pure strike with that club finishes, carry plus roll, so "to the pin" shows how close the shot would have been. It's the same course every time for a club.
+- **The cameras:**
+  - During the flight, the view is from behind the tee and a little to the right, like a TV camera on a tee shot, so the arc shows. A corner readout counts the distance and height, then shows the carry and total.
+  - Once the ball stops, the camera glides up over the green to show the distance to the pin and where the ball landed.
+  - The view from behind holds still for a club, so in **Play all** each new shot flies over the faded tracers of the ones before it, like the pattern on a range screen.
+- It pauses while it's off screen or the page is in the background. On phones set to reduce motion, Play goes straight to the result and Play all draws every shot at once.
+
 ## Tests
 
 ```
@@ -185,7 +202,8 @@ The tests check:
 - the progress baseline;
 - the tips callouts and content;
 - the player registry and data files;
-- the paste parser, against the Toptracer screenshot rows (both whitespace and tab-separated) and a Rapsodo CSV.
+- the paste parser, against the Toptracer screenshot rows (both whitespace and tab-separated) and a Rapsodo CSV;
+- the shot replay: every real shot in the data files lands at its carry and offline, peaks at its apex and stops at its total; launch and landing angles; estimates for missing numbers; both cameras keep the shot in view; and drawing runs in every view.
 
 ## Saving goals to GitHub
 
