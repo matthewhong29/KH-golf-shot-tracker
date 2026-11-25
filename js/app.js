@@ -2638,7 +2638,7 @@
       <canvas class="gm-pad-c" aria-hidden="true"></canvas>
       <div class="gm-pad-row"><p class="gm-pad-text" aria-live="polite"></p>
         <button type="button" class="gm-practice" data-action="gm-practice" aria-pressed="${!!ui.game.practice}" aria-label="${putt ? 'Practice stroke: one that doesn’t count' : 'Practice swing: one that doesn’t count'}">Practice</button></div>
-      ${gmMotionHtml()}
+      ${gmMotionHtml(kind)}
     </div>`;
   }
   // ----- Swinging the phone -----
@@ -2651,7 +2651,7 @@
     return typeof window !== 'undefined' && typeof window.DeviceMotionEvent !== 'undefined'
       && ((navigator.maxTouchPoints || 0) > 0 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches));
   }
-  function gmMotionHtml() {
+  function gmMotionHtml(kind) {
     if (!gmMotionAvail()) return '';
     if (gmMo && gmMo.ask) {
       return `<div class="gm-mo-ask" role="group" aria-label="Before you swing the phone">
@@ -2666,21 +2666,72 @@
       </div>`;
     }
     return gmMo && gmMo.on
-      ? `<div class="gm-mo-row"><p class="gm-mo-safe">Grip it tight, keep clear of people and things, and swing smoothly.</p>
-          <button type="button" class="gm-practice" data-action="gm-motion">Use the pad</button></div>`
+      ? `<div class="gm-mo-row"><button type="button" class="gm-practice on gm-mo-arm" data-action="gm-motion-arm" aria-pressed="${gmMotionArmed()}">${gmMotionArmLabel(kind)}</button>
+          <button type="button" class="gm-practice" data-action="gm-motion">Use the pad</button></div>
+        <p class="gm-mo-safe gm-mo-note">Grip it tight, keep clear of people and things, and swing smoothly.</p>`
       : '<div class="gm-mo-row"><p class="gm-mo-safe">Or hold your phone like a club and swing it.</p><button type="button" class="gm-practice" data-action="gm-motion">Swing the phone</button></div>';
+  }
+  // Nothing he does with the phone counts until he's set up and taps Ready: then it lets
+  // him get set (GM_MO.set s, turning the screen to the target and taking his grip),
+  // waits for him to keep still, and beeps (and buzzes, where the phone can) for him to
+  // swing, as he can't see the screen at address. One swing a tap: after it, a miss, or
+  // GM_MO.timeout s without a swing, he taps Ready again.
+  const GM_MO = { set: 1.5, timeout: 30 };
+  function gmMotionArmed() { return !!gmMo && gmMo.on && /^(set|wait|ready|swing)$/.test(gmMo.phase || ''); }
+  function gmMotionArmLabel(kind) { return gmMotionArmed() ? 'Cancel' : kind === 'putt' ? 'Ready to putt' : 'Ready to swing'; }
+  function gmMotionButtons() {
+    const p = gm && gm.pad, b = p && $('[data-action="gm-motion-arm"]', p.el);
+    if (!b) return;
+    b.textContent = gmMotionArmLabel(p.kind);
+    b.setAttribute('aria-pressed', String(gmMotionArmed()));
+  }
+  // Back to waiting for a tap on Ready, saying why if there's a reason.
+  function gmMotionIdle(miss) {
+    if (!gmMo) return;
+    Object.assign(gmMo, { phase: 'idle', buf: [], samples: [], stillSince: null, movingSince: null, setUntil: null, armedAt: null, theta: 0, miss: miss || '' });
+    gmMotionButtons();
+    gmMotionText();
+    gmPadDraw();
+  }
+  // The beep that says "swing", made with the tap on Ready (a page can only start sound
+  // from a tap).
+  let gmAudio = null;
+  function gmBeepInit() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      gmAudio = gmAudio || new AC();
+      if (gmAudio.state === 'suspended') gmAudio.resume();
+    } catch (err) { gmAudio = null; }
+  }
+  function gmBeep() {
+    try { if (navigator.vibrate) navigator.vibrate(40); } catch (err) { /* no vibration here */ }
+    if (!gmAudio) return;
+    try {
+      const t0 = gmAudio.currentTime, o = gmAudio.createOscillator(), g = gmAudio.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.2, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+      o.connect(g);
+      g.connect(gmAudio.destination);
+      o.start(t0);
+      o.stop(t0 + 0.18);
+    } catch (err) { /* no sound here */ }
   }
   const GM_MO_WHY = {
     noThrough: 'Swing back down through the ball to hit it.',
     noBack: 'Take the phone back further, then swing through.',
     still: 'Hold still, then swing.',
     tooFast: 'Too quick for the phone to follow: swing a little gentler.',
-    long: 'That took too long. Hold still, then swing.'
+    long: 'That took too long.',
+    idle: 'No swing for a while, so it stopped watching.'
   };
   // Asking for the motion has to happen right in the tap (iPhones ask the player first).
   function gmMotionStart() {
     const go = () => {
-      gmMo = { on: true, phase: 'wait', buf: [], samples: [], stillSince: null, theta: 0, got: false, word: '' };
+      gmMo = { on: true, phase: 'idle', buf: [], samples: [], stillSince: null, theta: 0, got: false, word: '' };
       window.addEventListener('devicemotion', gmMotionEvent);
       setTimeout(() => {
         if (gmMo && gmMo.on && !gmMo.got) { gmMotionStop(); toast('This phone isn’t sharing its motion with the page. Swipe on the pad instead.'); }
@@ -2704,13 +2755,14 @@
     const p = gm && gm.pad;
     if (!p || !gmMo || !gmMo.on) return;
     if (word != null) gmMo.word = word;
-    const putt = p.kind === 'putt', cue = GM.motionCue(Math.min(1, p.target), putt);
-    const txt = gmMo.phase === 'swing' ? '…'
-      : gmMo.word ? gmMo.word
-        : gmMo.phase === 'ready' ? `${gmMo.miss ? gmMo.miss + ' ' : ''}Ready: ${putt ? 'stroke it' : 'swing'}. This one wants ${cue}.`
-          : gmMo.miss ? gmMo.miss + ' Hold still, then go again.'
-            : ui.game.practice ? (putt ? 'Practice stroke: hold still, then stroke it.' : 'Practice swing: hold still, then swing.')
-              : 'Hold the phone like a grip, the screen facing the target, and keep still.';
+    const putt = p.kind === 'putt', cue = GM.motionCue(Math.min(1, p.target), putt), ph = gmMo.phase, go = putt ? 'Ready to putt' : 'Ready to swing';
+    const txt = ph === 'swing' ? '…'
+      : ph === 'set' ? 'Get set: grip it, the screen facing the target, then keep still.'
+        : ph === 'wait' ? 'Keep still…'
+          : ph === 'ready' ? `${putt ? 'Putt' : 'Swing'}! This one wants ${cue}.`
+            : gmMo.word ? gmMo.word
+              : gmMo.miss ? `${gmMo.miss} Set up again, then tap ${go}.`
+                : `${ui.game.practice ? (putt ? 'Practice stroke. ' : 'Practice swing. ') : ''}This one wants ${cue}. Set up to the ball, then tap ${go}.`;
     const t = $('.gm-pad-text', p.el);
     if (t && t.textContent !== txt) t.textContent = txt;
     p.el.classList.toggle('off', !!gm.busy);
@@ -2721,11 +2773,18 @@
     const r = e.rotationRate;
     if (!r || r.alpha == null || r.beta == null || r.gamma == null) return;
     mo.got = true;
+    if (mo.phase === 'idle') return;  // not set up yet: nothing he does counts
     const p = gm && gm.pad, t = e.timeStamp / 1000;
-    if (!p || gm.busy || (gm.phase !== 'aim' && gm.phase !== 'putt') || (p.kind === 'swing' && !gm.pools[gm.club])) {
-      if (mo.phase !== 'wait') Object.assign(mo, { phase: 'wait', buf: [], samples: [], stillSince: null });
-      return;
+    if (!p || gm.busy || (gm.phase !== 'aim' && gm.phase !== 'putt') || (p.kind === 'swing' && !gm.pools[gm.club])) { gmMotionIdle(''); return; }
+    // Just tapped Ready: let him get set, then wait for him to keep still.
+    if (mo.phase === 'set') {
+      if (mo.setUntil == null) Object.assign(mo, { setUntil: t + GM_MO.set, armedAt: t });
+      if (t < mo.setUntil) return;
+      Object.assign(mo, { phase: 'wait', stillSince: null, buf: [] });
+      gmMotionText();
+      gmPadDraw();
     }
+    if (mo.phase !== 'swing' && t - mo.armedAt > GM_MO.timeout) { gmMotionIdle(GM_MO_WHY.idle); return; }
     const g = e.accelerationIncludingGravity, smp = { t, w: [r.beta, r.gamma, r.alpha] };
     if (g && g.x != null) smp.g = [g.x, g.y, g.z];
     const putt = p.kind === 'putt', rate = Math.hypot(r.alpha, r.beta, r.gamma), M = GM.MOTION;
@@ -2745,11 +2804,11 @@
         }
         if (rate < still) mo.movingSince = null;
         else if (mo.movingSince == null) mo.movingSince = t;
-        else if (t - mo.movingSince > 0.5) { Object.assign(mo, { phase: 'wait', stillSince: null, movingSince: null }); gmMotionText(''); gmPadDraw(); }
+        else if (t - mo.movingSince > 0.5) { Object.assign(mo, { phase: 'wait', stillSince: null, movingSince: null }); gmMotionText(); gmPadDraw(); }
         return;
       }
       if (rate < still) { if (mo.stillSince == null) mo.stillSince = t; } else mo.stillSince = null;
-      if (mo.stillSince != null && t - mo.stillSince >= 0.5) { mo.phase = 'ready'; gmMotionText(''); gmPadDraw(); }
+      if (mo.stillSince != null && t - mo.stillSince >= 0.5) { mo.phase = 'ready'; gmBeep(); gmMotionText(''); gmPadDraw(); }
       return;
     }
     if (mo.phase !== 'swing') return;
@@ -2765,15 +2824,15 @@
       if (quiet) gmMotionMiss(sw.why === 'noThrough' ? 'noThrough' : 'noBack');
     }
   }
-  // A swing that couldn't be read: what went wrong, said until the next one starts.
+  // A swing that couldn't be read: what went wrong, said until he taps Ready again.
   function gmMotionMiss(why) {
-    Object.assign(gmMo, { phase: 'wait', buf: [], samples: [], stillSince: null, theta: 0, word: '', miss: GM_MO_WHY[why] || GM_MO_WHY.still });
-    gmMotionText();
-    gmPadDraw();
+    gmMo.word = '';
+    gmMotionIdle(GM_MO_WHY[why] || GM_MO_WHY.still);
   }
   function gmMotionFinish(sw) {
     const p = gm.pad, putt = p.kind === 'putt';
-    Object.assign(gmMo, { phase: 'wait', buf: [], samples: [], stillSince: null, word: '' });
+    Object.assign(gmMo, { phase: 'idle', buf: [], samples: [], stillSince: null, setUntil: null, armedAt: null, word: '', miss: '' });
+    gmMotionButtons();
     p.last = gm.lastSwing = { samples: null, sw, kind: p.kind, word: '', motion: true, theta: sw.turn };
     ui.game.shown = true;
     try { if (navigator.vibrate) navigator.vibrate(12); } catch (err) { /* no vibration here */ }
@@ -2819,9 +2878,9 @@
     if (last && !live && last.sw) {
       c.textAlign = 'center'; c.fillStyle = gmTempoColor(last.sw.tempo);
       c.fillText(`${GM.ratioText(last.sw.ratio)} · back ${Math.round(last.sw.depth * 100)}%`, cx, h - 14);
-    } else if (mo && mo.phase === 'ready' && !live) {
-      c.textAlign = 'center'; c.fillStyle = '#b9f2c9'; c.fillText(putt ? 'Ready: stroke it' : 'Ready: swing', cx, h - 14);
     }
+    const word = mo && !live ? { set: 'Get set…', wait: 'Keep still…', ready: putt ? 'Putt!' : 'Swing!' }[mo.phase] : '';
+    if (word) { c.textAlign = 'center'; c.fillStyle = mo.phase === 'ready' ? '#b9f2c9' : '#f2c94c'; c.clearRect(0, h - 28, w, 28); c.fillText(word, cx, h - 14); }
   }
   // How far back to drag for this shot: the swing it needs, or for a putt the backstroke
   // that rolls it a foot past.
@@ -4071,6 +4130,16 @@
       if (ui.game.motionOk) { gmMotionStart(); return; }
       gmMo = { ask: true };
       gmControls();
+    },
+    'gm-motion-arm'() {
+      if (!gm || gm.busy || !gmMo || !gmMo.on) return;
+      if (gmMotionArmed()) { gmMo.word = ''; gmMotionIdle(''); return; }  // Cancel
+      if (gm.pad && gm.pad.kind === 'swing' && !gm.pools[gm.club]) { toast('No range shots with this club yet. Play it from the range.'); return; }
+      gmBeepInit();
+      Object.assign(gmMo, { phase: 'set', setUntil: null, armedAt: null, buf: [], samples: [], stillSince: null, movingSince: null, word: '', miss: '' });
+      gmMotionButtons();
+      gmMotionText();
+      gmPadDraw();
     },
     'gm-motion-go'() {
       ui.game.motionOk = true;
