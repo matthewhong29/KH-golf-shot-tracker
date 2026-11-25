@@ -1396,5 +1396,78 @@ section('Game: swinging the phone (reading its gyroscope)');
   ok(GG.swingTips(Object.assign({}, opened, { phoneFace: 9 })).some((x) => /screen came back 9.0° open/.test(x)) && !GG.swingTips(Object.assign({}, opened, { phoneFace: 9, tempo: 0.3, ratio: 4, back: 0.8 })).some((x) => /Early, so the face/.test(x)),
     'the tips say where the screen faced, and don’t blame the tempo for a face the phone measured');
 }
+
+// ---------------------------------------------------------------------------
+section('Reading the launch monitor’s screen (js/live.js)');
+{
+  const LV = require('../js/live.js');
+  const pv = (t) => { const p = LV.parseText(t); return p ? [p.v, p.dir || (p.minus ? '-' : ''), p.dec] : null; };
+  eq([pv('152.3'), pv('12.4 R'), pv('R 12.4'), pv('L8'), pv('-3.1'), pv('152,3'), pv('6,543'), pv('1 52.3'), pv('--'), pv(''), pv('4.2 L R')],
+    [[152.3, '', 1], [12.4, 'R', 1], [12.4, 'R', 1], [8, 'L', 0], [3.1, '-', 1], [152.3, '', 1], [6543, '', 0], [152.3, '', 1], null, null, [4.2, '?', 1]],
+    'the OCR’s text reads as a number with its side: a decimal comma, a thousands comma, a wide 1 split off, and dashes for no number');
+  const fv = (id, t, unit, h) => { const v = LV.fieldValue(id, LV.parseText(t), unit, h); return v == null ? null : Math.round(v * 100) / 100; };
+  eq([fv('carry', '152.3', 'yds'), fv('carry', '139.3', 'm'), fv('side', '4.2 R', 'yds'), fv('side', 'L 7.4', 'yds'), fv('side', '-3.1', 'ft'), fv('side', '0.0', 'yds'), fv('speed', '180', 'km/h'), fv('apex', '25', 'yds')],
+    [152.3, 152.34, 12.6, -22.2, -3.1, 0, 111.85, 75], 'each value in the game’s units: yards, feet for the side and the height, mph; left is negative');
+  eq([fv('carry', '1523', 'yds'), fv('speed', '1124', 'mph'), fv('launch', '75', '°'), fv('carry', '-152.3', 'yds'), fv('carry', '0.4', 'yds'), fv('descent', '0', '°'), fv('side', '4.2 L R', 'yds')],
+    [152.3, 112.4, 7.5, null, null, null, null], 'a lost decimal point goes back when the number is ten times too big; impossible numbers, and both L and R, are left out');
+  const h1 = LV.habit(['152.3', '149.8', '160.1'].map(LV.parseText)), hs = LV.habit(['4.2 R', 'L 3.0', '1.1 R'].map(LV.parseText));
+  eq([h1.dec, h1.sure, hs.signed], [1, true, true], 'a box’s habit: it shows one decimal, and the side comes with its L or R');
+  eq([fv('carry', '1491', 'yds', h1), fv('carry', '14.91', 'yds', h1), fv('side', '42R', 'yds', hs), fv('side', '4.2', 'yds', hs), fv('side', '0.0', 'yds', hs)],
+    [149.1, 149.1, 12.6, null, 0], 'with that habit, a missed or misplaced point is put back, and a side read without its letter isn’t trusted (unless it’s 0)');
+  const good = LV.checkReading({ carry: 152.3, total: 160.1, side: 12.6, speed: 112.4, launch: 18.7, apex: 82.5 });
+  eq([good.carry, good.total, good.side, good.speed, good.left], [152.3, 160.1, 12.6, 112.4, []], 'a reading that adds up is kept whole');
+  const odd = LV.checkReading({ carry: 152.3, total: 101.2, side: 900, speed: 12.4, apex: 600 });
+  eq([odd.total, odd.side, odd.speed, odd.apex, odd.left], [undefined, undefined, undefined, undefined, ['total', 'side', 'speed', 'apex']],
+    'what can’t go with the carry is left out: a total shorter than it, a side, a ball speed or a height no such shot has');
+  eq([LV.checkReading({ total: 160 }), LV.checkReading({ carry: 0.2 })], [null, null], 'no carry, no shot');
+  good.total = 160.12;
+  eq([LV.sameReading(good, { carry: 152.8, total: 160.1, side: 12.6 }), LV.sameReading(good, { carry: 152.3, total: 160.1, side: -12.6 }), LV.sameReading(good, null)], [false, false, false], 'a new shot: the carry, total or side changed');
+  eq(LV.sameReading({ carry: 152.3, total: 160.1, side: 12.6 }, { carry: 152.3, total: 160.1, side: 12.6, speed: 99 }), true, 'the same shot still on the screen, whatever the speed was read as');
+  // the shot it hands the game flies the way the screen says: started on its launch direction,
+  // finishing at its side number
+  const sh = LV.toShot({ carry: 150, total: 162, side: -15, start: 2.5, speed: 110, launch: 19, apex: 80, descent: 44 }, '7i'), tr = FL.trajectory(sh, { kind: 'iron' });
+  const flew = Math.abs(tr.start - Math.tan(2.5 * Math.PI / 180)) < 2e-4 && Math.abs(tr.rest.x - (-5)) < 1e-6 && sh.curve_ft < 0;
+  eq([sh.club, sh.carry_yds, sh.total_yds, sh.offline_ft, sh.ball_speed_mph, sh.launch_deg, sh.apex_ft, sh.landing_deg], ['7i', 150, 162, -15, 110, 19, 80, 44], 'the shot in the data files’ keys');
+  ok(flew, `a ball started 2.5° right that finishes 15 ft left curved ${sh.curve_ft} ft (a draw), and the flight starts and finishes there`);
+  eq(LV.toShot({ carry: 98.6 }, '9i').offline_ft, 0, 'no side read: it plays straight');
+  eq([LV.readingText({ carry: 152.3, total: 160.12, side: 12.6, speed: 112.4 }, {}), LV.readingText({ carry: 50, side: -3 }, { side: 'ft' }), LV.readingText({ carry: 50, side: 0 }, {})],
+    ['152.3 carry · 160.1 total · 4.2 yds right · 112.4 mph', '50 carry · 3 ft left', '50 carry · straight'], 'the reading in words, in the screen’s units');
+  // a new shot: the boxes change, then hold still for the settle time
+  const sig = (v) => new Uint8ClampedArray(384).fill(v), noisy = sig(40).map((v, i) => v + (i % 5));
+  ok(!LV.changed(sig(40), noisy) && LV.changed(sig(40), sig(40).map((v, i) => (i % 3 ? v : 220))), 'faint noise isn’t a change; a digit flipping a third of the pixels is');
+  const d = LV.detector({ settle: 700 });
+  eq([d.feed([sig(40)], 0), d.feed([sig(40)], 250), d.feed([sig(200)], 500), d.feed([sig(90)], 750), d.feed([sig(90)], 1000), d.feed([sig(90)], 1400), d.feed([sig(90)], 1500), d.feed([sig(90)], 1750)],
+    [false, false, false, false, false, false, true, false], 'it says read once, when the boxes have held still 700 ms after the last change');
+  // cleaning up a box: dark screens are flipped, so the digits are black on white
+  const W = 60, H = 30, dark = new Uint8ClampedArray(W * H).fill(25), light = new Uint8ClampedArray(W * H).fill(235);
+  for (let y = 8; y < 22; y++) for (let x = 20; x < 40; x++) { dark[y * W + x] = 240; light[y * W + x] = 20; }
+  const cd = LV.cleanup(dark, W, H), cl = LV.cleanup(light, W, H);
+  eq([cd.px[0], cd.px[15 * W + 30], cl.px[0], cl.px[15 * W + 30], LV.cleanup(new Uint8ClampedArray(W * H).fill(90), W, H).blank], [255, 0, 255, 0, true], 'white text on a dark screen and dark text on a light one both come out dark on white; an empty box is blank');
+  // the number's line, its glyphs, the dot and a small L or R
+  function page(w, h, rects) { const px = new Uint8ClampedArray(w * h).fill(255); rects.forEach(([x0, y0, x1, y1]) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) px[y * w + x] = 0; }); return px; }
+  // a label (12 px) above a number of three 50 px digits with a dot after the second, a ° sign
+  const label = [[10, 4, 60, 15]], digits = [[10, 40, 35, 89], [50, 40, 75, 89], [100, 40, 125, 89]], dot = [[83, 82, 90, 89]], deg = [[135, 40, 145, 50]];
+  const b1 = LV.textBand(page(200, 110, label.concat(digits, dot, deg)), 200, 110);
+  eq([b1.y0, b1.y1, b1.glyphs.length, b1.dots.length, b1.x1 < 135], [40, 89, 3, 1, true], 'the tallest line is the number’s, with three glyphs and a decimal point; the ° sign is whited out');
+  const small = [[10, 4, 21, 23], [26, 4, 37, 23], [42, 4, 53, 23]];
+  eq(LV.textBand(page(200, 110, small.concat(digits)), 200, 110, 20 / 110).y1, 23, 'with the height it had before, it picks that line');
+  eq(LV.textBand(page(200, 110, small.concat(digits)), 200, 110, 34 / 110), null, 'and none at all when no line is that height');
+  eq(LV.textBand(page(200, 110, [[10, 60, 40, 64], [50, 60, 80, 64]]), 200, 110), null, 'a row of dashes isn’t a number');
+  // a small R and a small L after the digits
+  const R = [[140, 65, 143, 89], [140, 65, 152, 68], [149, 65, 152, 76], [140, 74, 152, 77], [148, 78, 152, 89]], Lsh = [[140, 65, 143, 89], [140, 86, 154, 89]];
+  eq([LV.textBand(page(200, 110, digits.concat(R)), 200, 110).mark.kind, LV.textBand(page(200, 110, digits.concat(Lsh)), 200, 110).mark.kind], ['R', 'L'], 'a smaller R has its bowl at the top right, an L nothing there');
+  const band = (gl, dots, mark) => ({ y0: 0, y1: 99, glyphs: gl.map(([a, b]) => ({ x0: a, x1: b, h: 100 })), dots, mark: mark || null });
+  const f = (t, b, o) => { const r = LV.fitText(t, b, o); return [r.text, r.ok]; };
+  eq([f('42R', band([[0, 60], [90, 150], [170, 230]], [75])), f('4.2R', band([[0, 60], [90, 150], [170, 230]], [75])), f('12.4', band([[0, 30], [50, 80], [100, 160], [200, 260]], [180]))],
+    [['4.2R', true], ['4.2R', true], ['12.4', false]], 'the text matches the glyphs: a missed decimal point goes back; a dropped digit doesn’t match');
+  eq([f('12.4', band([[0, 30], [50, 80], [100, 160], [200, 260]], [180]), { ones: true }), f('1.3', band([[0, 30], [50, 80], [120, 180]], [100]), { ones: true }), f('15.', band([[0, 30], [50, 110], [160, 190]], [130]), { ones: true })],
+    [['112.4', true], ['11.3', true], ['15.1', true]], 'once no try matches, a dropped narrow 1 goes back, on the right side of the point');
+  const mk = { kind: 'L', left: false, x0: 300, x1: 330 };
+  eq([f('12.8.', band([[0, 60], [80, 140], [180, 240]], [160], mk), { dir: true }), f('12.84', band([[0, 60], [80, 140], [180, 240]], [160], mk), { dir: true }), f('12.8', band([[0, 60], [80, 140], [180, 240]], [160], mk))],
+    [['12.8 L', true], ['12.8L', true], ['12.8', true]], 'a small L the OCR missed (or read as a digit) is put back on a side number, and ignored on any other');
+  eq([LV.boxFrom({ x: 300, y: 50 }, { x: 100, y: 150 }, 1000, 500), LV.okBox({ x: 0.1, y: 0.1, w: 0.2, h: 0.1 }), LV.okBox({ x: 0.9, y: 0.1, w: 0.2, h: 0.1 }), LV.okBox({ x: 0.1, y: 0.1, w: 0, h: 0.1 })],
+    [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }, true, false, false], 'a box from two corners, as fractions of the window, and only boxes inside it count');
+  eq(LV.FIELDS.map((x) => x.id), ['carry', 'total', 'side', 'speed', 'launch', 'start', 'apex', 'descent'], 'the numbers it can read, carry first');
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

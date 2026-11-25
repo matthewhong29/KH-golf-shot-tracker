@@ -606,6 +606,7 @@
     fitTabs();
     $$('section.view').forEach((v) => { v.hidden = v.dataset.view !== ui.tab; });
     ({ stats: renderStats, progress: renderProgress, tips: renderTips, game: renderGame, sessions: renderSessions })[ui.tab]();
+    lvSync();
   }
   // Five tabs: when a tab's name won't fit (a narrow phone, or a wide font), only the tab
   // you're on shows its name; the others keep their icons, and their names for screen readers.
@@ -2099,7 +2100,7 @@
           <li><strong>Real swing:</strong> put your thumb on the ball, drag down for the backswing, then swipe up through the ball. A gold ring rises at the pace of a perfect tempo: 3 : 1, back to down.</li>
           <li>Quick from the top shuts the face, so it starts ${lefty ? 'right' : 'left'}; slow leaves it open, so it starts ${lefty ? 'left' : 'right'}. Swipe up and to the ${lefty ? 'left' : 'right'} for a draw, up and to the ${lefty ? 'right' : 'left'} for a fade.</li>
           <li>Tap the map to aim. The oval shows where most of your shots with that club finish.</li>
-          <li>At the range? Choose <strong>From the range</strong> and type in each shot from the screen to play the hole live.</li>
+          <li>At the range? Choose <strong>From the range</strong> and type in each shot from the screen to play the hole live. ${lvCan() ? 'On a Mac with the iPad mirrored to it, the page can read each shot off the Rapsodo screen by itself.' : ''}</li>
         </ul>
         <div class="field"><span class="label" id="gmTeeL">Tees</span><div class="chips" role="group" aria-labelledby="gmTeeL">${course.tees.map((x) => gmChip('tee', x.id, `${esc(x.name)} · ${x.yds.toLocaleString('en-US')} yds`, set.tee)).join('')}</div></div>
         <div class="field"><span class="label" id="gmHolesL">Holes</span><div class="chips" role="group" aria-labelledby="gmHolesL">${[['all', 'All 18'], ['front', 'Front 9'], ['back', 'Back 9'], ['one', 'One hole']].map(([v, l]) => gmChip('holes', v, l, set.holes)).join('')}</div>
@@ -2534,8 +2535,7 @@
   function gmLiveHtml() {
     const lie = gmLie(), f = GM.LIE[lie], dir = ui.game.dir;
     const lieNote = f && f.dist < 1 ? ` From the ${lie === 'trees' ? 'trees it’s a low punch, about 40%' : lie === 'bunker' ? 'sand it goes about 20%' : 'rough it goes about 10%'} shorter than on the range.` : '';
-    return `<div class="gm-live">
-      <p class="hint">Hit your ${esc(C.clubName(gm.club, data.clubs).toLowerCase())} at the range, then type in what the screen shows.${lieNote}</p>
+    const typed = `<p class="hint">Hit your ${esc(C.clubName(gm.club, data.clubs).toLowerCase())} at the range, then type in what the screen shows.${lieNote}</p>
       <div class="grid2">
         <div class="field"><label for="gmCarry">Carry (yds)</label><input id="gmCarry" type="number" inputmode="decimal" min="1"></div>
         <div class="field"><label for="gmTotal">Total (yds)</label><input id="gmTotal" type="number" inputmode="decimal" placeholder="if shown"></div>
@@ -2545,8 +2545,9 @@
         <button type="button" data-action="gm-dir" data-dir="L" aria-pressed="${dir === 'L'}">◀ Left</button>
         <button type="button" data-action="gm-dir" data-dir="R" aria-pressed="${dir === 'R'}">Right ▶</button>
       </div>
-      <button type="button" class="btn block" data-action="gm-live">Play this shot</button>
-    </div>`;
+      <button type="button" class="btn block" data-action="gm-live">Play this shot</button>`;
+    // While the screen is being read, typing a shot in is still there, folded away.
+    return `<div class="gm-live">${lvHtml()}${lvOn() ? `${lieNote ? `<p class="hint">${esc(lieNote.trim())}</p>` : ''}<details class="more gm-lv-type"><summary>Type a shot in instead</summary>${typed}</details>` : typed}</div>`;
   }
   // The controls: where the shot is hit (the swing pad, the meter or the range form)
   // right under the map, then the message about the last shot, then the clubs, the aim
@@ -2568,6 +2569,7 @@
         ${gmSwingSummary(card.shots, 'this hole')}
         <button type="button" class="btn block" data-action="gm-next">${nxt ? `Next: hole ${nxt.n}` : 'See your round'}</button></div>`;
       $('[data-action="gm-pickup"]', gm.box).disabled = true;
+      lvAfterControls();
       return;
     }
     $('[data-action="gm-pickup"]', gm.box).disabled = false;
@@ -2583,6 +2585,7 @@
           : `<div class="gm-label"><span>Putter · ${gmFtText(ft)}</span><span class="sg">Stop on the yellow line</span></div>${gmMeterHtml('putt')}`;
       box.innerHTML = chips + modes;
       if (ft > GM.TAP_IN) { if (real) gmPadSetup('putt'); else gmMeterSetup('putt'); }
+      lvAfterControls();
       return;
     }
     const sugg = gm.suggClub || gmSuggest();
@@ -2598,6 +2601,8 @@
       ${modes}`;
     if (real) gmPadSetup('swing'); else if (gm.round.mode !== 'live') gmMeterSetup('swing');
     gmAimText();
+    lvThumb();
+    lvAfterControls();
   }
   // A swing (or a putt) that's under way: nothing else changes until it's hit.
   function gmSwinging() { return !!gm && ((gm.meter && gm.meter.phase !== 'ready') || (gm.pad && gm.pad.phase === 'swing') || (!!gmMo && gmMo.phase === 'swing')); }
@@ -3497,6 +3502,343 @@
     ui.game.dir = null;
     gmPlay(GM.slopeShot(GM.adjustShot(shot, 1, gmLie()), gmLieSlope(), gmHand()), { kind: 'live', rnd: gmRnd(), lie: gmLie() });
   }
+
+  // ----- Reading the launch monitor's screen -----
+  // On a Mac, the iPad running Rapsodo is mirrored to it (QuickTime over the cable, or AirPlay)
+  // and the page shares that window. The reader (js/live.js) reads the numbers in the boxes
+  // marked on it, and each new shot plays on the hole, the way a typed-in one does. The boxes
+  // belong to this computer, not to a player, so they're saved once for everyone.
+  const LIVE = window.GolfLive;
+  const LV_KEY = LS + '.live';
+  let lv = null;
+  function lvCan() { return !!(LIVE && LIVE.canShare()); }
+  function lvOn() { return !!(lv && lv.reader && lv.state === 'on'); }
+  // The saved boxes and units, keeping only what makes sense.
+  function lvSettings() {
+    const s = loadJSON(LV_KEY), out = { boxes: {}, units: {}, aspect: 0 };
+    LIVE.FIELDS.forEach((f) => {
+      const b = s && s.boxes && s.boxes[f.id], u = s && s.units && s.units[f.id];
+      if (LIVE.okBox(b)) out.boxes[f.id] = { x: +b.x, y: +b.y, w: +b.w, h: +b.h };
+      out.units[f.id] = f.units.indexOf(u) >= 0 ? u : f.units[0];
+    });
+    if (s && C.isNum(s.aspect) && s.aspect > 0) out.aspect = s.aspect;
+    return out;
+  }
+  // A value read in one box, in the screen's units: "152.3 yds", "4.2 yds R".
+  function lvValText(id, v, unit) {
+    if (!C.isNum(v)) return '';
+    const f = LIVE.FIELD[id], u = LIVE.unitOf(id, unit), n = Math.round(Math.abs(v) / LIVE.factor(id, u) * 10) / 10;
+    return `${n}${u === '°' ? '°' : ' ' + u}${f.dir && n ? (v < 0 ? ' L' : ' R') : ''}`;
+  }
+  function lvHowHtml() {
+    return `<details class="more gm-lv-how"><summary>How to set it up</summary><ol>
+      <li>Plug the iPad into this Mac with its cable. Open QuickTime Player, choose File, then New Movie Recording, click the arrow next to the red button and pick the iPad as the camera. There's no need to record. (Or mirror it with AirPlay: on the iPad, Control Center, Screen Mirroring, then this Mac.)</li>
+      <li>On the iPad, open Rapsodo on the screen that shows each shot's numbers.</li>
+      <li>Here, choose <strong>Share the launch monitor's window</strong> and pick the QuickTime window. The first time, the Mac asks to let Safari record the screen: allow it in System Settings, Privacy &amp; Security, Screen Recording, then reload this page.</li>
+      <li>Drag a box round each number: carry first, then total and side.</li>
+      <li>Hit away. Each new shot plays on the hole a moment after its numbers show. Keep the QuickTime window open (it can sit behind Safari, but not in the Dock).</li>
+    </ol></details>`;
+  }
+  // The reader's card, at the top of the From-the-range controls.
+  function lvHtml() {
+    if (!lvCan()) return '';
+    const st = lv ? lv.state : 'off', note = lv && lv.note ? `<p class="gm-lv-note">${esc(lv.note)}</p>` : '';
+    if (st === 'starting') return `<div class="gm-lv" id="gmLv" aria-live="polite"><p class="gm-lv-t">Starting the reader…</p><p class="hint">The first time, it fetches the reader (about 6 MB).</p></div>`;
+    if (st !== 'on') {
+      return `<div class="gm-lv" id="gmLv"><p class="gm-lv-t">Read the shots off the screen</p>
+        <p class="hint">On a Mac: mirror the iPad running Rapsodo to it, share that window here, and every shot plays by itself.</p>${note}
+        <button type="button" class="btn block" data-action="lv-share">Share the launch monitor's window</button>${lvHowHtml()}</div>`;
+    }
+    const set = lvSettings(), paused = lv.reader.paused(), marked = !!set.boxes.carry;
+    const last = lv.last ? `<span class="s">Last: ${esc(LIVE.readingText(lv.last, set.units))}</span>` : '';
+    const say = !marked ? 'Mark the numbers to start reading.' : paused ? 'Paused: shots on the screen aren’t played.'
+      : gm && !gmPutting() && gm.phase !== 'holed' ? `Hit your ${C.clubName(gm.club, data.clubs).toLowerCase()}. It plays as soon as its numbers show.` : 'Watching the screen.';
+    return `<div class="gm-lv on" id="gmLv">
+      <canvas class="gm-lv-thumb" id="gmLvThumb" width="176" height="132" aria-hidden="true"></canvas>
+      <div class="gm-lv-txt" aria-live="polite"><span class="gm-lv-t">${paused ? 'Paused' : marked ? '<span class="dot" aria-hidden="true"></span>Reading the screen' : 'Window shared'}</span><span class="s">${esc(say)}</span>${last}</div>
+      ${note}
+      <div class="gm-lv-btns">
+        ${marked ? `<button type="button" class="btn small ghost" data-action="lv-pause" aria-pressed="${paused}">${paused ? 'Resume' : 'Pause'}</button>` : ''}
+        <button type="button" class="btn small ghost" data-action="lv-mark">${marked ? 'Mark again' : 'Mark the numbers'}</button>
+        <button type="button" class="btn small ghost" data-action="lv-stop">Stop</button>
+      </div></div>`;
+  }
+  // Redraws the card in place (the rest of the controls stay as they are).
+  function lvRender() {
+    const el = $('#gmLv');
+    if (!el) return;
+    const had = el.contains(document.activeElement) && document.activeElement.dataset ? document.activeElement.dataset.action : null;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = lvHtml();
+    const card = tmp.firstElementChild;
+    if (!card) return;
+    el.replaceWith(card);
+    // the button he pressed keeps the focus
+    const again = had && $(`[data-action="${had}"]`, card);
+    if (again) again.focus();
+    lvThumb();
+  }
+  function lvThumb() { const c = $('#gmLvThumb'); if (c && lvOn()) lv.reader.thumb(c); }
+  function lvOff(msg) {
+    lvMarkClose();
+    if (lv && lv.reader) lv.reader.stop();
+    if (lv && lv.timer) clearInterval(lv.timer);
+    lv = msg ? { state: 'off', note: msg } : null;
+    lvRender();
+  }
+  // Shares the window: the person picks it in the browser's own picker. getDisplayMedia has
+  // to be the first thing the tap does.
+  async function lvShare() {
+    if (!lvCan() || (lv && lv.state === 'starting')) return;
+    if (lvOn()) { lvMarkOpen(); return; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 10, max: 15 } }, audio: false });
+    } catch (e) {
+      lv = { state: 'off', note: e && e.name === 'NotAllowedError'
+        ? 'No window was shared. If you picked one and it still didn’t share, the Mac has to let Safari record the screen: System Settings, Privacy & Security, Screen Recording. Then reload this page.'
+        : 'The window couldn’t be shared. Try again.' };
+      lvRender();
+      return;
+    }
+    const r = LIVE.reader({ settle: 800, onShot: lvShot, onRead: lvRead, onEnd: () => lvOff('Sharing stopped.'), onError: lvError });
+    lv = { state: 'starting', reader: r, last: null, note: '', queued: null, held: false };
+    lvRender();
+    try {
+      await r.start(stream);
+      await LIVE.ocr();
+      for (let i = 0; i < 50 && !r.ready(); i++) await new Promise((ok) => setTimeout(ok, 100));
+      if (!r.ready()) throw new Error('The shared window isn’t showing');
+    } catch (e) {
+      r.stop();
+      lv = { state: 'off', note: `${e && e.message ? e.message : 'The reader didn’t start'}. Try again.` };
+      lvRender();
+      return;
+    }
+    if (!lv || lv.reader !== r) return;
+    lv.state = 'on';
+    lv.timer = setInterval(lvThumb, 400);
+    const set = lvSettings(), sz = r.size(), aspect = sz.w / sz.h;
+    if (!set.boxes.carry || !set.aspect || Math.abs(aspect / set.aspect - 1) > 0.03) {
+      lvRender();
+      lvMarkOpen(set.boxes.carry ? 'The window’s shape has changed, so mark the numbers again.' : '');
+      return;
+    }
+    r.setBoxes(set.boxes, set.units);
+    lvSync();
+    lvRender();
+  }
+  function lvError() { if (!lv) return; lv.note = 'Something went wrong reading the screen. Stop and share it again.'; lvRender(); }
+  // Every reading: the last shot on the screen, and why nothing played when it can't read one.
+  function lvRead(rd, info) {
+    if (!lv) return;
+    if (rd) lv.last = rd;
+    if (info.first) lv.note = rd ? '' : 'It can’t read the carry on the screen yet. If the numbers are showing, mark them again.';
+    else if (!rd) lv.note = 'The screen changed, but there’s no carry to read.';
+    else if (rd.left && rd.left.length && !info.same) lv.note = `Couldn’t read the ${rd.left.map((id) => LIVE.FIELD[id].name.toLowerCase()).join(' or ')} on that one.`;
+    else if (!info.same) lv.note = '';
+    lvRender();
+  }
+  // A new shot on the screen: it plays now if he's ready to hit, or once the ball in the air
+  // stops. On the green, or with the hole over, it doesn't play.
+  function lvShot(rd) {
+    if (!lv) return;
+    if (!gm || gm.round.mode !== 'live' || ui.tab !== 'game') return;
+    if (gm.phase === 'holed') { lvSay('That shot didn’t play: the hole is over. Go on to the next one first.'); return; }
+    if (gm.phase === 'putt' || gmPutting()) { lvSay('That shot didn’t play: you’re on the green, so putt with the meter.'); return; }
+    if (gm.busy || gm.phase !== 'aim' || gmSwinging()) { lv.queued = rd; lv.note = `Next shot read: ${LIVE.readingText(rd, lvSettings().units)}. It plays when this one stops.`; lvRender(); return; }
+    lvPlay(rd);
+  }
+  function lvSay(msg) { lv.note = msg; if ($('#gmLv')) lvRender(); else toast(msg); }
+  function lvPlay(rd) {
+    lv.queued = null;
+    lv.note = '';
+    ui.game.dir = null;
+    const shot = LIVE.toShot(rd, gm.club);
+    gmPlay(GM.slopeShot(GM.adjustShot(shot, 1, gmLie()), gmLieSlope(), gmHand()), { kind: 'live', screen: true, rnd: gmRnd(), lie: gmLie() });
+  }
+  // After the controls are drawn: a shot read while the last one flew plays now, unless that
+  // one finished on the green or holed out (then the next stroke is a putt, or a new hole).
+  function lvAfterControls() {
+    lvSync();
+    if (!lv || !lv.queued || !gm || gm.busy) return;
+    if (gm.round.mode !== 'live') { lv.queued = null; return; }
+    if (gm.phase !== 'aim' || gmPutting()) { lv.queued = null; lvSay(gm.phase === 'holed' ? 'The shot hit while the ball was in the air didn’t play: the hole is over.' : 'The shot hit while the ball was in the air didn’t play: you’re on the green, so putt with the meter.'); return; }
+    const q = lv.queued;
+    lv.queued = null;
+    setTimeout(() => { if (gm && !gm.busy && gm.phase === 'aim' && !gmPutting() && gm.round.mode === 'live') lvPlay(q); }, 500);
+  }
+  // Reads only while a round is on From the range on the Game tab. Coming back to it, the shot
+  // on the screen is taken as already played.
+  function lvSync() {
+    if (!lvOn()) return;
+    const want = ui.tab === 'game' && !!gm && gm.round.mode === 'live' && !lv.mark;
+    if (want && lv.held) { lv.held = false; lv.reader.hold(false); lv.reader.rebase(); }
+    else if (!want && !lv.held) { lv.held = true; lv.reader.hold(true); if (!lv.mark) lv.queued = null; }
+  }
+
+  // ----- Marking the numbers on the screen -----
+  // A still of the shared window, full size: pick a number, then drag a box round it. Each box
+  // is read straight away, so he sees what it reads before he's done.
+  function lvMarkOpen(note) {
+    if (!lvOn()) return;
+    const still = lv.reader.still();
+    if (!still) { toast('The shared window isn’t showing yet'); return; }
+    const set = lvSettings();
+    lv.mark = { still, boxes: Object.assign({}, set.boxes), units: Object.assign({}, set.units), pick: set.boxes.carry ? (set.boxes.total ? (set.boxes.side ? 'carry' : 'side') : 'total') : 'carry', reads: {}, note: note || '', back: document.activeElement };
+    lv.reader.hold(true);
+    let el = $('#lvMark');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'lvMark';
+      el.className = 'lv-mark';
+      el.setAttribute('role', 'dialog');
+      el.setAttribute('aria-modal', 'true');
+      el.setAttribute('aria-labelledby', 'lvMarkT');
+      document.body.appendChild(el);
+    }
+    document.body.classList.add('lv-open');
+    lvMarkRender();
+    Object.keys(lv.mark.boxes).forEach(lvMarkRead);
+    const t = $('#lvMarkT');
+    if (t) t.focus();
+  }
+  function lvMarkClose() {
+    const el = $('#lvMark');
+    if (el) el.remove();
+    document.body.classList.remove('lv-open');
+    if (!lv || !lv.mark) return;
+    const back = lv.mark.back;
+    lv.mark = null;
+    // reading picks up again where it should, taking what's on the screen as already played
+    lv.held = true;
+    lvSync();
+    if (back && back.isConnected) back.focus();
+  }
+  function lvMarkChips() {
+    const m = lv && lv.mark, el = $('#lvFields');
+    if (!m || !el) return;
+    el.innerHTML = LIVE.FIELDS.map((f) => {
+      const r = m.reads[f.id], has = !!m.boxes[f.id];
+      const v = !has ? (f.need ? 'needed' : '') : !r || r.busy ? 'reading…' : C.isNum(r.v) ? lvValText(f.id, r.v, m.units[f.id]) + (r.unsure ? '?' : '') : 'can’t read it';
+      return `<button type="button" class="chip lv-f${has ? ' has' : ''}${has && r && !r.busy && !C.isNum(r.v) ? ' bad' : ''}" data-action="lv-pick" data-id="${f.id}" aria-pressed="${m.pick === f.id}">${esc(f.name)}${v ? `<span class="v">${esc(v)}</span>` : ''}</button>`;
+    }).join('');
+    const f = LIVE.FIELD[m.pick], u = $('#lvUnits');
+    if (u) u.innerHTML = f.units.length > 1 ? `<span class="label">${esc(f.name)} on the screen is in</span><div class="seg" role="group" aria-label="${esc(f.name)} units">${f.units.map((x) => `<button type="button" data-action="lv-unit" data-u="${esc(x)}" aria-pressed="${m.units[f.id] === x}">${esc(x)}</button>`).join('')}</div>` : '';
+    const clr = $('[data-action="lv-mark-clear"]');
+    if (clr) { clr.disabled = !m.boxes[m.pick]; clr.textContent = `Clear ${f.name.toLowerCase()}`; }
+  }
+  function lvMarkRender() {
+    const m = lv.mark, el = $('#lvMark');
+    if (!m || !el) return;
+    el.innerHTML = `<div class="lv-panel">
+      <div class="lv-top"><h2 id="lvMarkT" tabindex="-1">Mark the numbers</h2>
+        <div class="lv-btns"><button type="button" class="btn small ghost" data-action="lv-mark-cancel">Cancel</button><button type="button" class="btn small" data-action="lv-mark-done">Done</button></div></div>
+      ${m.note ? `<p class="gm-lv-note">${esc(m.note)}</p>` : ''}
+      <p class="hint">Pick a number, then drag a box round it on the screen: just the number (and its L or R), not its name or its unit. Carry is the one it needs; the total and the side make the shot finish where yours did, and the rest shape its flight.</p>
+      <div class="chips lv-fields" id="lvFields" role="group" aria-label="Numbers to read"></div>
+      <div class="lv-units" id="lvUnits"></div>
+      <div class="lv-stage"><canvas id="lvCanvas" aria-label="The shared screen: drag a box round the number"></canvas></div>
+      <div class="lv-foot"><button type="button" class="btn small ghost" data-action="lv-mark-still">Take a new picture</button><button type="button" class="btn small ghost" data-action="lv-mark-clear">Clear</button></div>
+    </div>`;
+    lvMarkChips();
+    const cv = $('#lvCanvas');
+    cv.addEventListener('pointerdown', lvDragStart);
+    cv.addEventListener('pointermove', lvDragMove);
+    cv.addEventListener('pointerup', lvDragEnd);
+    cv.addEventListener('pointercancel', lvDragEnd);
+    lvMarkDraw();
+  }
+  // The still, as big as fits, with every box on it (the one picked, bold).
+  function lvMarkDraw() {
+    const m = lv && lv.mark, cv = $('#lvCanvas');
+    if (!m || !cv) return;
+    const st = m.still, wrap = cv.parentElement, W = Math.max(200, wrap.clientWidth), maxH = Math.max(220, window.innerHeight - 330);
+    const k = Math.min(W / st.width, maxH / st.height), w = Math.round(st.width * k), h = Math.round(st.height * k), dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.style.width = w + 'px';
+    cv.style.height = h + 'px';
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    const x = cv.getContext('2d');
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    x.drawImage(st, 0, 0, w, h);
+    const draw = (id, b, sel) => {
+      x.lineWidth = sel ? 3 : 2;
+      x.strokeStyle = sel ? '#f2c94c' : '#9be3b9';
+      x.strokeRect(b.x * w, b.y * h, b.w * w, b.h * h);
+      x.font = '600 13px system-ui, sans-serif';
+      const label = LIVE.FIELD[id] ? LIVE.FIELD[id].name : '', tw = x.measureText(label).width + 10, ly = b.y * h > 20 ? b.y * h - 20 : b.y * h + b.h * h + 2;
+      x.fillStyle = sel ? '#f2c94c' : '#9be3b9';
+      x.fillRect(b.x * w, ly, tw, 18);
+      x.fillStyle = '#0e1a13';
+      x.fillText(label, b.x * w + 5, ly + 13);
+    };
+    Object.keys(m.boxes).forEach((id) => { if (id !== m.pick) draw(id, m.boxes[id], false); });
+    if (m.drag) draw(m.pick, m.drag, true);
+    else if (m.boxes[m.pick]) draw(m.pick, m.boxes[m.pick], true);
+    m.view = { w, h };
+  }
+  function lvPt(e) { const r = e.currentTarget.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  function lvDragStart(e) {
+    const m = lv && lv.mark;
+    if (!m || !m.view) return;
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* not every browser */ }
+    m.from = lvPt(e);
+    m.drag = LIVE.boxFrom(m.from, m.from, m.view.w, m.view.h);
+  }
+  function lvDragMove(e) {
+    const m = lv && lv.mark;
+    if (!m || !m.from) return;
+    m.drag = LIVE.boxFrom(m.from, lvPt(e), m.view.w, m.view.h);
+    lvMarkDraw();
+  }
+  function lvDragEnd(e) {
+    const m = lv && lv.mark;
+    if (!m || !m.from) return;
+    const b = LIVE.boxFrom(m.from, lvPt(e), m.view.w, m.view.h);
+    m.from = null;
+    m.drag = null;
+    // a tap, not a drag: nothing changes
+    if (b.w * m.view.w < 8 || b.h * m.view.h < 6) { lvMarkDraw(); return; }
+    m.boxes[m.pick] = b;
+    lvMarkRead(m.pick);
+    // on to the next of the three that matter
+    const nextId = ['carry', 'total', 'side'].find((id) => !m.boxes[id]);
+    if (nextId) m.pick = nextId;
+    lvMarkChips();
+    lvMarkDraw();
+  }
+  function lvMarkRead(id) {
+    const m = lv && lv.mark;
+    if (!m || !m.boxes[id]) return;
+    const tok = {};
+    m.reads[id] = { busy: true, tok };
+    lvMarkChips();
+    lv.reader.readStill(id, m.still, m.boxes[id], m.units[id]).then((o) => {
+      if (!lv || lv.mark !== m || m.reads[id].tok !== tok) return;
+      m.reads[id] = { v: o.v, unsure: !!o.unsure, text: o.text };
+      lvMarkChips();
+    }, () => {
+      if (!lv || lv.mark !== m || m.reads[id].tok !== tok) return;
+      m.reads[id] = { v: null, err: true };
+      lvMarkChips();
+    });
+  }
+  function lvMarkDone() {
+    const m = lv && lv.mark;
+    if (!m) return;
+    if (!m.boxes.carry) { toast('Mark the carry first'); m.pick = 'carry'; lvMarkChips(); lvMarkDraw(); return; }
+    const rc = m.reads.carry;
+    if (rc && !rc.busy && !C.isNum(rc.v)) { toast('It can’t read the carry: box just the number, a little tighter'); return; }
+    saveJSON(LV_KEY, { boxes: m.boxes, units: m.units, aspect: m.still.width / m.still.height });
+    lv.reader.setBoxes(m.boxes, m.units);
+    lv.last = null;
+    lv.note = '';
+    lvMarkClose();
+    lvRender();
+  }
+
   function r1(v) { return Math.round(v * 10) / 10; }
   function r2(v) { return Math.round(v * 100) / 100; }
   // What a real swing did, kept with the stroke: tempo (r) and its goal (g), the swipe's
@@ -3592,7 +3934,7 @@
   function gmAfterShot(res, info, shot) {
     const card = gm.card, name = C.clubName(shot.club, data.clubs);
     const flown = `${Math.round(res.carry)} carry${Math.abs(res.total - res.carry) >= 1 ? `, ${Math.round(res.total)} total` : ''}`;
-    const title = (info.kind === 'meter' ? GM.timingWord(info.e) + ' · ' : info.kind === 'real' ? info.rep.shape + ' · ' : 'From the range · ') + `${name} · ${flown}`;
+    const title = (info.kind === 'meter' ? GM.timingWord(info.e) + ' · ' : info.kind === 'real' ? info.rep.shape + ' · ' : info.screen ? 'Off the screen · ' : 'From the range · ') + `${name} · ${flown}`;
     const nb = res.next, d = nb ? GM.dist(nb, gm.pin) : 0;
     const where = nb ? `${GM_WHERE[nb.lie] || GM.LIE_WORDS[nb.lie]}, ${nb.lie === 'green' ? gmFtText(d * 3) + ' from the hole' : gmYds(d) + ' to the pin'}.` : '';
     let line = where, kind = '';
@@ -4293,6 +4635,41 @@
       $$('[data-action="gm-dir"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.dir === ui.game.dir)));
     },
     'gm-live'() { if (gm && !gm.busy && gm.phase === 'aim') gmLiveShot(); },
+    'lv-share'() { lvShare(); },
+    'lv-stop'() { lvOff(); },
+    'lv-pause'() { if (!lvOn()) return; lv.reader.pause(!lv.reader.paused()); lv.queued = null; lvRender(); },
+    'lv-mark'() { lvMarkOpen(); },
+    'lv-mark-cancel'() { lvMarkClose(); lvRender(); },
+    'lv-mark-done'() { lvMarkDone(); },
+    'lv-mark-still'() {
+      const m = lv && lv.mark, st = m && lv.reader.still();
+      if (!st) return;
+      m.still = st;
+      Object.keys(m.boxes).forEach(lvMarkRead);
+      lvMarkDraw();
+    },
+    'lv-mark-clear'() {
+      const m = lv && lv.mark;
+      if (!m) return;
+      delete m.boxes[m.pick];
+      delete m.reads[m.pick];
+      lvMarkChips();
+      lvMarkDraw();
+    },
+    'lv-pick'(b) {
+      const m = lv && lv.mark;
+      if (!m || !LIVE.FIELD[b.dataset.id]) return;
+      m.pick = b.dataset.id;
+      lvMarkChips();
+      lvMarkDraw();
+    },
+    'lv-unit'(b) {
+      const m = lv && lv.mark;
+      if (!m || LIVE.FIELD[m.pick].units.indexOf(b.dataset.u) < 0) return;
+      m.units[m.pick] = b.dataset.u;
+      lvMarkRead(m.pick);
+      lvMarkChips();
+    },
     'gm-tapin'() { if (gm && !gm.busy && gm.phase === 'putt') gmPutt(GM.dist(gm.ball, gm.pin) * 3, { holed: true, along: 0, side: 0 }); },
     'gm-skip'() { if (gm && gm.fl) gm.fl.end(); },
     'gm-shot'(b) {
@@ -4638,6 +5015,7 @@
       if (all[j] && j !== i) { pt.setAttribute('tabindex', '-1'); all[j].setAttribute('tabindex', '0'); all[j].focus(); }
       return;
     }
+    if (e.key === 'Escape' && lv && lv.mark) { e.preventDefault(); lvMarkClose(); lvRender(); return; }
     if (e.key === 'Enter' && e.target && e.target.id === 'goalText') { e.preventDefault(); addGoal(); }
     if (e.key === 'Enter' && e.target && /^ck(Carry|Ball|Launch|Off)$/.test(e.target.id)) { e.preventDefault(); runCheck(); }
     if (e.key === 'Enter' && e.target && /^gm(Carry|Total|Off)$/.test(e.target.id)) { e.preventDefault(); actions['gm-live'](); }
@@ -4692,6 +5070,7 @@
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
+      if (lv && lv.mark) lvMarkDraw();
       if (window.innerWidth === lastW) return;
       lastW = window.innerWidth;
       hideTip();
