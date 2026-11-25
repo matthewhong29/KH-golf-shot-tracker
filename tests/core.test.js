@@ -904,5 +904,141 @@ function botRound(d, pools, seed) {
 });
 eq(JSON.stringify(botRound(fileData, dadPools, 4)), JSON.stringify(botRound(fileData, dadPools, 4)), 'the same seed plays the same round');
 
+
+section('Game: the real swing (reading a swipe)');
+// A finger's swipe as the pad samples it: rest on the ball, ease down for the backswing,
+// maybe pause, speed up through the ball and on a little. Times in s, pixels with y down.
+function fakeSwipe(o) {
+  o = Object.assign({ back: 0.75, down: 0.25, depth: 1, full: 120, angle: 0, strike: 0, pause: 0, hz: 60, x0: 170, y0: 54, follow: 28, rest: 0.08, stopShort: 0 }, o);
+  const D = o.depth * o.full, tan = Math.tan(o.angle * Math.PI / 180), xTop = o.x0 + o.strike - D * tan, yTop = o.y0 + D;
+  const tB = o.rest, tTop = tB + o.back, tD = tTop + o.pause, tX = tD + o.down, vEnd = D * 1.6 / o.down, tEnd = tX + o.follow / vEnd + 1.5 / o.hz, out = [];
+  for (let i = 0; i * (1 / o.hz) <= tEnd + 1e-9; i++) {
+    const t = i / o.hz;
+    let x, y;
+    if (t < tB) { x = o.x0; y = o.y0; }
+    else if (t < tTop) { const u = (t - tB) / o.back, k = u * u * (3 - 2 * u); x = o.x0 + (xTop - o.x0) * k; y = o.y0 + D * k; }
+    else if (t < tD) { x = xTop; y = yTop; }
+    else if (t < tX) { const u = (t - tD) / o.down; y = yTop - D * Math.pow(u, 1.6); x = xTop + (yTop - y) * tan; }
+    else { const over = (t - tX) * vEnd; y = o.y0 - over; x = o.x0 + o.strike + over * tan; }
+    if (o.stopShort && t >= tD && y < o.y0 + o.stopShort) break;
+    out.push({ t, x, y });
+  }
+  return out;
+}
+const PAD = { full: 120, ball: 30 };
+const rs = (o, putt) => GG.readSwing(fakeSwipe(o), Object.assign({ putt: !!putt }, PAD));
+const s31 = rs({}), s41 = rs({ back: 0.8, down: 0.2 }), s21 = rs({ back: 0.7, down: 0.35 });
+ok(s31.ok && Math.abs(s31.ratio - 3) < 0.1 && Math.abs(s31.depth - 1) < 0.01 && Math.abs(s31.angle) < 0.1 && Math.abs(s31.strike) < 0.01, `a 3 : 1 swipe reads 3 : 1 (${s31.ratio.toFixed(2)}), full, straight, out of the middle`);
+ok(Math.abs(s41.ratio - 4) < 0.15 && s41.tempo > 0.25 && Math.abs(s21.ratio - 2) < 0.1 && s21.tempo < -0.35, `4 : 1 is quick (${s41.ratio.toFixed(2)}), 2 : 1 slow (${s21.ratio.toFixed(2)})`);
+ok([[0.6, 0.2], [1.5, 0.5], [0.45, 0.15]].every(([b, d]) => Math.abs(rs({ back: b, down: d }).ratio - 3) < 0.15), 'the tempo is the ratio, whatever the pace');
+const sP = rs({ pause: 0.3 });
+ok(Math.abs(sP.pause - 0.3) < 0.03 && Math.abs(sP.ratio - 3) < 0.15, `a pause at the top counts in neither half (${sP.pause.toFixed(2)} s, ${sP.ratio.toFixed(2)} : 1)`);
+ok(Math.abs(rs({ hz: 120 }).ratio - 3) < 0.1, 'the same on a 120 Hz screen');
+eq([rs({ angle: 12 }).angle, rs({ angle: -8 }).angle].map((a) => Math.round(a)), [12, -8], 'the swipe’s angle, right of straight up');
+eq(Math.round(rs({ strike: 21 }).strike * 10) / 10, 0.7, 'where it came back through: 21 px right is 0.7 of a ball');
+eq([rs({ depth: 0.5, back: 0.5, down: 0.25 }).depth, rs({ depth: 1.2 }).depth].map((v) => Math.round(v * 100) / 100), [0.5, 1.2], 'how far back it went');
+eq([GG.tempoTarget(1), GG.tempoTarget(0.3), GG.tempoTarget(0.575), GG.tempoTarget(1, true)], [3, 2, 2.5, 2], 'the tempo goal: 3 : 1 full, 2 : 1 short and for a putt');
+eq([GG.powerOfDepth(0.6), GG.powerOfDepth(1), GG.powerOfDepth(1.2), GG.powerOfDepth(1.4)], [0.6, 1, 1.05, 1.06], 'power: the backswing, and only a little more past full');
+eq([GG.readSwing([], PAD).why, GG.readSwing(fakeSwipe({ depth: 0.03 }), PAD).why, GG.readSwing(fakeSwipe({ stopShort: 40 }), PAD).why], ['still', 'noBack', 'noThrough'], 'not a swing: no movement, no backswing, or never back up through the ball');
+const flick = GG.readSwing(fakeSwipe({ back: 0.6, down: 0.12, stopShort: 8 }), PAD);
+ok(flick.ok && flick.ratio > 4, 'a quick flick that leaves the glass just short of the ball still counts');
+
+section('Game: the real swing (face, path and the ball-flight laws)');
+const d7 = dadPools['7i'], d5 = dadPools['5hy'], m8 = m3Pools['8i'];
+const pr5 = GG.swingProfile(d5), pr8 = GG.swingProfile(m8);
+ok(pr5.face > 2 && pr5.face > pr5.path && GG.swingProfile(d5) === pr5, `Dad’s 5 hybrid: the face ${pr5.face.toFixed(1)}° open, more than the path (${pr5.path.toFixed(1)}°): it starts right and fades`);
+ok(pr8.path > 2 && pr8.face < pr8.path, `M3’s 8 iron: the path ${pr8.path.toFixed(1)}° in-to-out, the face shut to it: a draw`);
+ok(Object.keys(GG.LAW).every((c) => GG.LAW[c][0] >= 0.6 && GG.LAW[c][0] <= 0.9) && GG.clubLaw('Driver').curve > GG.clubLaw('7i').curve && GG.clubLaw('7i').curve > GG.clubLaw('SW').curve,
+  'the face sets most of the start line; a driver curves most for its face to path, a wedge least');
+const still = (pool, sw, o) => GG.swingShot(pool, sw, Object.assign({ still: true, equip: fileData.equipment }, o || {})).rep;
+const p0 = still(d7, s31), pQ = still(d7, s41), pS = still(d7, s21);
+ok(pQ.face < p0.face - 2 && pQ.start < p0.start - 1.5 && pS.face > p0.face + 2 && pS.start > p0.start + 1.5, `quick from the top shuts the face (${(pQ.face - p0.face).toFixed(1)}°) and starts it left; slow opens it and starts it right`);
+const rebuilt = (pool, rep, sw) => { const shot = GG.swingShot(pool, sw, { still: true }).shot; return GG.facePathOf(shot); };
+const fp = rebuilt(d7, pQ, s41);
+ok(Math.abs(fp.face - pQ.face) < 0.05 && Math.abs(fp.path - pQ.path) < 0.05, 'a shot built from a face and a path reads back as the same face and path');
+const pIn = still(d7, rs({ angle: 12 })), pOut = still(d7, rs({ angle: -12 }));
+ok(pIn.path > p0.path + 2.5 && pIn.curve < p0.curve - 5 && pOut.path < p0.path - 2.5 && pOut.curve > p0.curve + 5, `up and to the right is in-to-out and curves it left (${(pIn.curve - p0.curve).toFixed(0)} yds); up and to the left curves it right`);
+ok(Math.abs(pIn.start - p0.start) < Math.abs(pQ.start - p0.start), 'the path moves the start line far less than the face does');
+const drvM3 = m3Pools.Driver, w = still(drvM3, rs({ angle: 12 })), w0 = still(drvM3, s31), pw = still(dadPools.PW, rs({ angle: 12 })), pw0 = still(dadPools.PW, s31);
+ok((w0.curve - w.curve) / w0.carry > 2 * (pw0.curve - pw.curve) / pw0.carry, 'the same swipe curves a driver more than twice as much as a wedge, for its carry');
+const lefty = still(d7, s41, { hand: 'L' });
+ok(lefty.start > p0.start + 1.5 && lefty.face < 0 && still(d7, rs({ angle: 12 }), { hand: 'L' }).path < 0, 'left-handed: quick shuts the face and starts it right; up and to the right is out-to-in');
+eq([GG.shapeOf(0, 0, 150, 1), GG.shapeOf(-3, 0, 150, 1), GG.shapeOf(2.5, -6, 150, 1), GG.shapeOf(-2, 14, 150, 1), GG.shapeOf(0.5, -13, 150, 1), GG.shapeOf(-3, 0, 150, -1)],
+  ['Straight', 'Pull', 'Push-draw', 'Pull-slice', 'Hook', 'Push'], 'shapes, for his hand');
+const carryOf = (pool, sw) => FL.trajectory(GG.swingShot(pool, sw, { still: true }).shot, GG.flightOpts(pool.club)).carry;
+ok(Math.abs(carryOf(d7, s31) - d7.pure) / d7.pure < 0.06 && Math.abs(carryOf(d7, rs({ depth: 0.5, back: 0.5, down: 0.25 })) / carryOf(d7, s31) - 0.5) < 0.06, `a perfect full swing carries his pure-strike carry (${carryOf(d7, s31).toFixed(0)} of ${d7.pure}); half back, about half as far`);
+eq(JSON.stringify(GG.swingShot(d7, s41, { still: true })), JSON.stringify(GG.swingShot(d7, s41, { still: true })), 'a practice swing is the same every time');
+const allow = GG.shapeAllowance(d5, 1, 'fairway', { equip: fileData.equipment });
+ok(allow.side > 8 && /fade|slice/i.test(allow.shape), `the aim allows for his shape: Dad’s 5 hybrid finishes ${allow.side.toFixed(0)} yds right (${allow.shape})`);
+
+section('Game: the real swing (strikes and mis-hits)');
+rnd = FL.rng(31);
+const kinds = (pool, sw, n) => { const k = {}; for (let i = 0; i < n; i++) { const r = GG.swingShot(pool, sw, { rnd }).rep; k[r.mis || 'solid'] = (k[r.mis || 'solid'] || 0) + 1; } return k; };
+const kR = kinds(d7, rs({ back: 0.75, down: 0.12 }), 200), kS = kinds(d7, rs({ back: 0.75, down: 0.5 }), 200), kH = kinds(d7, rs({ strike: 80 }), 200), kT = kinds(d7, rs({ strike: -80 }), 200), kP = kinds(d7, s31, 200);
+ok(kR.thin > 40 && !kR.fat && kS.fat > 40 && !kS.thin, `rushed, he thins it (${kR.thin} of 200); slow, he hits it fat (${kS.fat})`);
+ok(kH.shank > 30 && !kH.toe && kT.toe > 30 && !kT.shank && kP.solid === 200, 'way off the heel, a shank; off the toe, a weak one; a perfect swing is always solid');
+const shank = GG.swingShot(d7, rs({ strike: 80 }), { rnd: FL.rng(2) });
+const sh = Array.from({ length: 40 }, () => GG.swingShot(d7, rs({ strike: 80 }), { rnd })).filter((x) => x.rep.mis === 'shank');
+ok(sh.length && sh.every((x) => x.rep.start > 15 && x.rep.carry < 0.6 * d7.pure), 'a shank shoots off to the right, short');
+const qOf = (o) => GG.strikeOf(rs(o), GG.SWING.normal).q;
+ok(qOf({}) < 0.1 && qOf({ back: 0.8, down: 0.2 }) > 0.5 && qOf({ depth: 1.25 }) > 1 && qOf({ back: 0.15, down: 0.05 }) > 0.5, 'the strike: pure with a good swing, worse rushed, past full or snatched back');
+const best = Array.from({ length: 60 }, () => GG.swingShot(d7, s31, { rnd }).shot.carry_yds), worse = Array.from({ length: 60 }, () => GG.swingShot(d7, s41, { rnd }).shot.carry_yds);
+ok(best.reduce((a, b) => a + b) / 60 > worse.reduce((a, b) => a + b) / 60 + 3, 'the better the swing, the better struck: a good tempo carries further');
+const tipsQ = GG.swingTips(still(d7, rs({ back: 0.8, down: 0.18 }))), tipsOut = GG.swingTips(pOut), tipsOver = GG.swingTips(still(d7, rs({ depth: 1.15 })));
+ok(tipsQ.length && /quick from the top/.test(tipsQ[0]) && /left/.test(tipsQ[0]) && /out-to-in/.test(tipsOut.join(' ')) && /Full line/.test(tipsOver.join(' ')) && !GG.swingTips(p0).length,
+  'the tips: quick from the top (it went left), out-to-in, past full; none for a perfect swing');
+ok(/face 3\.\d° open/.test(GG.ownShapeText(still(d5, s31), '5 hybrid')) && GG.ownShapeText(still(d7, s31), '7 iron') === '', 'what a club usually does, when it’s worth saying');
+
+section('Game: the real swing (putting)');
+rnd = FL.rng(17);
+const pDepth = (ft) => GG.puttDepth(ft), pSwipe = (ft, o) => rs(Object.assign({ depth: pDepth(ft), back: 0.35 + 0.45 * pDepth(ft), down: (0.35 + 0.45 * pDepth(ft)) / 2, follow: 20 }, o), true);
+ok([3, 10, 25, 50].every((ft) => Math.abs(GG.puttLength(GG.puttDepth(ft)) - ft - 1.2) < 1e-9) && GG.puttDepth(40) > GG.puttDepth(10), 'the backstroke for a putt rolls it a foot past; a longer putt needs a longer one');
+const putts = (ft, sw, n) => Array.from({ length: n }, () => GG.puttSwing(ft, sw, rnd, 'green'));
+const makesP = (ft, sw) => putts(ft, sw, 300).filter((x) => x.holed).length / 300;
+const m4 = makesP(4, pSwipe(4)), m10s = makesP(10, pSwipe(10)), m25 = makesP(25, pSwipe(25));
+ok(m4 > 0.8 && m10s > 0.3 && m10s < 0.75 && m25 < 0.35, `a perfect stroke: 4 ft ${Math.round(m4 * 100)}%, 10 ft ${Math.round(m10s * 100)}%, 25 ft ${Math.round(m25 * 100)}%`);
+const jab = GG.puttSwing(10, pSwipe(10, { down: (0.35 + 0.45 * pDepth(10)) / 3.2 }), rnd, 'green', { still: true }).rep, dead = GG.puttSwing(10, pSwipe(10, { down: (0.35 + 0.45 * pDepth(10)) / 1.3 }), rnd, 'green', { still: true }).rep;
+ok(jab.past > 2 && dead.past < -0.5, `a jabbed stroke runs past (${jab.past.toFixed(1)} ft), a slow one dies short (${dead.past.toFixed(1)} ft)`);
+const pushP = GG.puttSwing(10, pSwipe(10, { angle: 12 }), rnd, 'green', { still: true }).rep;
+ok(pushP.start > 1 && putts(12, pSwipe(12), 50).every((x) => x.holed ? x.along === 12 : x.along > 0), 'swiped up to the right, it starts right; a putt goes forward, and a holed one ends at the hole');
+
+section('Game: a whole round with the real swing');
+function swingRound(d, pools, seed) {
+  const r = FL.rng(seed), gauss = () => { const u = 1 - r(), v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const swipe = (power, putt) => {
+    const depth = Math.max(0.07, power + gauss() * 0.03), back = 0.55 + 0.3 * Math.min(1, depth);
+    return GG.readSwing(fakeSwipe({ back, down: back / (GG.tempoTarget(depth, putt) * Math.exp(gauss() * 0.15)), depth, angle: gauss() * 5, strike: gauss() * 15 }), Object.assign({ putt }, PAD));
+  };
+  return HP.holes.map((h) => {
+    const H = GG.buildHole(HP, h.n, 'white'), pin = GG.pinFor(H, seed);
+    let ball = { x: H.start.x, z: H.start.z, lie: 'tee' }, strokes = 0;
+    while (strokes < 2 * h.par) {
+      const dd = GG.dist(ball, pin);
+      if (ball.lie === 'green') {
+        strokes++;
+        if (dd * 3 <= GG.TAP_IN) return strokes;
+        const pr = GG.puttSwing(dd * 3, swipe(Math.min(1.2, GG.puttDepth(dd * 3)), true), r, 'green');
+        if (pr.holed) return strokes;
+        const q = FL.offsetPoint(ball.x, ball.z, GG.headingTo(ball, pin), pr.along / 3, pr.side / 3);
+        ball = { x: q.x, z: q.z, lie: 'green' };
+        continue;
+      }
+      const club = GG.suggestClub(pools, dd, ball.lie), pool = pools[club];
+      const target = GG.aimFor(H, ball, pin, pool.full * GG.lieFactor(club, ball.lie).dist), power = GG.powerFor(pool, GG.dist(ball, target), ball.lie);
+      const side = GG.shapeAllowance(pool, power, ball.lie).side, aim = Math.abs(side) >= 3 ? FL.offsetPoint(target.x, target.z, GG.headingTo(ball, target), 0, -side) : target;
+      const res = GG.playShot(H, ball, aim, GG.swingShot(pool, swipe(power, false), { lie: ball.lie, rnd: r }).shot, { pin, equip: d.equipment, rnd: r });
+      strokes += 1 + res.penalty;
+      if (res.result === 'holed') return strokes;
+      ball = res.next.lie === 'fringe' ? Object.assign({}, res.next, { lie: 'green' }) : res.next;
+    }
+    return 2 * h.par;
+  });
+}
+[[fileData, dadPools, 'Dad'], [m3Data, m3Pools, 'M3']].forEach(([d, pools, name]) => {
+  const scores = swingRound(d, pools, 8), total = scores.reduce((a, b) => a + b, 0);
+  ok(scores.length === 18 && scores.every((x, i) => x >= 1 && x <= 2 * HP.holes[i].par) && total > 72 && total < 130, `${name}: 18 holes with the real swing, ${total} on the White tees`);
+});
+eq(JSON.stringify(swingRound(m3Data, m3Pools, 5)), JSON.stringify(swingRound(m3Data, m3Pools, 5)), 'the same seed plays the same round');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -258,7 +258,7 @@
     return Math.sqrt(xs.reduce(function (t, v) { return t + (v - m) * (v - m); }, 0) / (xs.length - 1));
   }
   // clubPools(sessions, equip) → { club: pool } for every club with a solid shot:
-  //   ranked: solid shots, best first; mis: mis-hits; misRate: the share of his shots with
+  //   ranked: solid shots, best first; pure: his pure-strike carry; mis: mis-hits; misRate: the share of his shots with
   //   the club that were mis-hits; full: how far a good swing goes (the middle total of
   //   the best third), carry: the same for carry; spread: { off, offSd, lenSd } in yds, for
   //   the landing zone on the map (outliers are left out, as in the averages).
@@ -269,9 +269,9 @@
       if (!ranked.length) return;
       var top = ranked.slice(0, Math.max(1, Math.ceil(ranked.length / 3)));
       var offs = ranked.filter(function (s) { return isNum(s.offline_ft); }).map(function (s) { return s.offline_ft / 3; });
-      var tots = ranked.map(totalOf);
+      var tots = ranked.map(totalOf), ref = C.strikeReference(e, club, equip);
       out[club] = {
-        club: club, ranked: ranked,
+        club: club, ranked: ranked, pure: ref ? ref.carry : C.median(ranked.map(function (s) { return s.carry_yds; })),
         mis: e.mis.filter(function (s) { return isNum(s.carry_yds) && s.carry_yds > 0; }),
         misRate: e.shots.length ? e.mis.length / e.shots.length : 0,
         full: C.median(top.map(totalOf)), carry: C.median(top.map(function (s) { return s.carry_yds; })),
@@ -366,6 +366,436 @@
     sc('launch_deg', f.low || 1);
     sc('landing_deg', f.low || 1);
     return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // The real swing: drag back, swipe through
+  // ---------------------------------------------------------------------------
+  // A swipe on the swing pad is read the way a launch monitor reads a real swing. How
+  // far down he drags is the backswing, and so the power. The time back over the time
+  // down is his tempo: 3 : 1 for a full swing, 2 : 1 for a short one and a putt (Tour
+  // Tempo's ratios). The direction he swipes up through the ball is the club's path,
+  // and where he comes back through it is the strike: the middle, or off the toe or heel.
+  //
+  // The ball then flies by the ball-flight laws: it starts mostly where the face points
+  // (about 75% for a 7 iron, 85% for a driver; the path sets the rest) and curves away
+  // from the path, by the face-to-path angle: a lot with a driver, a little with a wedge.
+  // The timing sets the face. A downswing that's quick for its backswing gets to the
+  // ball early, with the face closed (left, for a right-hander); a slow one gets there
+  // late, with it open (right). The path goes half as far the same way: over the top
+  // when quick, stuck behind when slow. So bad timing pulls or pushes it, with a little
+  // hook or fade, and the swipe's direction curves it.
+  //
+  // His own swing is where it starts from: each club's face and path as worked out from
+  // his range shots (their start lines and curves), with his own scatter around them,
+  // and the distance and height of one of his real shots with it, picked by how well
+  // this swing was struck. A badly struck one is one of his real mis-hits: thin when
+  // he rushed it, fat when it was slow.
+  var RAD = Math.PI / 180;
+  function gauss(rnd) { var u = 1 - rnd(), v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+  // For each club: how much of the start direction the face sets (the path sets the
+  // rest), and how far the ball curves for each degree of face to path, as a share of
+  // its carry (TrackMan: about 4% for a driver, 2% for a 7 iron, 1% for a sand wedge).
+  var LAW = {
+    Driver: [0.85, 0.040], '2w': [0.85, 0.036], '3w': [0.84, 0.034], '4w': [0.84, 0.033], '5w': [0.83, 0.031], '7w': [0.82, 0.029], '9w': [0.81, 0.027],
+    '2hy': [0.81, 0.029], '3hy': [0.8, 0.028], '4hy': [0.8, 0.027], '5hy': [0.8, 0.026], '6hy': [0.79, 0.025], '7hy': [0.78, 0.024],
+    '2i': [0.79, 0.026], '3i': [0.78, 0.025], '4i': [0.77, 0.024], '5i': [0.77, 0.023], '6i': [0.76, 0.022], '7i': [0.75, 0.020], '8i': [0.74, 0.018], '9i': [0.72, 0.016],
+    PW: [0.7, 0.014], GW: [0.69, 0.012], AW: [0.69, 0.012], SW: [0.68, 0.011], LW: [0.66, 0.010]
+  };
+  function clubLaw(club) {
+    var l = LAW[club] || (isWedge(club) ? LAW.SW : C.clubKind(club) === 'wood' ? LAW['5w'] : C.clubKind(club) === 'hybrid' ? LAW['4hy'] : LAW['7i']);
+    return { face: l[0], curve: l[1] };
+  }
+  // A shot's start line and curve as the club's face and path at impact, in degrees
+  // right (+) or left (−) of the target line: start, f2p (face to path: + curves right),
+  // face and path. It uses the same flight the replay draws, where the roll carries on
+  // along the line it landed on, so the shot rebuilt from these finishes where it did.
+  function facePathOf(s) {
+    if (!s || !isNum(s.carry_yds) || s.carry_yds <= 1 || !isNum(s.offline_ft)) return null;
+    var law = clubLaw(s.club), Cy = s.carry_yds, R = totalOf(s) - Cy, cY = isNum(s.curve_ft) ? s.curve_ft / 3 : 0;
+    var st = (s.offline_ft / 3 - cY * (1 + 1.2 * R / Cy)) / Math.max(0.5 * Cy, Cy + 0.6 * R);
+    var S = Math.atan(st) / RAD, D = cY / (law.curve * Cy);
+    return { start: S, f2p: D, face: S + (1 - law.face) * D, path: S - law.face * D };
+  }
+  // His swing with a club (worked out once): its usual face and path (right +), the
+  // scatter of his start lines and curves (sdStart, sdF2p, in degrees, and how much they
+  // go together, rho), from his solid shots. A club with only a few shots leans toward
+  // straight and an ordinary golfer's scatter (PRIOR, worth 3 shots), so one odd shot
+  // doesn't make the club.
+  var PRIOR = { n: 3, start: 2.5, f2p: 2 };
+  function swingProfile(pool) {
+    if (pool.profile) return pool.profile;
+    var law = clubLaw(pool.club), rows = pool.ranked.map(facePathOf).filter(Boolean), n = rows.length, n0 = PRIOR.n;
+    var mS = rows.reduce(function (t, r) { return t + r.start; }, 0) / (n + n0), mD = rows.reduce(function (t, r) { return t + r.f2p; }, 0) / (n + n0);
+    var vS = n0 * PRIOR.start * PRIOR.start, vD = n0 * PRIOR.f2p * PRIOR.f2p, cv = 0;
+    rows.forEach(function (r) { vS += (r.start - mS) * (r.start - mS); vD += (r.f2p - mD) * (r.f2p - mD); cv += (r.start - mS) * (r.f2p - mD); });
+    var rho = clamp(cv / Math.sqrt(vS * vD) || 0, -0.8, 0.8), dof = Math.max(1, n - 1 + n0);
+    pool.profile = { n: n, law: law, start: mS, f2p: mD, face: mS + (1 - law.face) * mD, path: mS - law.face * mD,
+      sdStart: Math.sqrt(vS / dof), sdF2p: Math.sqrt(vD / dof), rho: rho };
+    return pool.profile;
+  }
+
+  // Reading a swipe. A full backswing drags `full` pixels down from the ball; anything
+  // less than 6% of that isn't a swing. The top is where it turned: a stop of 0.12 s or
+  // more there is a pause, counted in neither the backswing nor the downswing (a shorter
+  // one is shared between them). The path
+  // is the line it came up on, from part way down (45% of the backswing, or 46 px)
+  // to a little past the ball.
+  var SWIPE = { still: 3, minDepth: 0.06, pause: 0.12, fitFrom: 0.45, fitMax: 46, fitAbove: 32, minDown: 0.03, maxDepth: 1.35, flick: 12 };
+  // Tour Tempo: 3 : 1 for a full swing, 2 : 1 for a short one (and a putt).
+  function tempoTarget(depth, putt) { return putt ? 2 : depth >= 0.75 ? 3 : depth <= 0.4 ? 2 : 2 + (depth - 0.4) / 0.35; }
+  // The power of a backswing: its share of a full one, and past full a little more
+  // (a quarter of the extra, at most 6%), at the cost of control.
+  function powerOfDepth(depth) { return depth <= 1 ? Math.max(0, depth) : Math.min(1.06, 1 + 0.25 * (depth - 1)); }
+  // When the finger got to the top and when it left it. It slows into the top and speeds
+  // away from it, so (as for the takeaway) the square root of the distance from the top
+  // runs straight in time near it: going forward along the last of the backswing finds
+  // when it arrived, and back along the first of the downswing when it left.
+  function topTimes(sm, iStart, iMax, iCross, still) {
+    var yMax = sm[iMax].y, i, a1 = -1, a2 = -1, l1 = -1, l2 = -1;
+    for (i = iMax - 1; i >= iStart; i--) { var r = yMax - sm[i].y; if (a1 < 0 && r > still) a1 = i; if (a1 >= 0 && r > 4 * still) { a2 = i; break; } }
+    for (i = iMax + 1; i <= iCross; i++) { var d = yMax - sm[i].y; if (l1 < 0 && d > still) l1 = i; if (l1 >= 0 && d > 4 * still) { l2 = i; break; } }
+    var iTop = iMax; // the last moment it was still at the top (a finger resting there)
+    while (iTop + 1 < iCross && yMax - sm[iTop + 1].y <= 0.5) iTop++;
+    var arrive = sm[iMax].t, leave = sm[iTop].t;
+    if (a1 >= 0 && a2 >= 0 && a2 < a1) {
+      var r1 = Math.sqrt(yMax - sm[a1].y), r2 = Math.sqrt(yMax - sm[a2].y);
+      if (r2 > r1) arrive = clamp(sm[a1].t + (sm[a1].t - sm[a2].t) * r1 / (r2 - r1), sm[a1].t, sm[iMax].t);
+    }
+    if (l1 >= 0 && l2 >= 0 && l2 > l1) {
+      var d1 = Math.sqrt(yMax - sm[l1].y), d2 = Math.sqrt(yMax - sm[l2].y);
+      if (d2 > d1) leave = clamp(sm[l1].t - (sm[l2].t - sm[l1].t) * d1 / (d2 - d1), sm[iTop].t, sm[l1].t);
+    } else if (l1 >= 0) leave = clamp((sm[iTop].t + sm[l1].t) / 2, sm[iTop].t, sm[l1].t);
+    if (leave < arrive) arrive = leave = (arrive + leave) / 2;
+    return { arrive: arrive, leave: leave, iTop: iTop };
+  }
+  // When the takeaway began. A finger speeds up from rest, so by the time it's 3 px from
+  // the ball it has been moving a while: going back along the square root of its
+  // distance, which runs straight in time while it speeds up evenly, finds the start.
+  // th: the distance (px) to start from, smaller for a short stroke, where the speeding
+  // up is over sooner.
+  function startTime(sm, x0, y0, th) {
+    var dist0 = function (p) { return Math.hypot(p.x - x0, p.y - y0); }, i1 = 1;
+    while (i1 < sm.length - 1 && dist0(sm[i1]) <= th) i1++;
+    var i2 = i1;
+    while (i2 < sm.length - 1 && dist0(sm[i2]) < 4 * th) i2++;
+    var d1 = dist0(sm[i1]), d2 = dist0(sm[i2]), t1 = sm[i1].t;
+    if (i2 === i1 || d2 <= d1) return sm[i1 - 1].t;
+    var ts = t1 - (sm[i2].t - t1) * Math.sqrt(d1) / (Math.sqrt(d2) - Math.sqrt(d1));
+    return clamp(ts, Math.max(sm[0].t, t1 - 0.25), t1);
+  }
+  // The direction of a run of points, in degrees right of straight up (the pad's y is down).
+  function lineAngle(pts) {
+    var n = pts.length, mx = 0, my = 0, sxy = 0, syy = 0;
+    pts.forEach(function (p) { mx += p.x / n; my += p.y / n; });
+    pts.forEach(function (p) { sxy += (p.x - mx) * (p.y - my); syy += (p.y - my) * (p.y - my); });
+    if (syy < 1) { var a = pts[0], b = pts[n - 1]; return Math.atan2(b.x - a.x, a.y - b.y) / RAD; }
+    return -Math.atan(sxy / syy) / RAD;
+  }
+  // readSwing(samples, opts) → what a swipe on the pad did. samples: [{ t (s), x, y }] in
+  // the pad's pixels (y down), from the touch on the ball to the follow-through. opts:
+  // { full: pixels for a full backswing, ball: the ball's width in pixels, putt }.
+  //   Not a swing: { ok: false, why: 'still' (it never moved), 'noBack' (no backswing)
+  //   or 'noThrough' (it never came back up through the ball), depth }.
+  //   A swing: { ok: true, depth (1 = full), power, back, down, pause (s), ratio (back ÷
+  //   down), target (3 or 2), tempo (ln of ratio ÷ target: + quick from the top, − slow),
+  //   angle (° right of straight up the target line), strike (balls right (+) or left of
+  //   where it started, as it came back through), top { x, y }, cross { x, y } }.
+  function readSwing(samples, opts) {
+    var sm = samples || [], n = sm.length, full = opts.full, i;
+    if (n < 3) return { ok: false, why: 'still', depth: 0 };
+    var x0 = sm[0].x, y0 = sm[0].y, iStart = -1;
+    for (i = 1; i < n; i++) if (Math.hypot(sm[i].x - x0, sm[i].y - y0) > SWIPE.still) { iStart = i - 1; break; }
+    if (iStart < 0) return { ok: false, why: 'still', depth: 0 };
+    var iMax = iStart, iCross = -1;
+    for (i = iStart + 1; i < n; i++) {
+      if (sm[i].y > sm[iMax].y) iMax = i;
+      else if (sm[i].y <= y0 && (sm[iMax].y - y0) / full >= SWIPE.minDepth) { iCross = i; break; }
+    }
+    var yMax = sm[iMax].y, depth = Math.min(SWIPE.maxDepth, (yMax - y0) / full);
+    if (depth < SWIPE.minDepth) return { ok: false, why: 'noBack', depth: Math.max(0, depth) };
+    // A quick flick can leave the glass just short of the ball: if it was on its way up
+    // fast and had only a little further to go (12 px, 15% of the backswing, or a frame
+    // or two at its speed: 30 ms), it's carried on to the ball at the speed it was going.
+    if (iCross < 0 && n - 1 > iMax) {
+      var last = sm[n - 1], prev = sm[n - 2], vy = (prev.y - last.y) / Math.max(1e-3, last.t - prev.t), left = last.y - y0;
+      if (vy > 0 && left <= Math.max(SWIPE.flick, 0.15 * (yMax - y0), 0.03 * vy) && left / vy <= 0.06) {
+        sm = sm.concat([{ t: last.t + left / vy, x: last.x + (last.x - prev.x) * (left / vy) / Math.max(1e-3, last.t - prev.t), y: y0 }]);
+        n = sm.length;
+        iCross = n - 1;
+      }
+    }
+    if (iCross < 0) return { ok: false, why: 'noThrough', depth: depth };
+    var th = clamp(0.04 * (yMax - y0), 1.5, SWIPE.still), t0 = startTime(sm, x0, y0, th);
+    var tt = topTimes(sm, iStart, iMax, iCross, th), iLeave = tt.iTop, tReach, tLeave, pause = tt.leave - tt.arrive;
+    if (pause >= SWIPE.pause) { tReach = tt.arrive; tLeave = tt.leave; } else { tReach = tLeave = (tt.arrive + tt.leave) / 2; pause = 0; }
+    var a = sm[iCross - 1], b = sm[iCross], u = a.y === b.y ? 1 : (a.y - y0) / (a.y - b.y);
+    var tCross = a.t + (b.t - a.t) * u, xCross = a.x + (b.x - a.x) * u;
+    var back = Math.max(0.01, tReach - t0), down = Math.max(SWIPE.minDown, tCross - tLeave);
+    var yFrom = y0 + Math.min(SWIPE.fitFrom * (yMax - y0), SWIPE.fitMax), pts = [];
+    for (i = iLeave; i < n; i++) {
+      if (sm[i].y < y0 - SWIPE.fitAbove) break;
+      if (sm[i].y <= yFrom) pts.push(sm[i]);
+    }
+    var target = tempoTarget(depth, opts.putt), ratio = back / down;
+    return {
+      ok: true, depth: depth, power: powerOfDepth(depth), back: back, down: down, pause: pause, ratio: ratio, target: target,
+      tempo: Math.log(ratio / target), angle: lineAngle(pts.length >= 2 ? pts : [a, b]), strike: (xCross - x0) / (opts.ball || 30),
+      top: { x: sm[iMax].x, y: yMax }, cross: { x: xCross, y: y0 }
+    };
+  }
+
+  // How much each part of a swing counts. face/path: degrees the face and path move
+  // for a tempo error of 1 (the ratio e times its target: about 2.7 times, so 4 : 1
+  // instead of 3 : 1 is 0.29, shutting the face 3.2°). swipe: degrees of path for each
+  // degree the swipe leans, past `dead` (a phone's slack). rest: the share of his own
+  // scatter left with a perfect swing. Strike: tempoWin is the tempo error, strikeWin
+  // the balls off the middle (past strikeMid), overWin the backswing past full, and
+  // snatch the backswing time, that each spoil the strike on their own.
+  var SWING = {
+    normal: { face: 11, path: 5.5, swipe: 0.35, dead: 3, rest: 0.5, tempoWin: 0.4, strikeMid: 0.35, strikeWin: 1.5, overWin: 0.16, snatch: 0.26 },
+    easy: { face: 7, path: 3.5, swipe: 0.22, dead: 5, rest: 0.45, tempoWin: 0.55, strikeMid: 0.5, strikeWin: 2.2, overWin: 0.24, snatch: 0.2 }
+  };
+  // Off the middle of the face: the face twists open off the toe and shut off the heel
+  // (TWIST degrees a ball off), and a wood's gear effect curves it the other way: a
+  // draw off the toe, a fade off the heel (GEAR degrees of face to path a ball off).
+  var TWIST = 1.2, GEAR = { driver: 1.8, wood: 1.6, hybrid: 1, iron: 0.3 };
+  function deadband(v, d) { return v > d ? v - d : v < -d ? v + d : 0; }
+  // How well a swing was struck: q is 0 out of the middle with a perfect tempo and 1 at
+  // the edge of a solid strike, adding up what spoiled it (parts).
+  function strikeOf(sw, cfg) {
+    var parts = {
+      tempo: Math.abs(sw.tempo) / cfg.tempoWin,
+      contact: Math.max(0, Math.abs(sw.strike) - cfg.strikeMid) / cfg.strikeWin,
+      over: Math.max(0, sw.depth - 1.02) / cfg.overWin,
+      snatch: sw.back < cfg.snatch ? (cfg.snatch - sw.back) / (cfg.snatch / 2) : 0
+    };
+    return { q: Math.sqrt(parts.tempo * parts.tempo + parts.contact * parts.contact + parts.over * parts.over + parts.snatch * parts.snatch), parts: parts };
+  }
+  // What spoiled a strike most ('tempo', 'contact', 'over' or 'snatch'), and which way a
+  // bad strike goes wrong: thin when he rushed it or snatched it, fat when it was slow, a
+  // shank off the heel, weak off the toe, and either from an overswing.
+  function misCause(st) { var p = st.parts; return Object.keys(p).sort(function (a, b) { return p[b] - p[a]; })[0]; }
+  function misKind(sw, st, h, rnd) {
+    var big = misCause(st);
+    if (big === 'tempo') return sw.tempo > 0 ? 'thin' : 'fat';
+    if (big === 'snatch') return 'thin';
+    if (big === 'contact') return sw.strike * h > 0 ? 'shank' : 'toe';
+    return rnd() < 0.5 ? 'thin' : 'fat';
+  }
+  // His mis-hits of one kind: thin ones launched low, fat ones high and short.
+  function misOfKind(pool, kind) {
+    var win = C.launchWindow(pool.club), lo = win ? win[0] - 6 : 10;
+    return pool.mis.filter(function (s) { var thin = isNum(s.launch_deg) && s.launch_deg < lo; return kind === 'thin' ? thin : !thin; });
+  }
+  // A mis-hit he's never hit with this club, made from one of his solid shots: thin
+  // runs low along the ground, fat flops out short, a shank shoots off to the side.
+  var MADE = {
+    thin: { carry: 0.55, roll: 0.75, speed: 0.85, launch: 0.35, apex: 0.2, landing: 0.4, hang: 0.5 },
+    fat: { carry: 0.5, roll: 0.1, speed: 0.6, launch: 1.05, apex: 0.45, landing: 0.85, hang: 0.7 },
+    shank: { carry: 0.42, roll: 0.3, speed: 0.6, launch: 0.75, apex: 0.35, landing: 0.7, hang: 0.6 },
+    toe: { carry: 0.72, roll: 0.25, speed: 0.8, launch: 0.85, apex: 0.6, landing: 0.85, hang: 0.8 }
+  };
+  function madeMis(s, kind) {
+    var m = MADE[kind], out = {};
+    Object.keys(s).forEach(function (k) { out[k] = s[k]; });
+    out.carry_yds = s.carry_yds * m.carry;
+    out.total_yds = out.carry_yds * (1 + m.roll);
+    [['ball_speed_mph', m.speed], ['launch_deg', m.launch], ['apex_ft', m.apex], ['landing_deg', m.landing], ['hang_time_s', m.hang]].forEach(function (x) {
+      out[x[0]] = isNum(s[x[0]]) ? s[x[0]] * x[1] : null;
+    });
+    out.made = kind;
+    return out;
+  }
+  // How much of the curve a mis-hit keeps (a low or weak ball curves less).
+  var MIS_CURVE = { thin: 0.3, fat: 0.5, shank: 0.2, toe: 0.6 };
+  var MIS_SHANK = 26; // degrees a shank starts off to the heel side
+
+  // The shape of a shot in a golfer's words, for his hand: where it started (a pull
+  // starts to the left for a right-hander, a push to the right) and how it curved (a
+  // draw curves left for a right-hander and a big one is a hook; a fade curves right
+  // and a big one is a slice). start: ° right of the line; curve: yds right; h: 1 for a
+  // right-hander, −1 for a left-hander.
+  function shapeOf(start, curve, carry, h) {
+    var s = h * start, c = h * curve, side = carry * Math.tan(Math.abs(start) * RAD);
+    var st = Math.abs(s) >= 1.5 && side >= 2.5 ? (s < 0 ? 'Pull' : 'Push') : '';
+    var r = Math.abs(c) / Math.max(carry, 1);
+    var cv = r < 0.025 || Math.abs(c) < 2 ? '' : c < 0 ? (r > 0.07 ? 'hook' : 'draw') : (r > 0.07 ? 'slice' : 'fade');
+    if (!st && !cv) return 'Straight';
+    if (!cv) return st;
+    return st ? st + '-' + cv : cv.charAt(0).toUpperCase() + cv.slice(1);
+  }
+
+  // swingShot(pool, sw, opts) → the shot a swing on the pad hits, ready for playShot,
+  // with a report of the swing. sw: from readSwing. opts: { lie, rnd, easy, hand ('L'
+  // for a left-hander), still (a practice swing: what it does on average, with none of
+  // his scatter or luck and no mis-hit, though rep.pMis says how likely one was) }.
+  //   { shot, rep: { club, depth, power, ratio, target, tempo, back, down, pause, angle,
+  //     strike (balls off the middle: + heel, − toe), q (the strike: 0 pure, 1 the edge
+  //     of solid), mis (null, or 'thin', 'fat', 'shank', 'toe'), real (the real shot it
+  //     was built on), face, path, f2p (his hand's way: + open, in-to-out, open to the
+  //     path), start (° right), curve (yds right), carry, side (yds right where it
+  //     landed), shape, pMis (the chance this swing mis-hits), own (his club's usual
+  //     face and path) } }
+  function swingShot(pool, sw, opts) {
+    if (!pool || !sw || !sw.ok) return null;
+    opts = opts || {};
+    var cfg = opts.easy ? SWING.easy : SWING.normal, rnd = opts.rnd || Math.random, lie = opts.lie || 'fairway', h = opts.hand === 'L' ? -1 : 1;
+    var club = pool.club, prof = swingProfile(pool), law = prof.law, kind = C.clubKind(club);
+    var still = !!opts.still, tempo = clamp(sw.tempo, -1, 1), st = strikeOf(sw, cfg), q = st.q + (still ? 0 : Math.abs(gauss(rnd)) * 0.1);
+    // The strike: a mis-hit, or one of his solid shots, the better the swing the better struck.
+    var pMis = pool.misRate * Math.min(1, q) * Math.min(1, q) + clamp((q - 1) * 0.6, 0, 0.8), mis = null, real, base;
+    if (!still && rnd() < pMis) {
+      mis = misKind(sw, st, h, rnd);
+      var mine = mis === 'thin' || mis === 'fat' ? misOfKind(pool, mis) : [];
+      if (mine.length) real = base = mine[Math.floor(rnd() * mine.length)];
+      else { real = null; base = madeMis(pool.ranked[Math.floor(rnd() * pool.ranked.length)], mis); }
+    } else {
+      var byStrike = pool.byStrike || (pool.byStrike = pool.ranked.slice().sort(function (a, b) {
+        return Math.max(0, pool.pure - a.carry_yds) - Math.max(0, pool.pure - b.carry_yds) || (b.ball_speed_mph || 0) - (a.ball_speed_mph || 0);
+      }));
+      var n = byStrike.length, at = Math.round(Math.pow(Math.min(1, q), RANK_CURVE) * (n - 1)), k = Math.max(1, Math.round(n * 0.08));
+      var band = byStrike.slice(clamp(at - k, 0, n - 1), clamp(at + k, 0, n - 1) + 1);
+      real = base = band[still ? Math.floor(band.length / 2) : Math.floor(rnd() * band.length)];
+    }
+    var out = adjustShot(base, sw.power, lie), lf = lieFactor(club, lie);
+    // The face and the path: his own, his scatter (wider from a bad lie or an overswing), the timing and the swipe.
+    var over = Math.max(0, sw.depth - 1), wild = (1 + 2.5 * over) * lf.spray * cfg.rest;
+    var zS = still ? 0 : gauss(rnd), zD = still ? 0 : prof.rho * zS + Math.sqrt(1 - prof.rho * prof.rho) * gauss(rnd);
+    var nS = zS * prof.sdStart * wild, nD = zD * prof.sdF2p * wild;
+    var u = clamp(h * sw.strike, -3, 3), uOff = deadband(u, cfg.strikeMid);
+    var dFace = -cfg.face * tempo, dPath = -cfg.path * tempo, dSwipe = cfg.swipe * deadband(sw.angle, cfg.dead);
+    var face = prof.face + nS + (1 - law.face) * nD + h * (dFace - TWIST * uOff);
+    var path = prof.path + nS - law.face * nD + h * dPath + dSwipe;
+    var f2p = face - path, spin = f2p + h * GEAR[kind] * uOff;
+    var start = law.face * face + (1 - law.face) * path;
+    if (mis === 'shank') start = h * MIS_SHANK + 0.3 * start;
+    // A big curve costs a little carry; an open face (to the path) flies higher and stops
+    // quicker, a shut one lower, running on; off the middle it goes shorter.
+    var open = clamp(h * spin, -6, 6), C0 = out.carry_yds, R0 = (isNum(out.total_yds) ? out.total_yds : totalOf(out)) - C0;
+    var Cy = C0 * (1 - 0.004 * Math.max(0, Math.abs(spin) - 2)) * (mis ? 1 : Math.max(0.75, 1 - 0.06 * uOff * uOff));
+    var R = R0 * (Cy / C0) * (R0 > 0 ? clamp(1 - 0.06 * open, 0.5, 1.6) : 1);
+    out.carry_yds = Cy;
+    out.total_yds = Cy + R;
+    if (isNum(out.launch_deg)) out.launch_deg = Math.max(1, out.launch_deg + 0.35 * open);
+    if (isNum(out.apex_ft)) out.apex_ft = out.apex_ft * (1 + 0.03 * open) * Cy / C0;
+    if (isNum(out.landing_deg)) out.landing_deg = clamp(out.landing_deg + 0.4 * open, 1, 80);
+    var cY = law.curve * Cy * spin * (mis ? MIS_CURVE[mis] : 1), sl = Math.tan(start * RAD);
+    out.curve_ft = 3 * cY;
+    out.offline_ft = 3 * (sl * (Cy + 0.6 * R) + cY * (1 + 1.2 * R / Cy));
+    return {
+      shot: out,
+      rep: {
+        club: club, depth: sw.depth, power: sw.power, ratio: sw.ratio, target: sw.target, tempo: sw.tempo, back: sw.back, down: sw.down, pause: sw.pause,
+        angle: sw.angle, strike: u, q: q, mis: mis, misCause: mis ? misCause(st) : null, real: real, hand: h,
+        dFace: dFace, dPath: dPath, dSwipe: h * dSwipe,
+        face: h * face, path: h * path, f2p: h * spin, start: start, curve: cY, carry: Cy, side: sl * Cy + cY,
+        shape: shapeOf(start, cY, Cy, h), pMis: pMis, own: { face: h * prof.face, path: h * prof.path, n: prof.n }
+      }
+    };
+  }
+
+  // Where a perfect swing with this club finishes (tempo on the goal, a straight swipe,
+  // out of the middle): his usual shape, so the aim can allow for it, as a golfer who
+  // fades it aims a little left. → { side (yds right of where it's aimed, at rest),
+  // shape }. opts: { hand, easy, equip }.
+  function shapeAllowance(pool, power, lie, opts) {
+    opts = opts || {};
+    var depth = clamp(isNum(power) ? power : 1, 0.05, 1), target = tempoTarget(depth), back = 0.8;
+    var sw = { ok: true, depth: depth, power: depth, back: back, down: back / target, pause: 0, ratio: target, target: target, tempo: 0, angle: 0, strike: 0 };
+    var out = swingShot(pool, sw, { lie: lie, still: true, hand: opts.hand, easy: opts.easy });
+    var tr = out && FL.trajectory(out.shot, flightOpts(pool.club, opts.equip));
+    return { side: tr ? tr.rest.x : 0, shape: out ? out.rep.shape : 'Straight' };
+  }
+
+  // Putting on the pad: the drag back sets the length (PUTT_SWING.full ft for a full
+  // backswing, growing faster than the drag, so short putts still get a usable stroke)
+  // and the tempo the pace (2 : 1; a quick, jabbed stroke runs on, a slow one dies). The
+  // face sets the line: a quick stroke shuts it (a pull), a slow one leaves it open (a
+  // push), the swipe's lean turns it, and off the toe or heel it twists and goes short.
+  // However well it's struck, no green is perfect: each putt also wanders off its line
+  // by up to a few inches every 10 ft (read: the spread, in ft for each foot of putt).
+  var PUTT_SWING = {
+    normal: { full: 60, exp: 1.5, pace: 0.45, face: 2, swipe: 0.15, dead: 2, line: 0.25, len: 0.05, read: 0.02 },
+    easy: { full: 60, exp: 1.5, pace: 0.3, face: 1.3, swipe: 0.1, dead: 3.5, line: 0.25, len: 0.045, read: 0.018 }
+  };
+  function puttLength(depth, easy) { var c = easy ? PUTT_SWING.easy : PUTT_SWING.normal; return c.full * Math.pow(Math.max(0, depth), c.exp); }
+  // The backswing for a putt this long (ft): one that dies a foot past the hole.
+  function puttDepth(ft, easy) { var c = easy ? PUTT_SWING.easy : PUTT_SWING.normal; return Math.pow((ft + 1.2) / c.full, 1 / c.exp); }
+  // puttSwing(ft, sw, rnd, lie, opts) → { holed, along, side } as putt() gives (ft), and rep
+  // (opts: { easy, hand, still: a practice stroke, with no luck }):
+  // { len (ft it would roll), start (° right), ratio, target, tempo, strike, past (ft past the hole, − short) }.
+  function puttSwing(ft, sw, rnd, lie, opts) {
+    if (!sw || !sw.ok) return null;
+    opts = opts || {};
+    var c = opts.easy ? PUTT_SWING.easy : PUTT_SWING.normal, h = opts.hand === 'L' ? -1 : 1, rough = lie === 'fringe' ? 1.3 : 1;
+    var tempo = clamp(sw.tempo, -1, 1), u = clamp(h * sw.strike, -3, 3), uOff = deadband(u, 0.35);
+    var luck = opts.still ? function () { return 0; } : function () { return gauss(rnd); };
+    var len = puttLength(Math.min(sw.depth, 1.2), opts.easy) * Math.exp(c.pace * tempo) * Math.max(0.7, 1 - 0.05 * uOff * uOff) * (1 + luck() * c.len * rough);
+    var start = h * (-c.face * tempo - TWIST * 0.5 * uOff) + c.swipe * deadband(sw.angle, c.dead) + luck() * c.line * rough;
+    len = Math.max(0.3, len);
+    var wander = luck() * c.read * ft * rough, lat = ft * Math.tan(start * RAD) + wander, past = len - ft, cap = past < 0 ? 0 : 0.2 * clamp(1 - past / 5, 0.25, 1);
+    var rep = { len: len, start: start, ratio: sw.ratio, target: sw.target, tempo: sw.tempo, back: sw.back, down: sw.down, angle: sw.angle, strike: u, past: past, hand: h };
+    if (past >= 0 && Math.abs(lat) <= cap) return { holed: true, along: ft, side: 0, rep: rep };
+    return { holed: false, along: len, side: lat * len / Math.max(ft, 0.5), rep: rep };
+  }
+
+  // What to work on after a swing, in words: the one thing that cost the most, with
+  // the numbers, and what the club usually does for him when the swing was good.
+  // A tempo, kept on one line: "3.4 : 1"; a goal is a whole number when it is one ("3 : 1").
+  function ratioText(r) { return (Math.round(r * 10) / 10).toFixed(1) + '\u00a0:\u00a01'; }
+  function goalText(g) { return (Math.abs(g - Math.round(g)) < 0.05 ? String(Math.round(g)) : (Math.round(g * 10) / 10).toFixed(1)) + '\u00a0:\u00a01'; }
+  function secs(t) { return t.toFixed(2) + ' s'; }
+  function degText(d) { return (Math.round(Math.abs(d) * 10) / 10).toFixed(1) + '°'; }
+  function faceWord(f) { return Math.abs(f) < 0.5 ? 'square' : degText(f) + (f > 0 ? ' open' : ' closed'); }
+  function pathWord(p) { return Math.abs(p) < 0.5 ? 'straight down the line' : degText(p) + (p > 0 ? ' in-to-out' : ' out-to-in'); }
+  function tempoWord(rep) {
+    var e = rep.tempo, q = Math.abs(e);
+    if (q < 0.07) return 'Perfect tempo';
+    if (q < 0.15) return e > 0 ? 'Tempo a touch quick' : 'Tempo a touch slow';
+    return e > 0 ? (q < 0.3 ? 'Quick from the top' : 'Rushed from the top') : (q < 0.3 ? 'Slow from the top' : 'Very slow from the top');
+  }
+  // What went wrong, for a right-hander (side) or a left-hander, in the order it cost him:
+  // the strike, the tempo (with what it did to the face), the swipe (said the way the ball
+  // really curved: an in-to-out swipe draws it only if the face is shut to the path),
+  // coming back through off the middle, and swinging past full.
+  function swingTips(rep, putt) {
+    var tips = [], ideal = rep.back / rep.target, side = rep.hand > 0 ? ['left', 'right'] : ['right', 'left'];
+    var swipe = deadband(rep.angle, 3), dir = swipe > 0 ? 'up to the right' : 'up to the left', cause = rep.misCause;
+    var through = (rep.strike * rep.hand > 0 ? 'right' : 'left') + ' of the ball';
+    if (rep.mis === 'thin') tips.push(cause === 'over' ? 'Thin: past full, the strike suffers. Stop at the Full line.' : cause === 'snatch' ? 'Thin: a snatched takeaway. Start the club back smoothly.' : 'Thin: rushing from the top pulls you up out of it.');
+    if (rep.mis === 'fat') tips.push(cause === 'over' ? 'Fat: past full, the strike suffers. Stop at the Full line.' : 'Fat: slow through the ball, so the club bottomed out behind it. Keep the speed up through impact.');
+    if (rep.mis === 'shank') tips.push('Shank: you came back through ' + through + ', onto the hosel. Swipe back up through the ball.');
+    if (rep.mis === 'toe') tips.push('Off the toe: you came back through ' + through + '. Swipe back up through it.');
+    if (Math.abs(rep.tempo) >= 0.12) {
+      var r = ratioText(rep.ratio), want = goalText(rep.target), quick = rep.tempo > 0;
+      var face = putt || !isNum(rep.dFace) ? '' : quick ? ' Early, so the face shut ' + degText(rep.dFace) + ' and it started further ' + side[0] + '.'
+        : ' Late, so the face stayed ' + degText(rep.dFace) + ' open and it started further ' + side[1] + '.';
+      if (quick) tips.push((rep.back > 1.1 ? 'Tempo ' + r + ': a slow backswing (' + secs(rep.back) + '), then a lunge. Take it back a little quicker and smoother, for ' + want + '.'
+        : 'Tempo ' + r + ': quick from the top. Back in ' + secs(rep.back) + ' wants about ' + secs(ideal) + ' down, for ' + want + '.') + face);
+      else tips.push((rep.back < 0.45 ? 'Tempo ' + r + ': a quick backswing (' + secs(rep.back) + '). Take it back slower, then swish through, for ' + want + '.'
+        : 'Tempo ' + r + ': slow from the top. Back in ' + secs(rep.back) + ' wants about ' + secs(ideal) + ' down, for ' + want + '.') + face);
+    }
+    if (Math.abs(swipe) >= 4 && putt) tips.push('You swiped ' + dir + ', so the putt started ' + (swipe > 0 ? 'right' : 'left') + '. Swipe straight up the line.');
+    else if (Math.abs(swipe) >= 4) {
+      var inOut = rep.hand * swipe > 0, cv = rep.hand * rep.curve, big = Math.abs(rep.curve) / Math.max(rep.carry, 1) > 0.07;
+      var drew = cv < -1.5, faded = cv > 1.5, path = inOut ? 'in-to-out' : 'out-to-in';
+      if (inOut ? drew : faded) tips.push('You swiped ' + dir + ': ' + path + ', so it ' + (inOut ? (big ? 'hooked' : 'drew') : (big ? 'sliced' : 'faded')) + ' (curved ' + (inOut ? side[0] : side[1]) + '). For a straight one, swipe straight up the line.');
+      else tips.push('You swiped ' + dir + ' (' + path + ', which ' + (inOut ? 'draws' : 'fades') + ' it), but the face was ' + (inOut ? (faded ? 'open' : 'square') : (drew ? 'shut' : 'square')) + ' to the path, so it ' + (inOut ? (faded ? 'still faded' : 'flew straight') : (drew ? 'still drew' : 'flew straight')) + '.');
+    }
+    if (!rep.mis && Math.abs(rep.strike) > 0.6) tips.push('Off the ' + (rep.strike > 0 ? 'heel' : 'toe') + ': you came back through ' + through + '. Swipe back up through it.');
+    if (!putt && !rep.mis && rep.depth > 1.04) tips.push('Past full: a longer backswing adds little and costs control. Stop at the Full line.');
+    return tips;
+  }
+  // What his club usually does, from his range shots, when it's worth knowing: a face
+  // or path well off square, or a curve (said for his hand).
+  function ownShapeText(rep, name) {
+    var o = rep.own;
+    if (!o || o.n < 4 || (Math.abs(o.face) < 1.5 && Math.abs(o.face - o.path) < 1.5)) return '';
+    var law = clubLaw(rep.club), start = law.face * o.face + (1 - law.face) * o.path, d = o.face - o.path;
+    var starts = Math.abs(start) < 1 ? 'starts on line' : 'starts ' + (start > 0 ? (rep.hand > 0 ? 'right' : 'left') : (rep.hand > 0 ? 'left' : 'right'));
+    var curves = Math.abs(d) < 1 ? 'flies straight' : d > 0 ? 'fades' : 'draws';
+    return 'From your range shots, your ' + name + ' comes in with the face ' + faceWord(o.face) + ' and the path ' + pathWord(o.path) + ': it ' + starts + ' and ' + curves + '.';
   }
 
   // ---------------------------------------------------------------------------
@@ -535,7 +965,6 @@
   // ---------------------------------------------------------------------------
   // Putting
   // ---------------------------------------------------------------------------
-  function gauss(rnd) { var u = 1 - rnd(), v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
   // The putting meter's target: where to stop the marker for a putt this long (ft).
   var PUTT = { normal: { sweep: 1.6, win: 0.06 }, easy: { sweep: 2.2, win: 0.09 } };
   function puttTarget(ft) { return clamp(0.12 + ft / 75, 0.14, 0.9); }
@@ -677,6 +1106,10 @@
     buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf,
     rankShots: rankShots, clubPools: clubPools, clubList: clubList, totalOf: totalOf,
     METER: METER, timingOf: timingOf, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
+    LAW: LAW, clubLaw: clubLaw, facePathOf: facePathOf, swingProfile: swingProfile, SWIPE: SWIPE, tempoTarget: tempoTarget, powerOfDepth: powerOfDepth,
+    readSwing: readSwing, SWING: SWING, strikeOf: strikeOf, swingShot: swingShot, shapeOf: shapeOf, MIS_SHANK: MIS_SHANK,
+    PUTT_SWING: PUTT_SWING, puttLength: puttLength, puttDepth: puttDepth, puttSwing: puttSwing, shapeAllowance: shapeAllowance,
+    swingTips: swingTips, ownShapeText: ownShapeText, tempoWord: tempoWord, faceWord: faceWord, pathWord: pathWord, ratioText: ratioText, goalText: goalText,
     DECK: DECK, lieFactor: lieFactor, playShot: playShot, rollOut: rollOut, TRUNK: TRUNK, LEAVES: LEAVES, CUP: CUP, flightOpts: flightOpts,
     PUTT: PUTT, puttTarget: puttTarget, putt: putt, TAP_IN: TAP_IN,
     suggestClub: suggestClub, SURE: SURE, aimFor: aimFor, powerFor: powerFor, headingTo: headingTo, dist: dist,

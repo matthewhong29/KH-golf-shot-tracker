@@ -307,6 +307,39 @@ details.more[open]>summary::after{transform:rotate(-135deg) translate(-2px,-2px)
 .gm-ticks .r{right:0}
 .gm-ticks .c{transform:translateX(-50%)}
 .gm-meter-text{margin-top:4px;font-size:1.08rem;font-weight:750;text-align:center}
+/* The swing pad: the ball from above, the target straight up; drag down, swipe up through it */
+.gm-hit{margin-top:12px}
+.gm-hit .gm-label:first-child{margin-top:4px}
+.gm-pad{border-radius:16px;background:#0f5135 radial-gradient(120% 90% at 50% 18%,#145a39 0%,#0f5135 55%,#0b3d29 100%);color:#fff;padding:0 0 10px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.gm-pad:focus-visible{outline:3px solid var(--g500);outline-offset:3px}
+.gm-pad.off .gm-pad-c{opacity:.6}
+.gm-pad-c{display:block;width:100%;touch-action:none;cursor:grab;border-radius:16px 16px 0 0}
+.gm-pad-c:active{cursor:grabbing}
+.gm-pad-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 12px}
+.gm-pad-text{flex:1 1 auto;font-size:1.02rem;font-weight:750;line-height:1.35;min-width:0}
+.gm-practice{flex:none;min-height:44px;padding:6px 14px;border-radius:999px;border:1.5px solid rgba(255,255,255,.55);background:transparent;color:#fff;font-weight:700;font-size:16px;cursor:pointer}
+.gm-practice[aria-pressed="true"]{background:#f2c94c;border-color:#f2c94c;color:#0b3d29}
+.gm-practice:focus-visible{outline:3px solid #f2c94c;outline-offset:2px}
+/* After a real swing: what it did, with a picture of the face and path at impact */
+.gm-rep{display:grid;grid-template-columns:96px minmax(0,1fr);gap:4px 12px;align-items:start;margin-top:8px}
+.gm-rep svg{width:96px;height:96px;display:block;background:#fff;border-radius:12px;border:1px solid var(--g200)}
+.gm-rep-l{list-style:none;font-size:16px;line-height:1.4;color:var(--ink);min-width:0}
+.gm-rep-l li{padding:0 0 1px}
+.gm-rep-l b{font-weight:700;color:var(--ink-2);margin-right:2px}
+.gm-rep .w{font-weight:450;color:var(--ink-2)}
+.gm-law{margin-top:8px;color:var(--ink);font-size:16px}
+.gm-law .k{display:inline-block;width:12px;height:4px;border-radius:2px;margin:0 6px 4px 0;vertical-align:middle;background:var(--g600)}
+.gm-rep .k{display:inline-block;width:12px;height:4px;border-radius:2px;margin:0 6px 4px 0;vertical-align:middle}
+.gm-rep .k.path{background:var(--goal)}
+.gm-rep .k.face{background:var(--warn)}
+.gm-rep .k.ball{background:var(--g600)}
+.gm-rep.gm-rep-putt{grid-template-columns:minmax(0,1fr)}
+@media (max-width:359px){.gm-rep{grid-template-columns:minmax(0,1fr)}.gm-rep svg{width:88px;height:88px}}
+.gm-tip{margin-top:8px;color:var(--ink)}
+.gm-tip b{font-weight:750}
+.gm-msg .s.gm-real{margin-top:6px;font-size:16px}
+.gm-swing{margin-top:12px;padding:10px 14px;border-radius:12px;background:var(--soft);border:1px solid var(--line);font-size:16px;color:var(--ink-2);text-align:left}
+.gm-swing b{color:var(--ink)}
 .gm-live{margin-top:6px}
 .gm-live .grid2{margin-top:10px}
 .gm-live .seg{display:flex;width:100%;margin-bottom:14px}
