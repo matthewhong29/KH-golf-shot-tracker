@@ -4,11 +4,12 @@ A phone-first web page that tracks golf shots for Matthew's family. GitHub Pages
 
 ## Players and data files
 
-`data/players.json` lists the players. Each player has their own data file in the same format:
+`data/players.json` lists the players (and `DEFAULT_PLAYERS` in `js/app.js` repeats it, for a phone's first visit). Each player has their own data file in the same format:
 
 | Player | id (URL `?player=`) | File | About |
 |---|---|---|---|
 | Dad | `dad` | `data/dad_golf_data.json` | 56, 6′1″; has had lessons and knows the basics; older Lynx Black Cat irons (3 iron to PW), Callaway Edge 5 hybrid and driver |
+| M2 (Matthew) | `matthew` | `data/matthew_golf_data.json` | Matthew himself, for when he starts playing; no sessions or clubs yet, so add them when he sends his data. On his page, photos and videos go straight to Claude |
 | M3 (Matthew's brother) | `brother` | `data/brother_golf_data.json` | 14, 5′0″; has had lessons and knows the basics; plays for fun and wants to keep up with his friends on the team |
 
 If it isn't clear whose photos they are, ask Matthew before adding anything.
@@ -19,7 +20,7 @@ The page itself also commits to `main`: on a phone with a GitHub key, every goal
 
 ## Adding shots from a photo of a range screen
 
-Dad or M3 takes photos of the Toptracer or Rapsodo screen and texts them to Matthew, who sends them here and asks for them to be added. Follow these steps.
+Dad or M3 takes photos of the Toptracer or Rapsodo screen and texts them to Matthew, who sends them here (with his own, for M2) and asks for them to be added. Follow these steps.
 
 1. **Read every row.** Toptracer's "All shots" screen has these columns: Time, Club, Flat carry (yds), Total (yds), Ball speed (mph), Launch (deg), Apex (ft), Landing (deg), Curve (ft), Offline (ft). Some screens also show Hang time (s).
    - Arrows: ◀ before a number means left (store it negative). ▶ after a number means right (positive). A bare 0 is 0.

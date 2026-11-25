@@ -9,6 +9,7 @@
   // Used until data/players.json loads (and if it can't).
   const DEFAULT_PLAYERS = [
     { id: 'dad', name: 'Dad', file: 'data/dad_golf_data.json' },
+    { id: 'matthew', name: 'M2', file: 'data/matthew_golf_data.json' },
     { id: 'brother', name: 'M3', file: 'data/brother_golf_data.json' }
   ];
   // Where goals are saved when a phone has a GitHub key (players.json "github" overrides this).
@@ -36,6 +37,9 @@
 
   let players = validPlayers(loadJSON(LS + '.players')) || DEFAULT_PLAYERS;
   let github = validGithub(loadJSON(LS + '.github')) || DEFAULT_GITHUB;
+  // The player the link asked for, kept until data/players.json has loaded: a player added since
+  // this phone last saw the list isn't in it yet, and the address is rewritten below.
+  let askedFor = urlPlayer();
   let playerId = C.resolvePlayer(players, urlPlayer(), lastPlayer());
   let bundle = null;            // this player's data file
   let bundleStatus = 'loading'; // loading | fresh | offline | missing
@@ -97,6 +101,7 @@
   }
   function switchPlayer(id) {
     if (!players.some((p) => p.id === id)) return;
+    askedFor = null;
     if (gmMo) gmMotionStop();
     const tab = ui.tab;
     playerId = id;
@@ -820,10 +825,13 @@
       <div class="card"><span class="sk sk-title"></span><div class="sk-tiles"><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span></div><span class="sk sk-line"></span><span class="sk sk-line short"></span></div>
       <div class="card"><span class="sk sk-title"></span><span class="sk sk-line"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span></div></div>`;
   }
+  // Photos and videos go to Matthew, who adds them with Claude; on his own page, straight to Claude.
+  function isMatthew() { return /^matthew\b/i.test(String((data.player && data.player.relationship) || '')); }
+  function sendTo(what) { return isMatthew() ? `send the ${what} to Claude` : `text the ${what} to Matthew`; }
   function emptyState(onSessionsTab) {
     if (bundleStatus === 'loading' && !data.sessions.length) return skeleton();
     return `<div class="card empty-card">${EMPTY_ART}<h3>No sessions yet</h3>
-      <p>After a range session, text the screen photos to Matthew.</p>
+      <p>After a range session, ${sendTo('screen photos')}.</p>
       <p class="hint">${onSessionsTab ? 'Or tap “+ New session” to add shots yourself.' : 'You can also add shots yourself on the Sessions tab.'}</p></div>`;
   }
 
@@ -1846,7 +1854,8 @@
         ${clubsCard(clubs)}`
       : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>`}`;
     const drillsView = t ? `${t.focus.map((f, i) => focusCard(f, i, true)).join('')}
-        <div class="card lesson"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Check it with a coach</h3></div><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>` : '';
+        <div class="card lesson"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Check it with a coach</h3></div><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>`
+      : `<div class="card"><p class="empty">No drills for ${esc(playerName())} yet. Once his first range sessions are in, ask Claude for a plan built from them.</p></div>`;
     el.innerHTML = `
       <div class="hero">${HERO_ART}<span class="hero-k">Practice</span><h2>${esc(heads[view][0])}</h2>
         <p>${esc(heads[view][1])}</p>
@@ -1938,7 +1947,7 @@
           <li><strong>Down the line:</strong> behind you, on a line through your hands that runs parallel to the target line, pointing at the target.</li>
           <li>About 10 feet away, at hip height, and level, not tilted. Use a stand or lean the phone on your bag.</li>
           <li>Get your whole body, the ball, and the club at the top of your swing in the picture, with a little room above it. Don’t zoom; move the phone instead.</li>
-          <li>Use slow motion if your phone has it, in good light. Film 3 to 5 swings with one club, then text the video to Matthew with the date and the club.</li>
+          <li>Use slow motion if your phone has it, in good light. Film 3 to 5 swings with one club, then ${sendTo('video')} with the date and the club.</li>
         </ul>
       </div></details>`;
   }
@@ -1947,7 +1956,7 @@
     if (list.length) return list.map(reviewCard).join('') + filmGuide(false);
     const ex = exampleReview();
     return `<div class="card"><div class="card-head"><span class="head-ico">${icon('play')}</span><h3 class="card-title">No swing reviews yet</h3></div>
-        <p class="note">Film a few swings and text the video to Matthew. Claude pulls out the key frames (setup, top, impact and finish), draws on them to show what’s happening, and adds the fixes and drills here.</p></div>
+        <p class="note">Film a few swings and ${sendTo('video')}. Claude pulls out the key frames (setup, top, impact and finish), draws on them to show what’s happening, and adds the fixes and drills here.</p></div>
       ${filmGuide(true)}
       ${ex ? reviewCard(ex) : ''}`;
   }
@@ -4684,7 +4693,8 @@
         saveJSON(LS + '.players', list);
         const gh = validGithub(d.github);
         if (gh) { github = gh; saveJSON(LS + '.github', gh); }
-        const want = C.resolvePlayer(players, urlPlayer(), lastPlayer());
+        const want = C.resolvePlayer(players, askedFor || urlPlayer(), lastPlayer());
+        askedFor = null;
         if (want !== playerId) switchPlayer(want); else renderHeader();
       })
       .catch(() => { /* keep the cached or built-in list */ });

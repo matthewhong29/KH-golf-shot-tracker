@@ -393,7 +393,11 @@ eq([C.sessionCallout('mishits', [aug]), C.sessionCallout('launch', []), C.sessio
 section('Players and tips content');
 const root = path.join(__dirname, '..');
 const players = JSON.parse(fs.readFileSync(path.join(root, 'data', 'players.json'), 'utf8')).players;
-eq(players.map((p) => [p.id, p.name, p.file]), [['dad', 'Dad', 'data/dad_golf_data.json'], ['brother', 'M3', 'data/brother_golf_data.json']], 'players.json');
+eq(players.map((p) => [p.id, p.name, p.file]), [['dad', 'Dad', 'data/dad_golf_data.json'], ['matthew', 'M2', 'data/matthew_golf_data.json'], ['brother', 'M3', 'data/brother_golf_data.json']], 'players.json: Dad, M2 (Matthew) and M3');
+{
+  const m2 = JSON.parse(fs.readFileSync(path.join(root, 'data', 'matthew_golf_data.json'), 'utf8'));
+  eq([m2.player.name, m2.baseline_session_id, Array.isArray(m2.personal_goals), m2.sessions.length], ['M2', null, true, 0], 'M2’s file: ready for his first session');
+}
 for (const p of players) {
   const d = JSON.parse(fs.readFileSync(path.join(root, p.file), 'utf8'));
   eq([d.player.name, Array.isArray(d.sessions)], [p.name, true], `${p.id}: data file name matches and has sessions`);
@@ -445,7 +449,9 @@ const TIPS = require('../js/tips.js');
 }
 eq(TIPS.dad.focus.map((f) => f.id), ['straight', 'hands', 'turn', 'contact', 'short', 'fit', 'plan'], 'Dad focus areas: his biggest leaks first (the hybrid’s start line, then launch)');
 eq(TIPS.brother.focus.map((f) => f.id), ['clubs', 'strike', 'short', 'speed', 'games', 'plan'], 'M3 focus areas');
-for (const p of players) {
+// Tips are optional (M2 has none yet); a player who has them gets the full set.
+ok(TIPS.dad && TIPS.brother && !TIPS.matthew, 'tips for Dad and M3');
+for (const p of players.filter((x) => TIPS[x.id])) {
   const t = TIPS[p.id];
   ok(t && t.intro && /coach/i.test(t.lesson || ''), `${p.id}: intro and a coach line`);
   ok(!/brother/i.test(JSON.stringify(t)), `${p.id}: tips don't say "brother" (names come from the data)`);
@@ -459,7 +465,7 @@ for (const p of players) {
 // ---------------------------------------------------------------------------
 section('Drill animations and coach videos');
 const DA = require('../js/drillart.js');
-for (const p of players) {
+for (const p of players.filter((x) => TIPS[x.id])) {
   TIPS[p.id].focus.forEach((f) => f.drills.forEach((d, i) => {
     const w = `${p.id}/${f.id}:${i} ${d.name}`;
     eq(DA.validate(d.art), [], `${w}: animation is valid`);

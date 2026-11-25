@@ -1,11 +1,12 @@
 # Golf Shot Tracker
 
-A phone-friendly tracker for the family's range sessions: Dad, and Matthew's brother M3. It reads each player's data file and shows, club by club, how far and where the ball goes, how that changes over time, and what to practise next.
+A phone-friendly tracker for the family's range sessions: Dad, Matthew (M2) and his brother M3. It reads each player's data file and shows, club by club, how far and where the ball goes, how that changes over time, and what to practise next.
 
 **Live site:** https://matthewhong29.github.io/KH-golf-shot-tracker/ (on an iPhone, open it in Safari and use Share → Add to Home Screen)
 
 Each player has his own page:
 - Dad: https://matthewhong29.github.io/KH-golf-shot-tracker/?player=dad
+- M2 (Matthew): https://matthewhong29.github.io/KH-golf-shot-tracker/?player=matthew
 - M3: https://matthewhong29.github.io/KH-golf-shot-tracker/?player=brother
 
 Add your own link to the home screen. Without `?player=`, the page opens on the last player used on that phone.
@@ -79,7 +80,7 @@ manifest.webmanifest         home-screen app name, colours and icons
 favicon.svg, apple-touch-icon.png, icons/
 ```
 
-To add another player, add an entry to `data/players.json` and create his data file by copying the shape of `data/brother_golf_data.json`. Tips are optional: add an entry keyed by his id in `js/tips.js`.
+To add another player, add an entry to `data/players.json` (and to `DEFAULT_PLAYERS` in `js/app.js`, so a link to him works on a phone's first visit) and create his data file by copying the shape of `data/brother_golf_data.json`, as `data/matthew_golf_data.json` was for M2. Tips are optional: add an entry keyed by his id in `js/tips.js`.
 
 ## Data and local edits
 

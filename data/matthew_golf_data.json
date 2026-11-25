@@ -1,0 +1,23 @@
+{
+  "player": {
+    "name": "M2",
+    "relationship": "Matthew himself"
+  },
+  "units": {
+    "carry_yds": "yards (flat carry)",
+    "total_yds": "yards",
+    "ball_speed_mph": "mph",
+    "launch_deg": "degrees",
+    "apex_ft": "feet",
+    "landing_deg": "degrees",
+    "hang_time_s": "seconds",
+    "curve_ft": "feet",
+    "offline_ft": "feet",
+    "club_speed_mph": "mph"
+  },
+  "sign_convention": "curve_ft and offline_ft: negative = left, positive = right (right-handed golfer view). curve = how much the ball bent in the air; offline = where it finished relative to the target line.",
+  "clubs": {},
+  "baseline_session_id": null,
+  "personal_goals": [],
+  "sessions": []
+}

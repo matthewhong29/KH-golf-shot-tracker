@@ -6,6 +6,11 @@
       "file": "data/dad_golf_data.json"
     },
     {
+      "id": "matthew",
+      "name": "M2",
+      "file": "data/matthew_golf_data.json"
+    },
+    {
       "id": "brother",
       "name": "M3",
       "file": "data/brother_golf_data.json"
