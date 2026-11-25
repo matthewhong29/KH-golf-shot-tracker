@@ -371,10 +371,11 @@
     if (game === 'ladder') {
       var hole = [210, 112];
       out.push(green(hole));
+      var feet = art.feet || [3, 6, 9, 12];
       [1, 2, 3, 4].forEach(function (k) {
         var tx = hole[0] - 40 * k;
         out.push(tee([tx, hole[1] + 6]));
-        if (!o.thumb) out.push(label(o, k === 1 ? '3 ft' : String(k * 3), tx, hole[1] + 38, 'middle'));
+        if (!o.thumb) out.push(label(o, k === 1 ? feet[0] + ' ft' : String(feet[k - 1]), tx, hole[1] + 38, 'middle'));
       });
       if (step) {
         var bx = hole[0] - 40 * step + 2;

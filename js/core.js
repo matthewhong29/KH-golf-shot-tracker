@@ -131,7 +131,7 @@
     if (/garmin/i.test(d)) return 'Garmin';
     return String(d);
   }
-  function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
+  function plural(n, word, many) { return n + ' ' + (n === 1 ? word : many || word + 's'); }
 
   // ---------------------------------------------------------------------------
   // Statistics
@@ -241,6 +241,49 @@
     return (Array.isArray(v) ? v : [v]).map(String).filter(function (x) { return x.trim(); });
   }
 
+  // Practice swings: balls that weren't full swings, so they're left out of every number,
+  // the mis-hits and the hit rates (they're still listed and replayed). A shot marked
+  // `partial: true` in the data file (Matthew says it was a drill ball or a half swing) is
+  // one, and so is the warm-up: what would count as a fat mis-hit (a short carry at a
+  // normal height, like a soft half swing) with a wedge or a short iron, among the first
+  // 10 balls of a range session (20 or more, with times) and within 5 minutes of its first
+  // shot. A thin or topped one there is still a mis-hit, and so is any fat shot later on.
+  // shots: one session's shots. → Map(shot → 'partial' | 'warm-up').
+  var WARMUP = { balls: 10, minutes: 5, minSession: 20, clubs: /^(LW|SW|GW|AW|PW|[89]i|\d{2}°)$/ };
+  function clockMin(t) { var m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '')); return m ? +m[1] * 60 + +m[2] : null; }
+  function practiceSwings(shots) {
+    var out = new Map(), list = (shots || []).filter(Boolean);
+    list.forEach(function (s) { if (s.partial === true) out.set(s, 'partial'); });
+    var rest = list.filter(function (s) { return !out.has(s); });
+    if (rest.length < WARMUP.minSession) return out;
+    var order = rest.map(function (s, i) { return { s: s, i: i, t: clockMin(s.time) }; }).filter(function (o) { return o.t != null; })
+      .sort(function (a, b) { return a.t - b.t || a.i - b.i; });
+    if (!order.length) return out;
+    var first = order[0].t;
+    var early = new Set(order.slice(0, WARMUP.balls).filter(function (o) { return o.t - first <= WARMUP.minutes; }).map(function (o) { return o.s; }));
+    rawMishits(rest).forEach(function (m) { if (early.has(m.shot) && misKind(m) === 'fat' && WARMUP.clubs.test(String(m.shot.club))) out.set(m.shot, 'warm-up'); });
+    return out;
+  }
+  function fullSwings(shots) { var easy = practiceSwings(shots); return (shots || []).filter(function (s) { return s && !easy.has(s); }); }
+  // Practice swings across sessions, each judged within its own session.
+  function sessionPractice(sessions) {
+    var all = new Map();
+    (sessions || []).forEach(function (s) { practiceSwings(sessionShots(s)).forEach(function (why, x) { all.set(x, why); }); });
+    return all;
+  }
+  // "5 warm-up swings to start (PW, 44–50 yds)", for the highlights.
+  function practiceText(easy) {
+    var warm = [], part = [];
+    easy.forEach(function (why, s) { (why === 'warm-up' ? warm : part).push(s); });
+    var bits = [];
+    function clubsOf(list) { return sortClubs(list.map(function (s) { return s.club; }).filter(function (c, i, a) { return c && a.indexOf(c) === i; })).join(', '); }
+    function carries(list) { var v = list.map(function (s) { return s.carry_yds; }).filter(isNum); return v.length ? fmtRange(Math.min.apply(null, v), Math.max.apply(null, v)) + ' yds' : ''; }
+    if (warm.length) bits.push(plural(warm.length, 'warm-up swing') + ' to start (' + [clubsOf(warm), carries(warm)].filter(Boolean).join(', ') + ')');
+    if (part.length) bits.push(plural(part.length, 'half swing or drill ball', 'half swings or drill balls') + ' (' + [clubsOf(part), carries(part)].filter(Boolean).join(', ') + ')');
+    return bits.length ? cap1(joinList(bits)) + ': left out of the numbers, and not counted as mis-hits.' : '';
+  }
+  function cap1(t) { return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
+
   // Likely mis-hits, judged within each session, so a shot's status doesn't
   // change with whatever other sessions it's pooled with.
   function sessionMishits(sessions) {
@@ -255,17 +298,20 @@
     return set;
   }
 
-  // { club: { club, shots: [all], solid: [...], mis: [...], outliers: [...], ranges: { metric: {min,max,avg?} } } }
+  // { club: { club, shots: [full swings], solid: [...], mis: [...], outliers: [...], easy: [practice swings],
+  //   ranges: { metric: {min,max,avg?} } } }
   // Every computed number uses `solid`. Mis-hits and outliers stay in `shots` for
-  // the charts, and outliers still count as solid contact (see solidCount).
+  // the charts, and outliers still count as solid contact (see solidCount). Warm-ups and
+  // half swings (practiceSwings) are only in `easy`, so no number or rate counts them.
   function clubData(sessions) {
     var out = {};
-    var mis = sessionMishits(sessions), odd = sessionOutliers(sessions);
-    function get(c) { return out[c] || (out[c] = { club: c, shots: [], solid: [], mis: [], outliers: [], ranges: {} }); }
+    var mis = sessionMishits(sessions), odd = sessionOutliers(sessions), easy = sessionPractice(sessions);
+    function get(c) { return out[c] || (out[c] = { club: c, shots: [], solid: [], mis: [], outliers: [], easy: [], ranges: {} }); }
     (sessions || []).forEach(function (s) {
       sessionShots(s).forEach(function (shot) {
         if (!shot.club) return;
         var e = get(shot.club);
+        if (easy.has(shot)) { e.easy.push(shot); return; }
         e.shots.push(shot);
         (mis.has(shot) ? e.mis : odd.has(shot) ? e.outliers : e.solid).push(shot);
       });
@@ -366,12 +412,16 @@
 
   // Ballpark launch windows (degrees) for a modest swing speed. Slower swings
   // launch a little higher than tour players, so these sit a few degrees above
-  // tour averages. They're targets to aim at, not hard rules.
+  // tour averages. They're targets to aim at, not hard rules. The wedges follow the
+  // same 64%-of-loft rule as a listed loft (about 50° gap, 56° sand and 60° lob wedges).
+  // The driver's is higher still: off a tee a slower swing needs more launch (fitting
+  // charts put the best at about 15–18° for an 80 mph swing), so it isn't held to a
+  // strong player's 10–13°.
   var LAUNCH_WINDOWS = {
-    LW: [32, 36], SW: [30, 34], GW: [28, 32], PW: [26, 30],
+    LW: [36, 40], SW: [34, 38], GW: [30, 34], PW: [26, 30],
     '9i': [23, 27], '8i': [21, 25], '7i': [19, 23], '6i': [17, 21], '5i': [15, 19], '4i': [14, 18], '3i': [13, 17],
     '6hy': [16, 20], '5hy': [15, 19], '4hy': [14, 18], '3hy': [13, 17],
-    '7w': [13, 17], '5w': [12, 16], '4w': [11, 15], '3w': [11, 15], Driver: [12, 16]
+    '7w': [13, 17], '5w': [12, 16], '4w': [11, 15], '3w': [11, 15], Driver: [14, 18]
   };
   // A player's clubs, from his data file: equipment.bag = { "7i": { model, loft_deg }, ... }.
   function clubSpec(club, equip) {
@@ -516,17 +566,43 @@
     }
     add({ id: 'contact', label: 'Solid contact', n: solidCount(entry), of: entry.shots.length, met: solidPct(entry) >= GOALS.solidPct });
 
-    var flags = needsWork(entry);
+    var flags = needsWork(entry), kind = clubKind(club);
+    var lineText = 'Start it on line: pick a spot a few feet ahead on your target line and start the ball over it.';
+    var lf = g.launch ? launchFocus(club, g.launch) : null;
     var focus;
-    if (!g.contact.met) focus = { kind: 'contact', text: 'Solid contact first: hit the ball, then the ground.' };
+    if (!g.contact.met) focus = { kind: 'contact', text: CONTACT_FOCUS[kind] };
     else if (g.line && !g.line.met && (g.line.n / g.line.of < 0.5 || flags.some(function (f) { return f.kind === 'direction'; }))) {
-      focus = { kind: 'direction', text: 'Start it on line: check your aim and grip before every shot.' };
-    } else if (g.launch && g.launch.status === 'high') focus = { kind: 'launch', text: 'Lower launch: keep your hands ahead of the ball at impact.' };
-    else if (g.launch && g.launch.status === 'low') focus = { kind: 'launch', text: 'A little more height: let the club’s loft do the work.' };
+      focus = { kind: 'direction', text: lineText };
+    } else if (lf) focus = { kind: 'launch', status: g.launch.status, text: lf };
     else if (g.carry && !g.carry.met) focus = { kind: 'distance', text: 'Same distance every time: pick one target and land it in your carry zone.' };
-    else if (g.line && !g.line.met) focus = { kind: 'direction', text: 'Start it on line: check your aim and grip before every shot.' };
+    else if (g.line && !g.line.met) focus = { kind: 'direction', text: lineText };
     else focus = { kind: null, text: 'Keep it going: every goal here is on target.' };
     return { focus: focus, goals: goals, ref: ref };
+  }
+  // Solid contact means something different off the turf with an iron than with a long club.
+  var CONTACT_FOCUS = {
+    iron: 'Solid contact first: hit the ball, then the ground.',
+    hybrid: 'Solid contact first: a shallow strike that brushes the grass.',
+    wood: 'Solid contact first: a shallow strike that brushes the grass.',
+    driver: 'Solid contact first: a smooth swing that sweeps it off the tee.'
+  };
+  // The focus for a launch outside the club's window, or null when it isn't worth one.
+  // Hands ahead lowers an iron's or a hybrid's launch, but a driver should meet the ball
+  // level or on the way up, so it only gets a cue when it's well over (3° or more), and a
+  // fairway wood a little high is fine at a modest swing speed.
+  function launchFocus(club, launch) {
+    var kind = clubKind(club);
+    if (launch.status === 'high') {
+      if (kind === 'iron' || kind === 'hybrid') return 'Lower launch: keep your hands ahead of the ball at impact.';
+      if (kind === 'driver' && isNum(launch.avg) && launch.avg >= launch.hi + 3) return 'Launch a touch high: try teeing it a little lower.';
+      return null;
+    }
+    if (launch.status === 'low') {
+      if (kind === 'driver') return 'More launch: tee it a little higher and catch it on the way up.';
+      if (kind === 'iron') return 'A little more height: let the club’s loft do the work.';
+      return 'A little more height: a shallow sweep, and let the loft get it up.';
+    }
+    return null;
   }
 
   // Compare one live shot from the range screen with the player's numbers for
@@ -556,11 +632,14 @@
       else if (carry < zone.lo) line('carry', false, 'Carry ' + fmtRaw(carry) + ' yds: ' + fmtRaw(roundHalfEven(zone.lo - carry, 1)) + ' short of your ' + zone.lo + '–' + zone.hi + ' yd zone.');
       else line('carry', null, 'Carry ' + fmtRaw(carry) + ' yds: ' + fmtRaw(roundHalfEven(carry - zone.hi, 1)) + ' past your ' + zone.lo + '–' + zone.hi + ' yd zone.');
     }
-    var win = launchWindow(club, equip);
+    var win = launchWindow(club, equip), kind = clubKind(club);
     if (isNum(la) && win) {
+      var aimFor = ' (aim for ' + win[0] + '–' + win[1] + '°)';
       if (la >= win[0] && la <= win[1]) line('launch', true, 'Launch ' + fmtRaw(la) + '°: in the ' + win[0] + '–' + win[1] + '° window.');
-      else if (la > win[1]) line('launch', false, 'Launch ' + fmtRaw(la) + '° is high (aim for ' + win[0] + '–' + win[1] + '°): keep your hands ahead.');
-      else line('launch', false, 'Launch ' + fmtRaw(la) + '° is low (aim for ' + win[0] + '–' + win[1] + '°).');
+      else if (la > win[1] && (kind === 'iron' || kind === 'hybrid')) line('launch', false, 'Launch ' + fmtRaw(la) + '° is high' + aimFor + ': keep your hands ahead.');
+      else if (la > win[1] && kind === 'driver' && la >= win[1] + 3) line('launch', false, 'Launch ' + fmtRaw(la) + '° is high' + aimFor + ': try teeing it a little lower.');
+      else if (la > win[1]) line('launch', null, 'Launch ' + fmtRaw(la) + '° is a little high' + aimFor + ', which is fine with a ' + (kind === 'driver' ? 'driver' : 'wood') + '.');
+      else line('launch', false, 'Launch ' + fmtRaw(la) + '° is low' + aimFor + '.');
     }
     if (isNum(off)) {
       var dir = off < 0 ? ' L' : off > 0 ? ' R' : '';
@@ -599,8 +678,13 @@
   // A likely thin, topped or fat shot: launch under the club's floor (launchFloor),
   // or carry under 60% of that club's upper-quartile carry. The upper quartile
   // stays sensible even when most of a club's shots were mis-hit, where the
-  // median would not.
+  // median would not. Practice swings (warm-ups and half swings) are never mis-hits:
+  // the rule runs over the full swings only.
   function mishits(shots) {
+    var easy = practiceSwings(shots);
+    return rawMishits((shots || []).filter(function (s) { return s && !easy.has(s); }));
+  }
+  function rawMishits(shots) {
     var by = {};
     (shots || []).forEach(function (s) { if (s && s.club) (by[s.club] || (by[s.club] = [])).push(s); });
     var q3 = {};
@@ -630,6 +714,7 @@
   var OUTLIER = { z: 3.5, minShots: 5, madFloor: 0.03 };
   function outliers(shots) {
     var bad = new Set(mishits(shots).map(function (m) { return m.shot; }));
+    practiceSwings(shots).forEach(function (why, s) { bad.add(s); });
     var by = {};
     (shots || []).forEach(function (s) { if (s && s.club && !bad.has(s) && isNum(s.carry_yds)) (by[s.club] || (by[s.club] = [])).push(s); });
     var hit = new Map();
@@ -701,18 +786,20 @@
   function buildHighlights(scope, baseline) {
     var out = [];
     scope = scope || [];
-    var shots = [], bad = [], odd = [];
+    var shots = [], bad = [], odd = [], all = 0, easy = sessionPractice(scope);
     scope.forEach(function (s) {
-      sessionShots(s).forEach(function (x) { shots.push(x); });
+      all += sessionShots(s).length;
+      fullSwings(sessionShots(s)).forEach(function (x) { shots.push(x); });
       mishits(sessionShots(s)).forEach(function (m) { bad.push(m); });
       outliers(sessionShots(s)).forEach(function (o) { odd.push(o); });
     });
     var data = clubData(scope);
     var clubs = sortClubs(Object.keys(data));
     if (shots.length) {
-      var shotClubs = clubs.filter(function (c) { return data[c].shots.length; });
-      out.push({ id: 'count', text: plural(shots.length, 'shot') + ' with ' + plural(shotClubs.length, 'club') + ' (' + shotClubs.join(', ') + ').' });
-      out.push({ id: 'solid', text: 'Solid contact: ' + (shots.length - bad.length) + ' of ' + plural(shots.length, 'shot') + ' (' + pct(shots.length - bad.length, shots.length) + ').' });
+      var shotClubs = clubs.filter(function (c) { return data[c].shots.length || data[c].easy.length; });
+      out.push({ id: 'count', text: plural(all, 'shot') + ' with ' + plural(shotClubs.length, 'club') + ' (' + shotClubs.join(', ') + ').' });
+      out.push({ id: 'solid', text: 'Solid contact: ' + (shots.length - bad.length) + ' of ' + plural(shots.length, easy.size ? 'full swing' : 'shot') + ' (' + pct(shots.length - bad.length, shots.length) + ').' });
+      if (easy.size) out.push({ id: 'practice', text: practiceText(easy) });
 
       if (!bad.length) {
         var launch = summarize(shots, 'launch_deg');
@@ -911,19 +998,19 @@
   function sessionCallout(kind, sessions) {
     var s = latestShotSession(sessions);
     if (!s) return null;
-    var shots = sessionShots(s);
+    var shots = fullSwings(sessionShots(s));
     var data = clubData([s]);
     var clubs = sortClubs(Object.keys(data)).filter(function (c) { return data[c].shots.length; });
-    var bad = mishits(shots);
-    var note = leftOutNote(bad.length, outliers(shots).length);
+    var bad = mishits(sessionShots(s));
+    var note = leftOutNote(bad.length, outliers(sessionShots(s)).length);
     function per(key, fmt) {
       return clubs.map(function (c) { var st = summarize(data[c].solid, key); return st.n ? c + ' ' + fmt(st.avg) : null; }).filter(Boolean);
     }
     var text = null, list;
     if (kind === 'mishits') {
       text = bad.length
-        ? contactText(bad) + ' Solid contact: ' + (shots.length - bad.length) + ' of ' + plural(shots.length, 'shot') + ' (' + pct(shots.length - bad.length, shots.length) + ').'
-        : 'No likely mis-hits in ' + plural(shots.length, 'shot') + '.';
+        ? contactText(bad) + ' Solid contact: ' + (shots.length - bad.length) + ' of ' + plural(shots.length, shots.length < sessionShots(s).length ? 'full swing' : 'shot') + ' (' + pct(shots.length - bad.length, shots.length) + ').'
+        : 'No likely mis-hits in ' + plural(shots.length, shots.length < sessionShots(s).length ? 'full swing' : 'shot') + '.';
     } else if (kind === 'launch') {
       list = per('launch_deg', function (v) { return fmtNum(v, 1) + '°'; });
       if (list.length) text = 'Average launch: ' + list.join(' · ') + '.' + note;
@@ -1399,11 +1486,12 @@
     sessionShots: sessionShots, hasSummary: hasSummary, isSummaryOnly: isSummaryOnly, compareSessions: compareSessions,
     asList: asList, clubData: clubData, entryHasData: entryHasData, metricStat: metricStat, mishits: mishits,
     sessionMishits: sessionMishits, outliers: outliers, sessionOutliers: sessionOutliers, OUTLIER: OUTLIER,
+    practiceSwings: practiceSwings, fullSwings: fullSwings, sessionPractice: sessionPractice, practiceText: practiceText, WARMUP: WARMUP,
     solidCount: solidCount, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
     mergeGoals: mergeGoals, applyGoals: applyGoals,
     bestStrikes: bestStrikes, strikeReference: strikeReference, pinFor: pinFor, bestShots: bestShots, checkShot: checkShot,
-    launchWindow: launchWindow, clubLoft: clubLoft, clubSpec: clubSpec, clubKind: clubKind, LAUNCH_PER_LOFT: LAUNCH_PER_LOFT,
+    launchWindow: launchWindow, launchFocus: launchFocus, clubLoft: clubLoft, clubSpec: clubSpec, clubKind: clubKind, LAUNCH_PER_LOFT: LAUNCH_PER_LOFT,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats, trend: trend, TREND: TREND,
     parsePaste: parsePaste, parsedFromRows: parsedFromRows, buildShots: buildShots, normTime: normTime, quantile: quantile, parseCell: parseCell, defaultColumns: defaultColumns, unitOf: unitOf

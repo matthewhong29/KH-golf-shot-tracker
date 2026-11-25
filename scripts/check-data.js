@@ -84,6 +84,7 @@ function checkPlayerFile(file, playerId) {
         if (v < lo || v > hi) warnings.push(`${w}: ${k} = ${v} looks out of range; check the photo`);
       }
       if (shot.carry_yds == null) warnings.push(`${w}: no carry distance`);
+      if ('partial' in shot && shot.partial !== true) warnings.push(`${w}: "partial" should be true (a ball that wasn't a full swing) or left out`);
       if (typeof shot.carry_yds === 'number' && typeof shot.total_yds === 'number' && shot.total_yds < shot.carry_yds - 5) {
         warnings.push(`${w}: total (${shot.total_yds}) is well short of carry (${shot.carry_yds}); check the photo`);
       }

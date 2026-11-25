@@ -98,11 +98,12 @@
     (r.frames || []).forEach(function (f, i) {
       var w2 = where + ', frame ' + (i + 1);
       if (!f || typeof f !== 'object') { errs.push(w2 + ': must be an object'); return; }
-      if (!f.svg) {
-        if (!/^media\/[\w.\/-]+\.(jpe?g|png|webp)$/i.test(f.src || '')) errs.push(w2 + ': src must be an image under media/ (.jpg, .png or .webp)');
-        else if (ctx.fileExists && !ctx.fileExists(f.src)) errs.push(w2 + ': ' + f.src + ' doesn\'t exist');
-      }
-      if (!(f.w > 0 && f.h > 0)) errs.push(w2 + ': w and h (the image size in pixels) are needed');
+      // A frame from a data file is an image. Only the page's built-in example draws its own
+      // frames (svg and thumb), so the page ignores them in a data file, and they're an error here.
+      if (f.svg != null || f.thumb != null) errs.push(w2 + ': svg and thumb aren\'t allowed in a data file; a frame is an image (src)');
+      if (!/^media\/[\w.\/-]+\.(jpe?g|png|webp)$/i.test(f.src || '')) errs.push(w2 + ': src must be an image under media/ (.jpg, .png or .webp)');
+      else if (ctx.fileExists && !ctx.fileExists(f.src)) errs.push(w2 + ': ' + f.src + ' doesn\'t exist');
+      if (!(typeof f.w === 'number' && typeof f.h === 'number' && f.w > 0 && f.h > 0)) errs.push(w2 + ': w and h (the image size in pixels) are needed, as numbers');
       if (!f.label) warns.push(w2 + ': no label (for example "Top of the backswing")');
       var nums = {};
       (f.marks || []).forEach(function (m, j) {

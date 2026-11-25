@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://i.ytimg.com; connect-src 'self' https://api.github.com; frame-src https://www.youtube-nocookie.com; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
 <title>KH Golf · Shot Tracker</title>
 <meta name="description" content="Golf shot tracker for the family: launch monitor sessions, per-club averages, carry gapping, dispersion, progress, and tips and drills.">
 <meta name="robots" content="noindex">
@@ -17,7 +18,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" rel="stylesheet">
+<!-- The web font never holds up the first paint: it loads as a print sheet and app.js switches it on. -->
+<link id="fontCss" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" rel="stylesheet" media="print">
 <style>
 /* ===== KH Golf: design system =====
    Large, high-contrast type for easy reading: body text is 18px, nothing is under 16px,
@@ -46,7 +48,7 @@
   --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
 }
 html{-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
-body{background:var(--bg);color:var(--ink);font-family:var(--font);font-optical-sizing:auto;font-size:18px;font-weight:450;line-height:1.5;min-height:100vh;padding-bottom:calc(104px + env(safe-area-inset-bottom));overflow-x:hidden}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-optical-sizing:auto;font-size:18px;font-weight:450;line-height:1.5;min-height:100vh;padding-bottom:calc(104px + env(safe-area-inset-bottom));overflow-x:hidden;overflow-wrap:break-word}
 button,input,select,textarea{font:inherit;color:inherit}
 strong,b{font-weight:700}
 a{color:var(--accent)}
@@ -326,7 +328,7 @@ details.more[open]>summary::after{transform:rotate(-135deg) translate(-2px,-2px)
 .gm-mo-arm{flex:1 1 auto;min-height:52px;font-size:1.08rem}
 .gm-mo-arm[aria-pressed="true"]{background:transparent;border-color:rgba(255,255,255,.55);color:#fff}
 .gm-mo-note{padding:6px 12px 0}
-.gm-mo-safe{flex:1 1 auto;min-width:0;font-size:15px;line-height:1.35;color:rgba(255,255,255,.86)}
+.gm-mo-safe{flex:1 1 auto;min-width:0;font-size:16px;line-height:1.35;color:rgba(255,255,255,.88)}
 .gm-mo-ask{margin:10px 12px 0;padding:12px 14px;border-radius:12px;background:rgba(0,0,0,.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}
 .gm-mo-ask .t{font-weight:750;font-size:1.02rem;margin-bottom:4px}
 .gm-mo-ask ul{margin:0 0 10px 18px;font-size:15px;line-height:1.4}
@@ -381,8 +383,8 @@ details.more[open]>summary::after{transform:rotate(-135deg) translate(-2px,-2px)
 .gm-setup .seg button{flex:1 1 0;min-width:0;padding:8px 6px}
 .gm-holes{margin-top:10px}
 .gm-holes .chip{min-width:52px;padding:8px 10px}
-.gm-check{display:flex;gap:12px;align-items:center;margin-top:16px;font-weight:650;color:var(--ink-2)}
-.gm-check input{flex:none}
+.gm-check{display:flex;gap:12px;align-items:center;margin-top:10px;min-height:44px;font-weight:650;color:var(--ink-2)}
+.gm-check input{flex:none;width:22px;height:22px}
 .gm-rounds li{display:flex;justify-content:space-between;gap:6px 14px;flex-wrap:wrap}
 .gm-rounds .sc{font-weight:800}
 .gm-src{font-size:16px;color:var(--muted);margin-top:14px}
@@ -522,7 +524,7 @@ nav.tabs.compact button:not([aria-selected="true"]) .tl{position:absolute;width:
 .goals-bar{position:relative;z-index:2;margin:-44px 0 6px}
 .gb{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px;box-shadow:var(--shadow-lg)}
 .gb-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.gb-title{display:flex;align-items:center;gap:10px;font-size:1.15rem;font-weight:750;color:var(--ink);letter-spacing:-.015em}
+.gb-title{display:flex;align-items:center;gap:10px;min-width:0;overflow-wrap:anywhere;font-size:1.15rem;font-weight:750;color:var(--ink);letter-spacing:-.015em}
 .gb-ico{flex:none;display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;background:var(--goal-bg);color:var(--goal)}
 .gb-list{list-style:none;margin-top:6px}
 .gb-item{display:flex;align-items:flex-start;gap:12px;padding:12px 0 6px;border-top:1px solid var(--line)}
@@ -867,15 +869,15 @@ nav.tabs.compact button:not([aria-selected="true"]) .tl{position:absolute;width:
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 
-<script src="js/core.js"></script>
-<script src="js/tips.js"></script>
-<script src="js/drillart.js"></script>
-<script src="js/review.js"></script>
-<script src="js/flight.js"></script>
-<script src="js/course-maps.js"></script>
-<script src="js/course-elev.js"></script>
-<script src="js/courses.js"></script>
-<script src="js/game.js"></script>
-<script src="js/app.js"></script>
+<script src="js/core.js?v=52abacaa"></script>
+<script src="js/tips.js?v=49cf868d"></script>
+<script src="js/drillart.js?v=21bae3d7"></script>
+<script src="js/review.js?v=3a54dbff"></script>
+<script src="js/flight.js?v=492d2065"></script>
+<script src="js/course-maps.js?v=ed707865"></script>
+<script src="js/course-elev.js?v=585b592a"></script>
+<script src="js/courses.js?v=cb03643b"></script>
+<script src="js/game.js?v=fbc4702b"></script>
+<script src="js/app.js?v=2f27334b"></script>
 </body>
 </html>

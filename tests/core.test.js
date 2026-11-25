@@ -129,7 +129,7 @@ eq(C.sortClubs(['5hy', 'PW', '7i', '9i', 'Driver', '3w', '5i', 'SW']), ['SW', 'P
 section('Mis-hits & highlights');
 eq(C.mishits(C.sessionShots(nov)).map((m) => m.shot.id), ['2026-11-01-037', '2026-11-01-038', '2026-11-01-039'], 'mis-hits on Nov 1: exactly the three topped 5w shots');
 eq(C.sessionMishits(data.sessions).size, 3, 'mis-hits across all sessions');
-eq(['5hy', '4hy', '5w', '3w', 'Driver', '7i', '4i', 'PW', 'SW'].map((c) => Math.round(C.launchFloor(c) * 10) / 10), [9, 8.4, 7.2, 6.6, 7.2, 11.4, 10, 15.6, 18],
+eq(['5hy', '4hy', '5w', '3w', 'Driver', '7i', '4i', 'PW', 'SW'].map((c) => Math.round(C.launchFloor(c) * 10) / 10), [9, 8.4, 7.2, 6.6, 8.4, 11.4, 10, 15.6, 20.4],
   'launch floor: 5° woods/hybrids/driver and 10° irons/wedges, or 60% of the low end of the club’s usual launch window, whichever is higher');
 eq(C.mishits([{ club: '5hy', carry_yds: 138, launch_deg: 9 }, { club: '5hy', carry_yds: 140, launch_deg: 18 }]).length, 0, 'a 9° hybrid shot is not a mis-hit');
 eq(C.quantile([21, 26, 68, 136, 138], 0.75), 136, '5w upper quartile');
@@ -138,7 +138,7 @@ eq(C.median([21, 26, 68, 136, 138]), 68, 'median (why it was replaced: 60% of 68
 const fake = [{ club: 'PW', carry_yds: 85, launch_deg: 30 }, { club: 'PW', carry_yds: 88, launch_deg: 31 }, { club: 'PW', carry_yds: 20, launch_deg: 28 }, { club: 'PW', carry_yds: 70, launch_deg: 4 }];
 eq(C.mishits(fake).map((m) => m.reasons.join('+')), ['short carry', 'low launch'], 'mis-hit rules');
 eq(C.mishits(fake).map(C.misKind), ['fat', 'thin'], 'named by what happened: a short carry at a normal height is fat, a low launch thin');
-eq([C.mishits([{ club: 'Driver', carry_yds: 200, launch_deg: 8 }]).length, C.mishits([{ club: 'Driver', carry_yds: 150, launch_deg: 6 }]).length], [0, 1], 'a driver at 8° is fine, at 6° it came off thin');
+eq([C.mishits([{ club: 'Driver', carry_yds: 200, launch_deg: 9 }]).length, C.mishits([{ club: 'Driver', carry_yds: 150, launch_deg: 6 }]).length], [0, 1], 'a driver at 9° is fine, at 6° it came off thin');
 // The real shots that launched far too low for the club but ran a long way: thin, not solid.
 const allShots = data.sessions.concat(fileData.sessions).reduce((a, x) => a.concat(C.sessionShots(x)), []);
 const thinIds = ['2026-11-10-toptracer-064', '2026-11-12-toptracer-042', '2026-11-22-toptracer-006'];
@@ -235,7 +235,17 @@ eq(goalsOf('PW'), ['launch', { carry: [77, 87, 6, 9, false], line: [6, 9, false]
 eq(goalsOf('5hy'), ['direction', { carry: [132, 148, 2, 4, false], line: [1, 4, false], launch: [15, 19, 'high'], contact: [4, 4, true] }], '5hy goals: focus on direction');
 eq([C.clubGoals(novE.PW, 'PW').goals[0].typical, C.clubGoals(novE.PW, 'PW').goals[0].pureCarry], [82, 91], 'the distance goal: his typical carry, with the pure strike beside it as the stretch target');
 eq(goalsOf('5w'), ['contact', { carry: [129, 145, 2, 5, false], line: [1, 5, false], launch: [12, 16, 'low'], contact: [2, 5, false] }], '5w goals: focus on contact');
-eq(goalsOf('SW'), ['launch', { carry: [59, 69, 2, 7, false], line: [6, 7, true], launch: [30, 34, 'high'], contact: [7, 7, true] }], 'SW goals');
+eq(goalsOf('SW'), ['launch', { carry: [59, 69, 2, 7, false], line: [6, 7, true], launch: [34, 38, 'high'], contact: [7, 7, true] }], 'SW goals');
+// Launch cues by the kind of club: hands ahead lowers an iron or a hybrid, never a driver or a wood.
+const lf = (c, avg, lo, hi) => C.launchFocus(c, { avg, lo, hi, status: avg > hi ? 'high' : avg < lo ? 'low' : 'ok' });
+eq([lf('7i', 25, 19, 23), lf('5hy', 21, 15, 19), lf('3w', 17, 11, 15), lf('Driver', 19, 14, 18), lf('Driver', 21, 14, 18), lf('Driver', 12, 14, 18), lf('3w', 9, 11, 15), lf('7i', 21, 19, 23)],
+  ['Lower launch: keep your hands ahead of the ball at impact.', 'Lower launch: keep your hands ahead of the ball at impact.', null, null,
+    'Launch a touch high: try teeing it a little lower.', 'More launch: tee it a little higher and catch it on the way up.', 'A little more height: a shallow sweep, and let the loft get it up.', null],
+  'launch cues: hands ahead for irons and hybrids; a driver only 3° or more over, and teed lower; a wood a little high is fine');
+eq(C.launchWindow('Driver'), [14, 18], 'a driver with no loft listed: 14–18°, since a slower swing needs more launch off a tee');
+eq(C.checkShot(novE['5hy'], '3w', { launch_deg: 17 }) && C.checkShot(novE['5hy'], '3w', { launch_deg: 17 }).lines.find((l) => l.key === 'launch').text,
+  'Launch 17° is a little high (aim for 11–15°), which is fine with a wood.', 'a 3 wood a little high: no hands-ahead cue');
+eq(C.clubGoals(novE['5w'], '5w').focus.text, 'Solid contact first: a shallow strike that brushes the grass.', 'contact focus for a wood: a shallow strike, not ball-then-turf');
 // A scattered session can't widen the zone and pass: Dad's Nov 10 7 iron (81–132 yds) doesn't meet it.
 ok(!C.clubGoals(C.clubData([fileData.sessions.find((x) => x.id === '2026-11-10-toptracer')])['7i'], '7i').goals[0].met, 'a scattered 7 iron doesn’t pass the same-distance goal');
 eq(goalsOf('9i')[0], 'direction', '9i focus: direction (7 of 15 within 10 yds)');
@@ -271,7 +281,7 @@ eq(C.checkShot(null, 'PW', { carry_yds: 80 }), null, 'no data for the club: noth
 section('Launch targets from his club lofts');
 const blackCats = { bag: { '7i': { model: 'Lynx Black Cat', loft_deg: 33 }, '9i': { model: 'Lynx Black Cat', loft_deg: 41 }, PW: { model: 'Lynx Black Cat', loft_deg: 45 },
   '3i': { model: 'Lynx Black Cat', loft_deg: 20 }, '5hy': { model: 'Callaway Edge', loft_deg: null }, Driver: { model: 'Callaway Edge', loft_deg: 10.5 } } };
-eq(['7i', '9i', 'PW', '5hy', 'SW'].map((c) => C.launchWindow(c, blackCats)), [[19, 23], [24, 28], [27, 31], [15, 19], [30, 34]],
+eq(['7i', '9i', 'PW', '5hy', 'SW'].map((c) => C.launchWindow(c, blackCats)), [[19, 23], [24, 28], [27, 31], [15, 19], [34, 38]],
   'windows from loft (64%, ±2°); clubs without a loft keep the general windows');
 eq([C.clubLoft('7i', blackCats), C.clubLoft('5hy', blackCats), C.clubLoft('7i', null)], [33, null, null], 'club loft lookup');
 eq(C.launchWindow('PW', null), [26, 30], 'no equipment: general window');
@@ -403,7 +413,37 @@ eq([C.resolvePlayer(players, 'brother', 'dad'), C.resolvePlayer(players, 'nobody
 eq([C.fmtHeight(73), C.fmtHeight(60), C.fmtHeight(null)], ['6′1″', '5′0″', ''], 'fmtHeight');
 eq(C.youtubeSearchUrl('golf towel drill'), 'https://www.youtube.com/results?search_query=golf%20towel%20drill', 'YouTube search link');
 const TIPS = require('../js/tips.js');
-eq(TIPS.dad.focus.map((f) => f.id), ['contact', 'turn', 'hands', 'straight', 'fit', 'plan'], 'Dad focus areas');
+// Warm-ups and half swings: left out of every number, the mis-hits and the hit rates.
+{
+  const m3s = bro.sessions.find((x) => x.id === '2026-11-12-toptracer'), sh = C.sessionShots(m3s);
+  const easy = C.practiceSwings(sh);
+  eq([...easy].map(([x, why]) => x.id.slice(-3) + ' ' + why), ['001 warm-up', '002 warm-up', '004 warm-up', '005 warm-up', '006 warm-up'],
+    'M3’s Nov 12 warm-up: the soft pitching wedges in his first few minutes (44–50 yds at 51–53 mph)');
+  eq(C.mishits(sh).length, 6, 'and they aren’t mis-hits: 6 left of 11');
+  ok(C.mishits(sh).some((m) => m.shot.id === '2026-11-12-toptracer-083'), 'a fat-looking PW an hour later is still a mis-hit');
+  const e = C.clubData([m3s]).PW;
+  eq([e.shots.length, e.easy.length, e.mis.length], [15, 5, 1], 'the club’s numbers use only its full swings');
+  const hl = C.buildHighlights([m3s], null);
+  eq(hl.find((h) => h.id === 'solid').text, 'Solid contact: 88 of 94 full swings (94%).', 'solid contact counts full swings');
+  eq(hl.find((h) => h.id === 'practice').text, '5 warm-up swings to start (PW, 44–50 yds): left out of the numbers, and not counted as mis-hits.', 'the highlights say which were warm-ups');
+  eq(hl.find((h) => h.id === 'count').text.split(' ')[0], '99', 'the shot count still counts every ball');
+  // a thin one in the warm-up is still a mis-hit; so is anything in a short session
+  const thin = sh.map((x) => (x.id.endsWith('-002') ? Object.assign({}, x, { launch_deg: 8 }) : x));
+  eq(C.practiceSwings(thin).size, 4, 'a thin shot in the warm-up is a mis-hit, not a warm-up');
+  eq(C.practiceSwings(sh.slice(0, 15)).size, 0, 'a short session gets no warm-up');
+  eq(C.practiceSwings(sh.map((x) => Object.assign({}, x, { time: null }))).size, 0, 'without times there is no warm-up');
+  // a ball marked partial in the data file
+  const marked = sh.map((x) => (x.id.endsWith('-083') ? Object.assign({}, x, { partial: true }) : x));
+  const pm = C.practiceSwings(marked);
+  eq([pm.get(marked[82]), C.mishits(marked).some((m) => m.shot === marked[82]), C.clubData([{ shots: marked }]).PW.easy.length], ['partial', false, 6], 'partial: true is a half swing, never a mis-hit');
+  eq(C.practiceText(pm), '5 warm-up swings to start (PW, 44–50 yds) and 1 half swing or drill ball (PW, 41 yds): left out of the numbers, and not counted as mis-hits.', 'both kinds, named');
+}
+// index.html asks for each script by a hash of its contents, so phones never mix new and old files.
+{
+  const { stamped } = require('../scripts/stamp.js'), html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  ok(stamped(html) === html && /js\/app\.js\?v=[0-9a-f]{8}/.test(html), 'index.html’s script stamps are current (run node scripts/stamp.js after changing a file in js/)');
+}
+eq(TIPS.dad.focus.map((f) => f.id), ['straight', 'hands', 'turn', 'contact', 'short', 'fit', 'plan'], 'Dad focus areas: his biggest leaks first (the hybrid’s start line, then launch)');
 eq(TIPS.brother.focus.map((f) => f.id), ['clubs', 'strike', 'short', 'speed', 'games', 'plan'], 'M3 focus areas');
 for (const p of players) {
   const t = TIPS[p.id];
@@ -429,7 +469,7 @@ for (const p of players) {
     if (d.video) ok(/^[\w-]{11}$/.test(d.video.id) && d.video.title && d.video.by, `${w}: video has an id, title and coach`);
   }));
 }
-const towel = TIPS.dad.focus[0].drills[0].art;
+const towel = TIPS.dad.focus.find((f) => f.id === 'contact').drills[0].art;
 ok(/da-towel/.test(DA.render(towel, 0)), 'towel drill frame draws the towel');
 ok(DA.moves(towel) && !DA.moves(TIPS.brother.focus.find((f) => f.id === 'short').drills[0].art), 'swing scenes move; putting games cut');
 const mid = DA.tween(towel, 0, 1, 0.5, {});
@@ -1163,7 +1203,7 @@ ok(sFlop.carry_yds < 35 && sFlop.landing_deg >= 65 && sFlop.apex_ft / sFlop.carr
 ok(Math.abs(sSplash.carry_yds - 35) < 0.01 && sChip.total_yds > 1.4 * sChip.carry_yds, 'the sand takes half a splash; a chip rolls most of the way');
 ok(['normal', 'pitch', 'punch'].every((t) => GG.typeShot(base7, t, 'R', 'fairway', 0.2) === base7 && GG.plainShot(t)) && !GG.plainShot('draw'), 'a normal shot, a pitch and a punch (the trees make it one) change nothing');
 // How far a full swing goes with each, so the power allows for it.
-ok(GG.shotReach('chip', 100, 8, '8i') > 1.3 && GG.shotReach('chip', 70, 3, 'SW') < 1 && GG.shotReach('high', 128, 10, '7i') < 1 && GG.shotReach('normal', 128, 10, '7i') === 1, 'a chip with an 8 iron runs well past a normal shot; with a wedge it doesn’t');
+ok(GG.shotReach('chip', 100, 8, '8i') > 1.3 && GG.shotReach('chip', 70, 3, 'SW') < 1.1 && GG.shotReach('high', 128, 10, '7i') < 1 && GG.shotReach('normal', 128, 10, '7i') === 1, 'a chip with an 8 iron runs well past a normal shot; with a sand wedge it goes about as far');
 ok(GG.powerFor(m3Pools['8i'], 20, 'fairway', 'chip') < GG.powerFor(m3Pools['8i'], 20, 'fairway') * 0.8, 'a 20-yd chip needs less swing than a 20-yd pitch with the same club');
 // Through the real swing: the setup is built in, a perfect swing plays the shot, and the
 // report says what was planned.
@@ -1177,7 +1217,11 @@ const sideAvg = (t) => { const r = FL.rng(7); let sum = 0; for (let i = 0; i < 4
 const sN = sideAvg('normal'), sFd = sideAvg('fade'), sDr = sideAvg('draw');
 ok(sFd > sN + 0.2 && sDr < sN - 0.2, `the one-way miss: on average a fade finishes ${(sFd - sN).toFixed(1)} yds right of his normal shot, a draw ${(sN - sDr).toFixed(1)} left`);
 const rSp = GG.swingShot(m3Pools.PW, rs({}), { still: true, type: 'spinner', lie: 'fairway' });
-ok(rSp.rep.spun && rSp.shot.total_yds < rSp.shot.carry_yds, 'a pure wedge set up to spin, spins back');
+ok(rSp.rep.checked && !rSp.rep.spun && rSp.shot.total_yds >= rSp.shot.carry_yds && rSp.shot.total_yds - rSp.shot.carry_yds < 4, 'a pure wedge set up to spin at M3’s speed (about 76 mph) checks up instead of backing up');
+const fastSW = Object.assign({}, baseSW, { ball_speed_mph: 90 }), slowSW = Object.assign({}, baseSW, { ball_speed_mph: 70 });
+eq([GG.typeShot(fastSW, 'spinner', 'R', 'fairway', 0.2).spun, GG.typeShot(slowSW, 'spinner', 'R', 'fairway', 0.2).spun, GG.typeShot(slowSW, 'spinner', 'R', 'fairway', 0.2).checked],
+  [true, undefined, true], 'a wedge backs up off a fast strike (85+ mph); a slower pure one checks');
+eq(GG.shotVerdict({ type: 'spinner', checked: true }), { ok: true, text: 'It bit and checked up. A faster swing spins it back.' }, 'a checked spinner came off');
 // Did it come off?
 eq([GG.shotVerdict({ type: 'draw', curve: -8, carry: 150, hand: 'R' }).ok, GG.shotVerdict({ type: 'draw', curve: 6, carry: 150, hand: 'R' }).text, GG.shotVerdict({ type: 'draw', curve: 8, carry: 150, hand: 'L' }).ok, GG.shotVerdict({ type: 'fade', curve: -6, carry: 150, hand: 'R' }).text],
   [true, 'It didn’t draw: the face was open to the path.', true, 'It didn’t fade: the face was shut to the path.'], 'a draw that drew, one that faded instead, a left-hander’s draw, a fade that drew');
@@ -1198,10 +1242,10 @@ const near = { types: ['pitch', 'chip', 'flop'], d: 25, reach: 70, club: 'SW' };
 eq([sg(Object.assign({ overSand: true, room: 3 }, near)).type, sg(Object.assign({ overSand: true, room: 7 }, near)).type, sg(Object.assign({ toGreen: 6, room: 15, chipClub: '8i' }, near)).type, sg(Object.assign({ toGreen: 6, room: 15, chipClub: null }, near)).type, sg(Object.assign({ overSand: true, room: 14, toGreen: 12 }, near)).type, sg(Object.assign({ toGreen: 6, room: 4, chipClub: '9i' }, near)).type],
   ['flop', 'pitch', 'chip', 'pitch', 'pitch', 'pitch'], 'round the green: flop only to a pin tucked right over the sand, chip when a club lands it on the green, otherwise pitch');
 // The chip club: the least lofted that still lands it a yard and a half on, as a golfer picks it.
-eq([GG.chipClub(m3Pools, 25, 4), GG.chipClub(m3Pools, 25, 7), GG.chipClub(m3Pools, 25, 8), GG.chipClub(m3Pools, 30, 15), GG.chipClub(m3Pools, 20, 18)], ['6i', '9i', 'PW', 'SW', null], 'chip with a 6 iron from just off, more loft from further off, and not at all from 18 yds off a 20-yd shot');
-eq(['SW', 'PW', '8i', '6i'].map((c) => Math.round(GG.chipRun(c) * 10) / 10), [0.4, 1.3, 2, 2.6], 'how far a chip rolls for each yard it carries: about the chipping ratios golfers learn');
+eq([GG.chipClub(m3Pools, 25, 2), GG.chipClub(m3Pools, 25, 4), GG.chipClub(m3Pools, 25, 7), GG.chipClub(m3Pools, 30, 12), GG.chipClub(m3Pools, 30, 15), GG.chipClub(m3Pools, 20, 18)], ['6i', '8i', 'SW', 'SW', null, null], 'chip with a 6 iron from just off, more loft from further off, and not at all when even a sand wedge can’t land it on');
+eq(['SW', 'PW', '8i', '6i'].map((c) => Math.round(GG.chipRun(c) * 10) / 10), [1, 2.2, 3.2, 4], 'how far a chip rolls for each yard it carries: the chipping ratios golfers are taught (1 : 1 sand wedge, 1 : 2 pitching wedge, 1 : 3 eight iron, 1 : 4 six iron)');
 ok(['6i', '7i', '8i', '9i', 'PW', 'SW'].map((c) => GG.chipShare(m3Pools[c])).every((v, i, a) => !i || v > a[i - 1]), 'the more loft, the more of a chip is carry');
-eq([GG.clubForShot('chip', m3Pools, 'SW', { d: 25, toGreen: 7 }), GG.clubForShot('chip', m3Pools, 'SW', { d: 20, toGreen: 18 })], ['9i', '8i'], 'tapping Chip switches to the club that lands it on the green');
+eq([GG.clubForShot('chip', m3Pools, 'SW', { d: 25, toGreen: 4 }), GG.clubForShot('chip', m3Pools, 'SW', { d: 20, toGreen: 18 })], ['8i', '8i'], 'tapping Chip switches to the club that lands it on the green');
 // A chip's stroke: his biggest goes about 50 yds with any club, so 20 yds is a real stroke.
 ok(['6i', '8i', 'PW'].every((c) => Math.abs(GG.strokeFor(m3Pools[c], 20, 'fairway', 'chip') - 0.4) < 0.01) && GG.strokeFor(m3Pools['8i'], 20, 'fairway') < 0.2, 'a 20-yd chip is a 40% stroke with any club (with a normal swing it would be a twitch)');
 const chipSh = GG.swingShot(m3Pools['8i'], rs({ depth: 0.4, back: 0.5, down: 0.25 }), { still: true, type: 'chip' }).shot;
@@ -1209,13 +1253,19 @@ ok(Math.abs(chipSh.total_yds - 20) < 2 && Math.abs(chipSh.total_yds / chipSh.car
 const water = side({ pen: 6, all: 6, what: 'water' }, {}), ob = side({}, { pen: 4, all: 4, what: 'ob' });
 eq([sg({ beside: water }).type, sg({ beside: water, hand: 'L' }).type, sg({ beside: ob }).type, sg({ beside: water }).why], ['fade', 'draw', 'draw', 'water on the left: curve it away from it'],
   'curve it away from water or out of bounds: a fade for a right-hander, a draw for a left-hander');
+eq([sg({ beside: water, ownCurve: 6 }), sg({ beside: water, ownCurve: -6 }).type, sg({ beside: water, ownCurve: 1 }).type, sg({ beside: water, hand: 'L', ownCurve: 5 }).why],
+  [{ type: 'normal', why: 'water on the left: your usual fade curves away from it' }, 'fade', 'fade', 'water on the left: your usual draw curves away from it'],
+  'play your usual shape: when his normal shot already curves away from the trouble (3 yds or more), that’s the shot');
+eq(sg({ beside: side({}, { all: 8, what: 'trees' }), ownCurve: -5 }), { type: 'normal', why: 'trees down the right: your usual draw curves away from them' }, 'the same away from trees');
 eq([sg({ bend: -1 }).type, sg({ bend: 1 }).type, sg({ bend: -1, hand: 'L' }).type, sg({ bend: -1, beside: side({}, { pen: 5, all: 5, what: 'water' }) }).type, sg({ bend: -1, beside: water }).type],
   ['draw', 'fade', 'fade', 'draw', 'fade'], 'round the corner, unless that curves it toward water');
 eq([sg({ beside: side({}, { all: 4, what: 'trees' }) }).type, sg({ beside: side({ all: 3 }, { all: 4, what: 'trees' }) }).type, sg({ beside: side({}, { all: 4, what: 'trees' }) }).why],
   ['draw', 'normal', 'trees down the right: curve it away from them'], 'away from trees when one side is clearly worse; trees down both sides, just hit it');
-const appr = { d: 110, reach: 120, club: 'PW', types: full.concat('spinner') };
+const appr = { d: 110, reach: 120, club: 'PW', types: full.concat('spinner'), spinSpeed: 92 };
 eq([sg(Object.assign({ overSand: true, room: 9 }, appr)).type, sg(Object.assign({ room: 5 }, appr)).type, sg(Object.assign({ room: 20, bend: -1 }, appr)).type, sg(Object.assign({ overSand: true, room: 9 }, appr, { d: 300, reach: 180, club: 'Driver' })).type],
   ['high', 'spinner', 'normal', 'normal'], 'approaches: high over a bunker to a tucked pin, a spinner to a tight one; no shaping a wedge; the pin out of reach, no high shot for a bunker by it');
+eq([sg(Object.assign({ room: 5 }, appr, { spinSpeed: 76 })).type, sg(Object.assign({ room: 5 }, appr, { spinSpeed: null })).type, m3Pools.PW.pureSpeed < GG.SPIN.back], ['normal', 'normal', true],
+  'no spinner suggested to a wedge too slow to back it up (M3’s pure PW is under 85 mph)');
 eq(GG.suggestShot({ lie: 'green', d: 5, toGreen: 0 }), null, 'no suggestion on the green');
 // The trouble on the real course, either side of his drive.
 const besideOf = (n, club) => { const H = GG.buildHole(HP, n, 'white'), pin = GG.pinFor(H, 9), b = { x: H.start.x, z: H.start.z, lie: 'tee' }, tg = GG.aimFor(H, b, pin, m3Pools[club].full, m3Pools[club].landing); return GG.worseSide(GG.troubleBeside(H, b, tg)); };
