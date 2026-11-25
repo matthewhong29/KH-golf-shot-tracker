@@ -414,7 +414,15 @@ eq(bro.rounds_reset, '2026-11-25', 'M3’s rounds before Nov 26 (Matthew’s tes
 // M2's launch monitor data, from the file Matthew sent: six August sessions, partly filled.
 {
   const m2 = JSON.parse(fs.readFileSync(path.join(root, 'data', 'matthew_golf_data.json'), 'utf8'));
-  eq([m2.sessions.length, m2.sessions.reduce((t, s) => t + s.shots.length, 0), Object.keys(m2.clubs)], [6, 22, ['9i', '7i', 'Driver']], 'M2: 6 sessions, 22 shots, with the 9 iron, 7 iron and driver');
+  const aug = m2.sessions.filter((s) => /^2026-08/.test(s.date));
+  eq([aug.length, aug.reduce((t, s) => t + s.shots.length, 0)], [6, 22], 'M2: the six August sessions from his file, 22 shots');
+  ok(m2.sessions.every((s) => s.shots.every((x) => m2.clubs[x.club])), 'M2: every club he has hit is in the clubs map');
+  // May 1 and 2, every row of the Toptracer Range app's game tables (offline was in yards there)
+  const may1 = m2.sessions.find((s) => s.id === '2026-05-01-toptracer'), may2 = m2.sessions.find((s) => s.id === '2026-05-02-toptracer');
+  const byClub = (s) => s.shots.reduce((o, x) => Object.assign(o, { [x.club]: (o[x.club] || 0) + 1 }), {});
+  eq([byClub(may1), byClub(may2)], [{ PW: 8, '7i': 14, '9i': 23 }, { Driver: 30, '7i': 19 }], 'M2 in May: 8 pitching wedges, 14 7 irons and 23 9 irons on the 1st; 30 drivers and 19 7 irons on the 2nd');
+  eq([may2.shots[13].offline_ft, may2.shots[20].offline_ft, may2.shots[20].curve_ft, may2.shots[5].curve_ft, may1.shots[0].total_yds], [252, -15, 45, null, 68],
+    'offline in yards became feet (R 84 yd is 252 ft, L 5 yd is -15); a bare “1 ft” curve with no side is null; “Distance trend” is the total');
   const nine = C.clubData([m2.sessions.find((s) => s.id === '2026-08-d-9i-12-shots')])['9i'];
   const car = C.summarize(nine.solid, 'carry_yds');
   eq([nine.mis.map((m) => m.id.slice(-3)), C.roundHalfEven(car.avg, 1), car.min, car.max], [['008'], 122.1, 109.4, 136.7], 'M2’s 9 iron: shot 8 (5.4° launch) is the thin mis-hit, and the rest average 122.1 yds (109.4–136.7), as his file says');
