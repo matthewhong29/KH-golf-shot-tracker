@@ -439,6 +439,34 @@
     ctx.arc(cx + r * 0.25, cy + r * 0.2, r * 0.75, 0, 2 * Math.PI);
     ctx.fill();
   }
+  // A pine (Lake Tahoe's Jeffrey and lodgepole pines): a short trunk under three tiers of
+  // branches narrowing to its top, each shaded on the side away from the light. From above
+  // it's its crown, a disc like any tree's.
+  var PINE = ['#22523a', '#2b5e41', '#1f4a35'];
+  function drawPine(ctx, cam, t, base) {
+    var top = project(cam, t.x, t.h, t.z);
+    if (!top) return;
+    var vx = top.x - base.x, vy = top.y - base.y, tall = Math.hypot(vx, vy), w = Math.max(1.2, t.r * base.s);
+    ctx.fillStyle = PINE[t.tone % 3];
+    if (tall < w * 1.5 || cam.pitch < -60 * DEG) {   // from above: its crown
+      var mx = base.x + vx * 0.5, my = base.y + vy * 0.5;
+      ctx.beginPath(); ctx.arc(mx, my, w, 0, 2 * Math.PI); ctx.fill();
+      ctx.fillStyle = COL.leafShade;
+      ctx.beginPath(); ctx.arc(mx + w * 0.22, my + w * 0.18, w * 0.72, 0, 2 * Math.PI); ctx.fill();
+      return;
+    }
+    var px = -vy / tall, py = vx / tall;   // across the tree, on the screen
+    function at(f, side) { return [base.x + vx * f + px * side, base.y + vy * f + py * side]; }
+    var trunk = at(0.25, 0);
+    ctx.strokeStyle = COL.trunk;
+    ctx.lineWidth = Math.max(1, 0.4 * base.s);
+    ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(trunk[0], trunk[1]); ctx.stroke();
+    var tiers = [[0.15, 0.58, 1], [0.38, 0.8, 0.76], [0.6, 1, 0.52]];
+    function tri(a, b, c) { ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(b[0], b[1]); ctx.closePath(); ctx.fill(); }
+    tiers.forEach(function (k) { tri(at(k[0], -w * k[2]), at(k[0], w * k[2]), at(k[1], 0)); });
+    ctx.fillStyle = COL.leafShade;
+    tiers.forEach(function (k) { tri(at(k[0], 0), at(k[0], w * k[2]), at(k[1], 0)); });
+  }
   function drawFlag(ctx, cam, c) {
     var base = project(cam, 0, 0, c.pin);
     if (!base) return;
@@ -841,10 +869,11 @@
     ctx.restore();
   }
   // Everything on a hole that doesn't move, on the course's ground (H.ground, from
-  // GolfGame.buildHole): out of bounds and Lake Merced beyond the boundary; the rough,
-  // practice ground, fairways (mowed in stripes), tee boxes, greens, bunkers and cart
+  // GolfGame.buildHole): out of bounds and the lake beyond the boundary; the rough,
+  // practice ground, fairways (mowed in stripes), ponds, tee boxes, greens, bunkers and cart
   // paths; the yardage markers and the stakes along the boundary (white for out of
-  // bounds, red by the lake); then the trees and the flag, farthest first. pin is { x, z }.
+  // bounds, red by the lake); then the trees (cypress, or pines) and the flag, farthest
+  // first. pin is { x, z }.
   // opts.near: leave out trees closer to the camera than this (yds), so a view from behind
   // the ball isn't blocked by the tree it's under.
   function drawHole(ctx, cam, H, pin, opts) {
@@ -872,6 +901,14 @@
       ctx.fillStyle = COL.fairway;
       ctx.fill();
       stripes(ctx, cam, o);
+    });
+    (G.ponds || []).forEach(function (o) {
+      if (!groundPath(ctx, cam, o.poly)) return;
+      ctx.fillStyle = HCOL.water;
+      ctx.fill();
+      ctx.strokeStyle = HCOL.waterEdge;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
     });
     G.tees.forEach(function (o) { fillGround(ctx, cam, o.poly, COL.tee); });
     if (H.teeBoxDrawn) fillGround(ctx, cam, H.teeBox, COL.tee);
@@ -914,7 +951,8 @@
     });
     if (pin) { var fq = project(cam, pin.x, 0, pin.z); if (fq) things.push({ flag: true, q: fq }); }
     things.sort(function (a, b) { return b.q.z - a.q.z; });
-    things.forEach(function (o) { if (o.flag) flagAt(ctx, cam, pin.x, pin.z); else drawTree(ctx, cam, o.t, o.q); });
+    var tree = G.treeKind === 'pine' ? drawPine : drawTree;
+    things.forEach(function (o) { if (o.flag) flagAt(ctx, cam, pin.x, pin.z); else tree(ctx, cam, o.t, o.q); });
   }
 
   return {

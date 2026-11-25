@@ -2050,10 +2050,11 @@
   // The settings for the next round. The real swing is the way to play now: settings
   // saved before it existed (v < 2) move from the swing meter to it.
   function gmSettings(st, pools) {
-    const set = Object.assign({ tee: 'white', holes: 'all', one: 1, mode: Object.keys(pools).length ? 'swing' : 'live', easy: false, hand: 'R' }, st.last && typeof st.last === 'object' ? st.last : {});
+    const set = Object.assign({ course: COURSES.list[0].id, tee: 'white', holes: 'all', one: 1, mode: Object.keys(pools).length ? 'swing' : 'live', easy: false, hand: 'R' }, st.last && typeof st.last === 'object' ? st.last : {});
     if (!GM_MODE_OK[set.mode] || (set.mode === 'meter' && !(set.v >= 2))) set.mode = Object.keys(pools).length ? 'swing' : 'live';
     // anything a saved copy holds that this course doesn't have goes back to the default
-    const course = gmCourse();
+    if (!COURSES.get(set.course)) set.course = COURSES.list[0].id;
+    const course = gmCourse(set.course);
     if (course && !course.tees.some((t) => t.id === set.tee)) set.tee = course.tees.some((t) => t.id === 'white') ? 'white' : course.tees[0].id;
     if (!GM_HOLES[set.holes] && set.holes !== 'one') set.holes = 'all';
     if (course && !course.holes.some((h) => h.n === +set.one)) set.one = 1;
@@ -2099,8 +2100,19 @@
     const st = gmState(), pools = gmPools(), round = gmRound(st);
     if (!round || ui.game.setup) { el.innerHTML = gmSetupHtml(st, pools, round); return; }
     if (round.cards.every((c) => c.done)) { el.innerHTML = gmOverHtml(round); return; }
+    if (!COURSES.loaded(round.course)) { gmLoadCourse(el, round.course); return; }
     el.innerHTML = gmPlayHtml(round);
     gmMount(st, round, pools);
+  }
+
+  // A course's map and heights are fetched when a round on it starts (GolfCourses.load).
+  function gmLoadCourse(el, id) {
+    const c = gmCourse(id);
+    el.innerHTML = `<div class="card"><p class="note">Loading ${esc(c.name)}…</p></div>`;
+    COURSES.load(id).then(() => { if (ui.tab === 'game') renderGame(); }, (e) => {
+      el.innerHTML = `<div class="card"><p class="empty">${esc(e.message)}. Check the connection, then try again.</p>
+        <div class="row-actions"><button class="btn" data-action="gm-continue">Try again</button></div></div>`;
+    });
   }
 
   // ----- Before a round: the course, tees, holes and how shots are played -----
@@ -2108,17 +2120,18 @@
     return `<button type="button" class="chip" data-action="gm-set" data-k="${k}" data-v="${esc(v)}" aria-pressed="${String(v) === String(cur)}">${label}</button>`;
   }
   function gmSetupHtml(st, pools, round) {
-    const course = gmCourse(), set = gmSettings(st, pools), clubs = GM.clubList(pools).map((p) => p.club);
+    const set = gmSettings(st, pools), course = gmCourse(set.course), clubs = GM.clubList(pools).map((p) => p.club);
     const live = set.mode === 'live' || !clubs.length, mode = live ? 'live' : set.mode, lefty = set.hand === 'L';
     const t = round ? GM.totals(round) : null, next = round ? round.cards.find((c) => !c.done) : null;
     const going = round && next ? `<div class="card">
         <div class="card-head"><span class="head-ico">${icon('flag')}</span><h3 class="card-title">Round in progress</h3></div>
-        <p class="note">${esc(gmCourse(round.course).name)}, ${esc(gmTeeName(course, round.tee))} tees: hole ${next.n} is next${t.played ? `, ${GM.toParText(t.toPar)} after ${plural(t.played, 'hole')}` : ''}.</p>
+        <p class="note">${esc(gmCourse(round.course).name)}, ${esc(gmTeeName(gmCourse(round.course), round.tee))} tees: hole ${next.n} is next${t.played ? `, ${GM.toParText(t.toPar)} after ${plural(t.played, 'hole')}` : ''}.</p>
         <div class="row-actions"><button class="btn" data-action="gm-continue">Carry on</button></div></div>` : '';
     return `${going}
       <h2>${round && next ? 'Or start a new round' : 'Play a round'}</h2>
       <div class="card gm-setup">
         <div class="card-head"><span class="head-ico">${icon('flag')}</span><h3 class="card-title">${esc(course.name)}</h3></div>
+        ${COURSES.list.length > 1 ? `<div class="chips gm-courses" role="group" aria-label="Course">${COURSES.list.map((c) => gmChip('course', c.id, esc(c.name), set.course)).join('')}</div>` : ''}
         <p class="note">${esc(course.place)} · par ${COURSES.par(course)}. ${esc(course.blurb)}</p>
         <ul class="gm-how">
           <li>Every shot flies like your real range shots with that club: its distance, its height and your usual shape.</li>
@@ -2139,7 +2152,7 @@
         ${live ? '' : `<label class="gm-check"><input type="checkbox" data-change="gm-easy"${set.easy ? ' checked' : ''}> Easy: more room for error</label>
         <label class="gm-check"><input type="checkbox" data-change="gm-hand"${lefty ? ' checked' : ''}> I play left-handed</label>`}
         <div class="row-actions"><button class="btn block" data-action="gm-start">${icon('flag')}<span>Tee off</span></button></div>
-        <p class="gm-src">Pars and yardages come from the course scorecard, and the holes from OpenStreetMap’s map of the course: its fairways, greens, tee boxes and bunkers, Lake Merced and the boundary. The trees are placed between the holes. The most a hole can cost is double par.</p>
+        <p class="gm-src">Pars and yardages come from the course scorecard, and the holes from OpenStreetMap’s map of the course: its fairways, greens, tee boxes and bunkers, ${esc(course.water)} and the boundary. The trees are placed between the holes. The most a hole can cost is double par.</p>
         ${GM_MAP_CREDIT}
       </div>
       ${gmHistoryHtml(st, course, round)}`;
@@ -2148,10 +2161,10 @@
     const hist = (st.history || []).filter((r) => r && C.isNum(r.strokes));
     const erase = round || hist.length ? `<div class="row-actions"><button class="btn ghost small" data-action="gm-erase">Erase all rounds</button></div>` : '';
     if (!hist.length) return erase ? `<div class="card">${erase}</div>` : '';
-    const full = hist.filter((r) => r.holes === 18), best = full.length ? full.reduce((a, b) => (b.strokes < a.strokes ? b : a)) : null;
-    return `<h2>Your rounds</h2><div class="card"><ul class="plain gm-rounds">${hist.slice(0, 8).map((r) => `<li><span>${esc(C.fmtDate(r.date, { short: true }))} · ${esc(r.label || plural(r.holes, 'hole'))} · ${esc(gmTeeName(course, r.tee))}${r.mode === 'live' ? ' · from the range' : r.mode === 'meter' ? ' · swing meter' : ''}</span>
+    const full = hist.filter((r) => r.holes === 18 && gmCourse(r.course).id === course.id), best = full.length ? full.reduce((a, b) => (b.strokes < a.strokes ? b : a)) : null;
+    return `<h2>Your rounds</h2><div class="card"><ul class="plain gm-rounds">${hist.slice(0, 8).map((r) => `<li><span>${esc(C.fmtDate(r.date, { short: true }))} · ${esc(gmCourse(r.course).name)} · ${esc(r.label || plural(r.holes, 'hole'))} · ${esc(gmTeeName(gmCourse(r.course), r.tee))}${r.mode === 'live' ? ' · from the range' : r.mode === 'meter' ? ' · swing meter' : ''}</span>
       <span class="sc">${r.strokes} (${GM.toParText(r.toPar)})</span></li>`).join('')}</ul>
-      ${best ? `<p class="hint">Best 18 holes: ${best.strokes} (${GM.toParText(best.toPar)}) on ${esc(C.fmtDate(best.date, { short: true }))}.</p>` : ''}${erase}</div>`;
+      ${best ? `<p class="hint">Best 18 holes at ${esc(course.name)}: ${best.strokes} (${GM.toParText(best.toPar)}) on ${esc(C.fmtDate(best.date, { short: true }))}.</p>` : ''}${erase}</div>`;
   }
   // A rounds reset from the data file ("rounds_reset": "YYYY-MM-DD"): the first time a phone
   // sees it, it erases this player's round in progress and past rounds from that day or
@@ -2271,15 +2284,16 @@
   // The real ground: how much higher a spot is than the ball (yds, + uphill), how far it
   // plays with this club (its landing angle), and the slope of the lie facing it.
   function gmRise(at) { const G = gm.H.ground; return (GM.heightAt(G, at.x, at.z) - GM.heightAt(G, gm.ball.x, gm.ball.z)) / 3; }
-  // (with the shot type in play: a chip comes down shallower, so a climb costs it more)
+  // (with the shot type in play: a chip comes down shallower, so a climb costs it more), and
+  // in the thin air of a course up a mountain, shorter by as much as the ball carries farther.
   function gmPlays(at, club) {
     const c = club || gm.club, pool = gm.pools[c];
-    return GM.playsLike(GM.dist(gm.ball, at), gmRise(at), pool ? GM.typeLanding(pool, club || gmPutting() ? 'normal' : gmShotType()) : GM.landingOf(c));
+    return GM.playsLike(GM.dist(gm.ball, at), gmRise(at), pool ? GM.typeLanding(pool, club || gmPutting() ? 'normal' : gmShotType()) : GM.landingOf(c)) / (gm.H.air || 1);
   }
   function gmSlopeTo(at) { return GM.slopeAt(gm.H.ground, gm.ball.x, gm.ball.z, GM.headingTo(gm.ball, at)); }
   function gmLieSlope(at) { return GM.lieSlope(gmSlopeTo(at || gmAimPoint()), gm.club, gmHand(), data.equipment); }
   function gmSuggest() {
-    const list = gmClubs(), d = GM.playsLike(GM.dist(gm.ball, gm.pin), gmRise(gm.pin), 46);
+    const list = gmClubs(), d = GM.playsLike(GM.dist(gm.ball, gm.pin), gmRise(gm.pin), 46) / (gm.H.air || 1);
     const withShots = {};
     list.forEach((c) => { if (gm.pools[c]) withShots[c] = gm.pools[c]; });
     const c = GM.suggestClub(withShots, d, gmLie());
@@ -4045,7 +4059,7 @@
     gmDraw();
   }
   function gmStartRound() {
-    const st = gmState(), pools = gmPools(), set = gmSettings(st, pools), course = gmCourse();
+    const st = gmState(), pools = gmPools(), set = gmSettings(st, pools), course = gmCourse(set.course);
     const old = gmRound(st);
     if (old && !old.finished && old.cards.some((c) => !c.done)) {
       if (!window.confirm('Start a new round? The one you’re playing ends.')) return;

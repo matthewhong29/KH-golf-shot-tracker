@@ -473,8 +473,9 @@ const TIPS = require('../js/tips.js');
 }
 // index.html asks for each script by a hash of its contents, so phones never mix new and old files.
 {
-  const { stamped } = require('../scripts/stamp.js'), html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const { stamped, stampedCourses } = require('../scripts/stamp.js'), html = fs.readFileSync(path.join(root, 'index.html'), 'utf8'), cs = fs.readFileSync(path.join(root, 'js', 'courses.js'), 'utf8');
   ok(stamped(html) === html && /js\/app\.js\?v=[0-9a-f]{8}/.test(html), 'index.html’s script stamps are current (run node scripts/stamp.js after changing a file in js/)');
+  ok(stampedCourses(cs) === cs && /js\/courses\/edgewood-tahoe\.js\?v=[0-9a-f]{8}/.test(cs), 'js/courses.js stamps each course’s files too (node scripts/stamp.js)');
 }
 eq(TIPS.dad.focus.map((f) => f.id), ['straight', 'hands', 'turn', 'contact', 'short', 'fit', 'plan'], 'Dad focus areas: his biggest leaks first (the hybrid’s start line, then launch)');
 eq(TIPS.brother.focus.map((f) => f.id), ['clubs', 'strike', 'short', 'speed', 'games', 'plan'], 'M3 focus areas');
@@ -944,6 +945,57 @@ eq(GG.lieAt(H1w, g2.x, g2.z), 'fairway', 'another hole’s green plays as fairwa
 const H4 = GG.buildHole(HP, 4, 'blue');
 eq(JSON.stringify(GG.buildHole(HP, 15, 'white').start), JSON.stringify(GG.buildHole(HP, 15, 'white').start), 'a hole is the same every time');
 ok(GG.pinFor(H4, 1).x !== GG.pinFor(H4, 2).x, 'the pin moves from round to round');
+
+section('Game: Edgewood Tahoe');
+const EW = CO.get('edgewood-tahoe'), EM = EW.map;
+eq([CO.list.map((c) => c.id), EW.holes.map((h) => h.n)], [['harding-park', 'edgewood-tahoe'], Array.from({ length: 18 }, (_, i) => i + 1)], 'two courses; Edgewood’s holes 1–18 in order');
+eq(EW.holes.map((h) => h.par), [4, 4, 5, 5, 3, 4, 3, 4, 4, 4, 4, 3, 4, 4, 4, 5, 3, 5], 'pars from the scorecard (OSM has the 17th, a par 3, as a par 4)');
+eq([CO.par(EW), CO.par(EW, [1, 2, 3, 4, 5, 6, 7, 8, 9])], [72, 36], 'par 72: 36 out, 36 in');
+EW.tees.forEach((t) => eq(EW.holes.reduce((a, h) => a + h.yds[t.id], 0), t.yds, `Edgewood: ${t.name} tees add up to ${t.yds}`));
+ok(EW.holes.every((h) => h.yds.blue >= h.yds.white && h.note && h.note.length <= 150) && EW.sources.every((x) => /^https:\/\//.test(x.url) && x.title), 'every Blue tee behind the White, a short note on every hole, sources listed');
+const ewBad = [];
+EW.holes.forEach((h) => EW.tees.forEach((t) => {
+  const H = GG.buildHole(EW, h.n, t.id), st = GG.toHole(H, H.start.x, H.start.z), pin = GG.pinFor(H, 99);
+  if (Math.abs(st.g - h.yds[t.id]) > 12) ewBad.push(`${h.n} ${t.id} at ${Math.round(st.g)}`);
+  if (GG.lieAt(H, H.start.x, H.start.z) !== 'fairway' || GG.lieAt(H, H.green.x, H.green.z) !== 'green' || GG.lieAt(H, pin.x, pin.z) !== 'green') ewBad.push(`${h.n} ${t.id}: tee, green or pin`);
+}));
+eq(ewBad, [], 'Edgewood: every tee within 12 yds of its yardage on a tee box, every green and pin on its green');
+const ewG = new Set(EW.holes.map((h) => EM.holes[h.n].green));
+eq([ewG.size, ewG.has(null), EM.treeKind, EM.ponds.length > 0, EM.fairwaysBuilt.length], [18, false, 'pine', true, 2], 'each hole its own mapped green; pines; ponds; fairways built for the two holes OSM has none for');
+// Lake Tahoe down the west side, past the beach: water beyond the boundary there, out of bounds elsewhere.
+const E1 = GG.buildHole(EW, 1, 'white');
+let ewLake = 0, ewOb = 0, ewWrong = 0;
+EM.boundary.forEach((a, i) => {
+  const b = EM.boundary[(i + 1) % EM.boundary.length], mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2, len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  let nx = (b[1] - a[1]) / len, nz = -(b[0] - a[0]) / len;
+  if (GG.inPoly(EM.boundary, mx + nx * 3, mz + nz * 3)) { nx = -nx; nz = -nz; }
+  const lake = i >= EM.lakeFrom && i < EM.lakeTo, lie = GG.lieAt(E1, mx + nx * 20, mz + nz * 20);
+  if (lie !== (lake ? 'water' : 'ob')) ewWrong++;
+  if (lake) ewLake++; else ewOb++;
+});
+ok(ewWrong === 0 && ewLake >= 8 && ewOb > 20, `Lake Tahoe beyond the west side (${ewLake} edges), out of bounds beyond the rest`);
+const ewSide = (n) => { const H = GG.buildHole(EW, n, 'blue'), t = GG.toHole(H, H.start.x, H.start.z); let l = 0, r = 0, across = 0;
+  for (let s = t.s + 5; s < H.L - 5; s += 4) { const p = H.at(s); if (GG.lieAt(H, p.x, p.z) === 'water') across++;
+    for (let d = 8; d <= 40; d += 4) { if (GG.lieAt(H, p.x - Math.cos(p.h) * d, p.z + Math.sin(p.h) * d) === 'water') { l++; break; } }
+    for (let d = 8; d <= 40; d += 4) { if (GG.lieAt(H, p.x + Math.cos(p.h) * d, p.z - Math.sin(p.h) * d) === 'water') { r++; break; } } }
+  return { l, r, across }; };
+const w2 = ewSide(2), w17 = ewSide(17), w11 = ewSide(11), w8 = ewSide(8);
+ok(w2.l > 60 && w17.r > 15 && w17.l === 0 && w11.across > 10 && w8.l + w8.r + w8.across === 0, 'the guides’ water: down the left of the 2nd, the lake past the beach right of the 17th, a pond carried off the 11th tee, none on the 8th');
+let bend3 = (() => { const H = GG.buildHole(EW, 3, 'blue'), t = GG.toHole(H, H.start.x, H.start.z); let d = (H.at(H.L - 10).h - H.at(t.s + 20).h) * 180 / Math.PI; while (d > 180) d -= 360; while (d < -180) d += 360; return d; })();
+ok(bend3 > 45, `the 3rd: "an epic dogleg right" (${Math.round(bend3)}°)`);
+ok(EM.trees.every((t) => GG.lieAt(E1, t[0], t[1]) === 'trees'), 'every pine stands in the rough, none in a pond');
+// Into a pond: a penalty, dropped back where it went in.
+const H11 = GG.buildHole(EW, 11, 'blue'), t11 = { x: H11.start.x, z: H11.start.z, lie: 'tee' };
+let wet11 = null;
+for (let c = 80; c <= 180 && !wet11; c += 5) { const aim = H11.at(GG.toHole(H11, t11.x, t11.z).s + c), r = GG.playShot(H11, t11, aim, { club: '7i', carry_yds: c / H11.air, total_yds: c / H11.air, apex_ft: 60, launch_deg: 17, landing_deg: 48, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H11, 1), rnd: FL.rng(2) }); if (r.result === 'water') wet11 = r; }
+ok(wet11 && wet11.penalty === 1 && !/water|ob/.test(wet11.next.lie) && GG.toHole(H11, wet11.next.x, wet11.next.z).s < GG.toHole(H11, wet11.rest.x, wet11.rest.z).s, 'into the pond off the 11th tee: a penalty stroke, dropped back short of the water');
+// Thin air: 6,250 ft up, the ball carries about 7% farther (Titleist: 1.16% for every 1,000 ft).
+const flatShot = { club: '7i', carry_yds: 150, total_yds: 158, apex_ft: 80, launch_deg: 17, landing_deg: 47, offline_ft: 0, curve_ft: 0 };
+eq([Math.round(E1.air * 1000) / 1000, GG.buildHole(HP, 1, 'white').air, GG.thinAir(flatShot, E1.air).carry_yds.toFixed(1), GG.thinAir(flatShot, 1).carry_yds], [1.073, 1, '160.9', 150], 'Edgewood’s air: a 150-yd carry flies 161 (Harding, by the sea, as it is)');
+// A pine is a cone: its low branches reach out farther than its top.
+const pine = { x: 0, z: 0, h: 30, r: 5 }, Gp = { trees: [pine], grid: { '0,0': [pine] }, treeKind: 'pine' };
+const hitAt = (side, y) => { const samples = [{ x: side, y: 0, z: -10, t: 0 }, { x: side, y, z: 0, t: 1 }, { x: side, y, z: 10, t: 2 }]; return !!GG.treeHit({ ground: Gp }, { samples, local: { samples: samples.map((q) => ({ z: q.z + 20 })) } }, { lie: 'fairway' }, null, 0); };
+eq([hitAt(3, 6), hitAt(3, 27), hitAt(0.2, 27)], [true, false, true], 'a pine: 3 yds from its trunk the low branches catch a ball, near the top they don’t, its spire does');
 
 section('Game: his own shots');
 const dadPools = GG.clubPools(fileData.sessions, fileData.equipment);

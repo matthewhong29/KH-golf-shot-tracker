@@ -28,7 +28,7 @@
   function headingTo(a, b) { return Math.atan2(b.x - a.x, b.z - a.z); }
 
   // ---------------------------------------------------------------------------
-  // A hole on the real ground: the course's map (js/course-maps.js, from OpenStreetMap)
+  // A hole on the real ground: the course's map (js/courses/COURSE.js, from OpenStreetMap)
   // ---------------------------------------------------------------------------
   var STEP = 2;          // yds between points on the line of play
   var BEHIND = 70;       // the line of play runs on this far behind its start...
@@ -39,6 +39,10 @@
   var BOX = { w: 8, d: 6 };          // a tee box drawn where a set of tees has no mapped one (yds)
   var STAND_IN = { w: 26, d: 30 };   // a green the map hasn't got stands in at this size
   var PATH_W = 2.6;                  // a cart path's width (yds): 8 ft
+  // Thin air: a ball carries about 1.16% farther for every 1,000 ft above sea level (Titleist's
+  // rule of thumb: the height in feet times 0.00116 is the percentage), so at Lake Tahoe
+  // (6,250 ft) about 7% farther than at the ranges by the sea where his shots were hit.
+  var AIR_K = 0.0000116;
 
   function inPoly(poly, x, z) {
     var inside = false;
@@ -184,7 +188,7 @@
     var G = {
       boundary: m.boundary, bb: bboxOf(m.boundary), lake: m.lake,
       greens: m.greens.map(roundedAs('green')).map(item), bunkers: m.bunkers.map(roundedAs('bunker')).map(item), tees: m.tees.map(roundedAs('tee')).map(item),
-      ranges: m.ranges.map(item), woods: m.woods.map(item),
+      ranges: m.ranges.map(item), woods: m.woods.map(item), ponds: (m.ponds || []).map(roundedAs('bunker')).map(item), treeKind: m.treeKind || 'cypress',
       fairways: m.fairways.map(roundedAs('fairway')).map(function (p, i) { var o = item(p); o.spine = spineOf(m.fairwaySpine ? m.fairwaySpine[i] : axisOf(p), p); return o; }),
       paths: m.paths, pathStrips: stripsOf(m.paths, PATH_W / 2), grid: {}, obStakes: [], lakeStakes: [],
       trees: m.trees.map(function (t) { return { x: t[0], z: t[1], h: t[2], r: t[3], tone: t[4] }; })
@@ -207,7 +211,7 @@
   function treesNear(G, x, z) { return G.grid[Math.floor(x / CELL) + ',' + Math.floor(z / CELL)] || []; }
 
   // ---------------------------------------------------------------------------
-  // The height of the ground (js/course-elev.js, from the USGS 3D Elevation Program)
+  // The height of the ground (js/courses/COURSE-elev.js, from the USGS 3D Elevation Program)
   // ---------------------------------------------------------------------------
   var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   // A course's heights, unpacked once: feet above sea level every `step` yds (see the
@@ -295,7 +299,7 @@
     }
     function spot(g, side) { var q = at(L - g); return FL.offsetPoint(q.x, q.z, q.h, 0, side || 0); }
 
-    var H = { course: course.id, n: def.n, par: def.par, tee: tee.id, yds: def.yds[tee.id], note: def.note || '', L: L,
+    var H = { course: course.id, n: def.n, par: def.par, tee: tee.id, yds: def.yds[tee.id], note: def.note || '', L: L, air: 1 + AIR_K * (course.altitudeFt || 0),
       path: path, at: at, spot: spot, ground: G, markers: [], clouds: G.clouds, hills: G.hills };
     // The green: the one at the end of the line (or, where the map has none, one that stands in).
     var end = line[line.length - 1], rot = headingTo(line[line.length - 2], end);
@@ -344,11 +348,13 @@
 
   // What the ball is lying on: 'green' (this hole's), 'fringe', 'fairway' (any fairway, tee
   // box, practice ground, or another hole's green, which plays as fairway), 'rough',
-  // 'bunker', 'trees' (under a tree), 'water' (Lake Merced) or 'ob' (beyond the boundary).
+  // 'bunker', 'trees' (under a tree), 'water' (the lake beyond the boundary, or a pond) or
+  // 'ob' (beyond the boundary).
   function lieAt(H, x, z) {
     var G = H.ground, i, o, lists = [G.greens, G.tees, G.fairways, G.ranges];
     if (inBox(H.green.bb, x, z) && inPoly(H.green.poly, x, z)) return 'green';
     for (i = 0; i < G.bunkers.length; i++) { o = G.bunkers[i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'bunker'; }
+    for (i = 0; i < G.ponds.length; i++) { o = G.ponds[i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'water'; }
     if (!inBox(G.bb, x, z) || !inPoly(G.boundary, x, z)) return inPoly(G.lake, x, z) ? 'water' : 'ob';
     if (inBox(H.green.bb, x, z) && inPoly(H.green.fringePoly, x, z)) return 'fringe';
     if (H.teeBox && inPoly(H.teeBox, x, z)) return 'fairway';
@@ -1615,6 +1621,8 @@
   // about a third of the way up (so a low punch can run under them). The first few yds
   // don't count (more from under the trees, where the ball starts beneath the branches).
   var TRUNK = 0.5, LEAVES = 0.35;
+  // A pine's branches start low and narrow to its top: a cone from PINE_LEAVES of its height.
+  var PINE_LEAVES = 0.15;
   // trueY(s): the ball's height s yds along, above the ground it was hit from (the drawn
   // flight's own height when not given); h0: that ground's height (yds). Each tree stands
   // on its own ground.
@@ -1628,8 +1636,8 @@
         if (Math.abs(dx) > r || Math.abs(dz) > r) continue;
         var yy = y - (G.elev ? heightAt(G, t.x, t.z) / 3 - (h0 || 0) : 0);
         if (yy >= t.h || yy < 0) continue;
-        var d = Math.hypot(dx, dz);
-        if (d < TRUNK || (d < r && yy > LEAVES * t.h)) return { i: i, t: sm[i].t, tree: t, p: p };
+        var d = Math.hypot(dx, dz), lo = PINE_LEAVES * t.h;
+        if (d < TRUNK || (G.treeKind === 'pine' ? yy > lo && d < r * (1 - (yy - lo) / (t.h - lo)) : d < r && yy > LEAVES * t.h)) return { i: i, t: sm[i].t, tree: t, p: p };
       }
     }
     return null;
@@ -1701,6 +1709,16 @@
     };
     return out;
   }
+  // A shot as it flies in thinner air (air: how much farther it carries, from AIR_K): its
+  // carry and total longer by that much. His shots were all hit at ranges by the sea.
+  function thinAir(shot, air) {
+    if (!(air > 1.0005) || !shot) return shot;
+    var out = {};
+    Object.keys(shot).forEach(function (k) { out[k] = shot[k]; });
+    if (isNum(out.carry_yds)) out.carry_yds *= air;
+    if (isNum(out.total_yds)) out.total_yds *= air;
+    return out;
+  }
   // Where to drop after going into water or a penalty area: back along the ball's path to
   // where it went in, then 2 yds further back (no nearer the hole).
   function dropPoint(H, track) {
@@ -1732,6 +1750,7 @@
   //     carry, total (yds, as flown), tree: the tree it hit, track: [[x, z], …] (its path, for the map) }
   function playShot(H, from, aim, shot, opts) {
     opts = opts || {};
+    shot = thinAir(shot, H.air);
     var heading = headingTo(from, aim), fo = flightOpts(shot.club, opts.equip);
     var tr0 = FL.trajectory(shot, fo);
     if (!tr0) return null;
@@ -1884,7 +1903,7 @@
   // plays with the climb to it.
   function aimFor(H, ball, pin, reach, landing) {
     var low = ball.lie === 'trees', G = H.ground, hb = heightAt(G, ball.x, ball.z) / 3, best = null, cost = Infinity;
-    function far(q) { return G.elev ? playsLike(dist(ball, q), heightAt(G, q.x, q.z) / 3 - hb, landing || 46) : dist(ball, q); }
+    function far(q) { return (G.elev ? playsLike(dist(ball, q), heightAt(G, q.x, q.z) / 3 - hb, landing || 46) : dist(ball, q)) / (H.air || 1); }
     var dPin = far(pin);
     // What a spot costs: the hole it leaves to play (along the line of play, or to the pin
     // once that's further), its lie, how far off straight down the hole it is, a carry over
@@ -1961,7 +1980,7 @@
 
   return {
     buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, elevOf: elevOf, heightAt: heightAt, slopeAt: slopeAt, playsLike: playsLike, landingOf: landingOf,
-    groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf, grow: grow, rounded: rounded, PATH_W: PATH_W,
+    groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf, grow: grow, rounded: rounded, PATH_W: PATH_W, AIR_K: AIR_K, thinAir: thinAir, treeHit: treeHit,
     rankShots: rankShots, clubPools: clubPools, chartPools: chartPools, playPools: playPools, clubList: clubList, totalOf: totalOf,
     METER: METER, timingOf: timingOf, meterBackTime: meterBackTime, meterDownSpeed: meterDownSpeed, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
     LAW: LAW, clubLaw: clubLaw, facePathOf: facePathOf, swingProfile: swingProfile, SWIPE: SWIPE, tempoTarget: tempoTarget, powerOfDepth: powerOfDepth,

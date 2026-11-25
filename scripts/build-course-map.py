@@ -1,45 +1,90 @@
 #!/usr/bin/env python3
-"""Builds js/course-maps.js: TPC Harding Park as mapped in OpenStreetMap (© OpenStreetMap
-contributors, ODbL), in yards east (x) and north (z) of the middle of the course.
+"""Builds a course for the Game tab from OpenStreetMap's map of it (© OpenStreetMap
+contributors, ODbL), in yards east (x) and north (z) of the middle of the course:
+js/courses/COURSE.js, and with --tiles the height of its ground, js/courses/COURSE-elev.js.
 
 Usage:
-  python3 scripts/build-course-map.py FEATURES.geojson BOUNDARY.json [--out js/course-maps.js]
-      [--tiles DIR --elev-out js/course-elev.js]
+  python3 scripts/build-course-map.py COURSE FEATURES.geojson BOUNDARY.json [--tiles DIR]
 
+COURSE: harding-park or edgewood-tahoe (each one's settings are in COURSES below).
 FEATURES.geojson: the course's OSM golf features (from the Overpass API), one GeoJSON
-feature each, with properties.k set to hole, green, fairway, tee, bunker, range, wood or
-path, and for a hole its ref (number) and par. BOUNDARY.json: the course boundary
-(OSM way 16753068) as a list of [lon, lat] points, or {"rings": [[[lon, lat], ...]]}.
-The copy used was cached from the Overpass API by github.com/ummerr/mackenzie (its
-public/data/holes/tpc-harding-park-golf-course.geojson and data/osm-cache.json); only
-OpenStreetMap's data was taken from it.
+feature each, with properties.k set to hole, green, fairway, tee, bunker, range, wood,
+water or path, and for a hole its ref (number) and par. BOUNDARY.json: the course boundary
+as a list of [lon, lat] points, or {"rings": [[[lon, lat], ...]]}, or a cache with the
+course's key in it. The copies used were cached from the Overpass API by
+github.com/ummerr/mackenzie (its public/data/holes/KEY.geojson and data/osm-cache.json);
+only OpenStreetMap's data was taken from it.
 
-What it does, besides converting: matches OSM's hole lines to Harding's 18 holes (the
-other nine are the Fleming nine), builds the 18th's line (OSM has none), puts each set of
-tees on the real tee box closest to its scorecard yardage, draws Lake Merced beyond the
-lake side of the boundary, places the trees between the holes (seeded, so the same every
-time), and builds the fairways of the seven holes OSM has none for. Needs numpy.
+What it does, besides converting: matches OSM's hole lines to the course's 18 holes,
+puts each set of tees on the real tee box closest to its scorecard yardage, draws the lake
+beyond the lake side of the boundary, places the trees between the holes (seeded, so the
+same every time), builds the fairways OSM has none for, and fills the gaps each course's
+hooks below describe. Needs numpy.
 
 DIR (optional): the ground's heights, as AWS Terrain Tiles (the public elevation-tiles-prod
 bucket: https://elevation-tiles-prod.s3.amazonaws.com/terrarium/15/X/Y.png, zoom 15,
 about 4 m a pixel, from the USGS's 3D Elevation Program in the US), saved as 15-X-Y.png
-for every tile over the course. With it, the script also writes js/course-elev.js: the
-height of the ground every 6 yds over the course, in feet above sea level. Needs Pillow.
+for every tile over the course. With it, the script also writes COURSE-elev.js: the height
+of the ground every 6 yds over the course, in feet above sea level. Needs Pillow.
 """
-import argparse, json, math, random
+import argparse, json, math, random, os
+import numpy as np
 
+# Each course's settings: its key in the OSM cache, which OSM hole line is which hole, the
+# scorecard's yardages (to put each set of tees on its tee box), the lake beyond the
+# boundary, the trees, and the fairways to build where OSM has none.
+COURSES = {
+    'harding-park': {
+        'name': 'TPC Harding Park', 'key': 'tpc-harding-park-golf-course', 'way': '16753068',
+        # Harding's holes among OSM's hole lines (the others are the Fleming nine: 2,133 yds, par 30).
+        'lines': {1: 0, 2: 2, 3: 4, 4: 6, 5: 8, 6: 10, 7: 12, 8: 14, 9: 16, 10: 18, 11: 19, 12: 20, 13: 21, 14: 22, 15: 23, 16: 24, 17: 25},
+        'yds': {'blue': [395, 430, 165, 580, 395, 440, 335, 200, 495, 550, 185, 480, 405, 440, 405, 330, 175, 440],
+                'white': [375, 400, 155, 540, 365, 390, 325, 190, 475, 530, 155, 450, 375, 410, 375, 310, 165, 420]},
+        # How far to the side of the line of play a tee box may sit: 14 yds, but the 18th's forward
+        # tees stand on the peninsula well to the side of the back tee's line (the White tee box is
+        # about 32 yds off it).
+        'tee_off': {18: 40},
+        # Lake Merced: beyond the boundary from the south tip (vertex 34) clockwise round the
+        # west end to the 18th green (vertex 12). Its far side is drawn 450 yds out, from a
+        # simplified copy of the shore so the outline never crosses itself. Its surface: the
+        # shore's height (the tiles have the lake bed in places).
+        'lake': {'from': 34, 'to': 12, 'simple': [34, 35, 36, 38, 39, 40, 41, 3, 11, 12], 'out': 450, 'level': 'shore'},
+        # Harding Park's cypress: 13-23 yds tall, 3.8-6.8 yds round.
+        'trees': {'seed': 1925, 'kind': 'cypress', 'h': (13, 23), 'r': (3.8, 6.8)},
+        'build_fw': {2: 30, 4: 32, 5: 26, 7: 30, 9: 34, 13: 30, 15: 28}, 'par5': {4, 9},
+        'follow_fw': {16: 11, 18: 9},
+        'elev_base': -50,
+    },
+    'edgewood-tahoe': {
+        'name': 'Edgewood Tahoe', 'key': 'edgewood-tahoe-resort-golf', 'way': '63521167',
+        'lines': 'ref',   # OSM's 18 hole lines are the course's, each with its number
+        'yds': {'blue': [402, 393, 575, 520, 188, 398, 161, 430, 417, 413, 372, 187, 425, 406, 394, 547, 175, 501],
+                'white': [370, 362, 532, 488, 152, 368, 149, 382, 380, 383, 328, 167, 387, 388, 341, 533, 140, 489]},
+        'tee_off': {},
+        # Lake Tahoe: beyond the boundary from vertex 10 to vertex 20, down the west side by the
+        # 16th green, the 17th and the 18th, where the USGS heights 15-30 yds out are the lake's
+        # surface (6,225.6 ft) all the way along, past a strip of beach. Its far side is drawn
+        # 2,500 yds out, so the lake reaches the horizon. Its surface: the lowest ground in it.
+        'lake': {'from': 10, 'to': 20, 'simple': [10, 12, 15, 18, 20], 'out': 2500, 'level': 'min'},
+        # The Sierra's Jeffrey and lodgepole pines: tall and narrow, 20-34 yds tall, 3-5 yds round.
+        'trees': {'seed': 1968, 'kind': 'pine', 'h': (20, 34), 'r': (3.0, 5.0)},
+        'build_fw': {4: 34, 14: 32}, 'par5': {4},
+        'follow_fw': {},
+        'elev_base': 6200,
+    },
+}
 ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+ap.add_argument('course', choices=sorted(COURSES))
 ap.add_argument('features')
 ap.add_argument('boundary')
-ap.add_argument('--out', default='js/course-maps.js')
 ap.add_argument('--tiles', default=None)
-ap.add_argument('--elev-out', default='js/course-elev.js')
 args = ap.parse_args()
-OUT = args.out
+CID = args.course; CFG = COURSES[CID]
+OUT = os.path.join('js', 'courses', CID + '.js'); ELEV_OUT = os.path.join('js', 'courses', CID + '-elev.js')
 geo = json.load(open(args.features))
 bnd = json.load(open(args.boundary))
 if isinstance(bnd, dict) and 'rings' in bnd: ring_ll = bnd['rings'][0]
-elif isinstance(bnd, dict) and 'tpc-harding-park-golf-course' in bnd: ring_ll = bnd['tpc-harding-park-golf-course']['rings'][0]
+elif isinstance(bnd, dict) and CFG['key'] in bnd: ring_ll = bnd[CFG['key']]['rings'][0]
 else: ring_ll = bnd
 if ring_ll[0] == ring_ll[-1]: ring_ll = ring_ll[:-1]
 lat0 = round(sum(p[1] for p in ring_ll) / len(ring_ll), 6)
@@ -81,7 +126,7 @@ def polys(kind):
         if r[0] == r[-1]: r = r[:-1]
         out.append(r)
     return out
-greens, tees, fairways, bunkers, ranges, woods = (polys(k) for k in ['green', 'tee', 'fairway', 'bunker', 'range', 'wood'])
+greens, tees, fairways, bunkers, ranges, woods, ponds = (polys(k) for k in ['green', 'tee', 'fairway', 'bunker', 'range', 'wood', 'water'])
 paths = [[yd(p) for p in f['geometry']['coordinates']] for f in feats if f['properties']['k'] == 'path']
 boundary = [yd(p) for p in ring_ll]
 report = []
@@ -121,34 +166,45 @@ for kind, lst, any_len in [('fairway', fairways, False), ('tee', tees, False), (
         lst[i], gone = despike(poly, any_len, deep=240 if kind == 'green' else None)
         if gone: report.append(f"{kind} {i}: {gone} spike{'s' if gone > 1 else ''} taken out")
 lines = [f for f in feats if f['properties']['k'] == 'hole']
-# Harding's holes among OSM's hole lines (the others are the Fleming nine: 2,133 yds, par 30).
-HARDING = {1: 0, 2: 2, 3: 4, 4: 6, 5: 8, 6: 10, 7: 12, 8: 14, 9: 16, 10: 18, 11: 19, 12: 20, 13: 21, 14: 22, 15: 23, 16: 24, 17: 25}
-FLEMING = [i for i in range(len(lines)) if i not in HARDING.values()]
-YDS = {'blue': [395, 430, 165, 580, 395, 440, 335, 200, 495, 550, 185, 480, 405, 440, 405, 330, 175, 440],
-       'white': [375, 400, 155, 540, 365, 390, 325, 190, 475, 530, 155, 450, 375, 410, 375, 310, 165, 420]}
+# Which OSM hole line is which hole: set in COURSES, or by each line's number (ref). The rest
+# are another course's (Harding's Fleming nine), kept off by the trees like the course's own.
+if CFG['lines'] == 'ref':
+    LINES = {}
+    for i, f in enumerate(lines):
+        r = str(f['properties'].get('ref', ''))
+        if r.isdigit() and 1 <= int(r) <= 18 and int(r) not in LINES: LINES[int(r)] = i
+else: LINES = CFG['lines']
+OTHER = [i for i in range(len(lines)) if i not in LINES.values()]
+YDS = CFG['yds']
 gcent = [centroid(g) for g in greens]; tcent = [centroid(t) for t in tees]
 
 holes = {}
-for n, li in HARDING.items():
+for n, li in LINES.items():
     pts = [yd(p) for p in lines[li]['geometry']['coordinates']]
     gi = min(range(len(greens)), key=lambda k: dist(gcent[k], pts[-1]))
-    if dist(gcent[gi], pts[-1]) > 15: gi = None           # the 9th green isn't mapped
+    if dist(gcent[gi], pts[-1]) > 15: gi = None           # a green OSM doesn't have
     if gi is not None: pts[-1] = tuple(round(v, 1) for v in gcent[gi])
     holes[n] = {'line': pts, 'green': gi}
-# Hole 18: from its back tee box (just past the 17th green), across the inlet of Lake
-# Merced to the corner of its fairway (OSM fairway 9), then up the fairway to its green
-# (OSM green 1, by the clubhouse): a dogleg left around the lake.
-fw18 = fairways[9]; g18 = 1
-fc = centroid(fw18)
-# The fairway's long axis, and the point a third of the way along it from its far end.
-import numpy as np
-P = np.array(fw18); m = P.mean(axis=0); u = np.linalg.svd(P - m)[2][0]
-if np.dot(u, np.array(gcent[g18]) - m) < 0: u = -u
-proj = (P - m) @ u
-corner = tuple(np.round(m + u * (proj.min() + 0.33 * (proj.max() - proj.min())), 1))
-t18 = [35, 36, 37, 38, 39]   # the 18th's tee boxes, back to front
-back18 = tuple(round(v, 1) for v in tcent[t18[0]])
-holes[18] = {'line': [back18, corner, tuple(round(v, 1) for v in gcent[g18])], 'green': g18, 'built': True}
+
+# ----- TPC Harding Park's gaps -----
+def harding_lines():
+    """Hole 18: from its back tee box (just past the 17th green), across the inlet of Lake
+    Merced to the corner of its fairway (OSM fairway 9), then up the fairway to its green
+    (OSM green 1, by the clubhouse): a dogleg left around the lake."""
+    fw18 = fairways[9]; g18 = 1
+    # The fairway's long axis, and the point a third of the way along it from its far end.
+    P = np.array(fw18); m = P.mean(axis=0); u = np.linalg.svd(P - m)[2][0]
+    if np.dot(u, np.array(gcent[g18]) - m) < 0: u = -u
+    proj = (P - m) @ u
+    corner = tuple(np.round(m + u * (proj.min() + 0.33 * (proj.max() - proj.min())), 1))
+    t18 = [35, 36, 37, 38, 39]   # the 18th's tee boxes, back to front
+    back18 = tuple(round(v, 1) for v in tcent[t18[0]])
+    holes[18] = {'line': [back18, corner, tuple(round(v, 1) for v in gcent[g18])], 'green': g18, 'built': True}
+HOOKS = {'harding-park': {'lines': harding_lines}}
+def hook(step):
+    f = HOOKS.get(CID, {}).get(step)
+    if f: f()
+hook('lines')
 
 def line_at(pts, s):
     """The point s yds along the line, and the heading there (taken over 16 yds)."""
@@ -213,7 +269,7 @@ def across(poly, cl, s, reach=45):
 # re-routed down the middle of its fairway: from points 20 yds apart along the old line,
 # where a cross-section meets the fairway, the point of it farthest from the fairway's
 # edges, smoothed; the tee end and the green stay, and so does a carry over water before it.
-FOLLOW_FW = {16: 11, 18: 9}
+FOLLOW_FW = CFG['follow_fw']
 def widest(p, hd, fw, reach=70):
     rx, rz = math.cos(hd), -math.sin(hd)
     best = None
@@ -237,25 +293,26 @@ for n, fi in FOLLOW_FW.items():
     if dist(route[-1], pts[-1]) < 25: route.pop()
     route.append(pts[-1])
     holes[n]['line'] = [tuple(round(float(v), 1) for v in q) for q in route]
-# Hole 13: OSM's line runs straight from the tee over the fairway bunker in the landing area,
-# so the fairway built along it would have the bunker in its middle. The 2020 PGA
-# Championship guides put that bunker down the right, with the drive turning left to right
-# past it, so the line passes 6 yds left of the bunker; the fairway built along it then has
-# the bunker on its right edge.
-pts13 = holes[13]['line']
-for b in bunkers:
-    sv = [on_line(v, pts13) for v in b]
-    lats = [l for _, l in sv]; s_mid = float(np.mean([x for x, _ in sv]))
-    if not (min(lats) < 0 < max(lats) and 100 <= s_mid <= plen(pts13) - 100): continue
-    p, hd = line_at(pts13, s_mid)
-    rx, rz = math.cos(hd), -math.sin(hd); off = min(lats) - 6
-    way = (round(p[0] + rx * off, 1), round(p[1] + rz * off, 1))
-    acc = 0
-    for i in range(len(pts13) - 1):
-        acc += dist(pts13[i], pts13[i + 1])
-        if acc >= s_mid: pts13 = pts13[:i + 1] + [way] + pts13[i + 1:]; break
-    holes[13]['line'] = pts13
-    break
+def harding_waypoint13():
+    """Hole 13: OSM's line runs straight from the tee over the fairway bunker in the landing area,
+    so the fairway built along it would have the bunker in its middle. The 2020 PGA
+    Championship guides put that bunker down the right, with the drive turning left to right
+    past it, so the line passes 6 yds left of the bunker; the fairway built along it then has
+    the bunker on its right edge."""
+    pts13 = holes[13]['line']
+    for b in bunkers:
+        sv = [on_line(v, pts13) for v in b]
+        lats = [l for _, l in sv]; s_mid = float(np.mean([x for x, _ in sv]))
+        if not (min(lats) < 0 < max(lats) and 100 <= s_mid <= plen(pts13) - 100): continue
+        p, hd = line_at(pts13, s_mid)
+        rx, rz = math.cos(hd), -math.sin(hd); off = min(lats) - 6
+        way = (round(p[0] + rx * off, 1), round(p[1] + rz * off, 1))
+        acc = 0
+        for i in range(len(pts13) - 1):
+            acc += dist(pts13[i], pts13[i + 1])
+            if acc >= s_mid: pts13 = pts13[:i + 1] + [way] + pts13[i + 1:]; break
+        holes[13]['line'] = pts13
+        break
 
 # The 9th green isn't mapped. NBC's 2009 guide to the hole has "front bunkers at the green",
 # and OSM has the two: one down the left of where the green's front half would be (bunker 39)
@@ -276,23 +333,27 @@ def catmull(ctrl, per=6):
             out.append(tuple(0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * p1 - p0 - 3 * p2 + p3) * t ** 3)))
     return out
 built_greens = []
-if holes[9]['green'] is None:
-    pts9 = holes[9]['line']; e9 = pts9[-1]; d9 = dist(e9, pts9[-2])
-    ux, uz = (e9[0] - pts9[-2][0]) / d9, (e9[1] - pts9[-2][1]) / d9
-    g9 = [(e9[0] + ux * a + uz * l, e9[1] + uz * a - ux * l) for a, l in catmull(G9)]
-    # at least 3.5 yds clear of every bunker (room for the fringe), pulled in where it isn't
-    c9 = centroid(g9); near_b = [b for b in bunkers if dist(centroid(b), c9) < 90]
-    for i, p in enumerate(g9):
-        while min(polyd(p, b) for b in near_b) < 3.5: p = (p[0] + (c9[0] - p[0]) * 0.02, p[1] + (c9[1] - p[1]) * 0.02)
-        g9[i] = p
-    g9 = simplify(g9, 0.12, closed=True)
-    for kind, lst in [('green', greens), ('tee', tees), ('fairway', fairways)]:
-        assert not any(inpoly(p, q) for q in lst for p in g9), f'the 9th green overlaps a {kind}'
-    holes[9]['green'] = len(greens); built_greens.append(len(greens))
-    greens.append(g9); gcent.append(centroid(g9))
-    holes[9]['line'] = pts9[:-1] + [tuple(round(v, 1) for v in gcent[-1])]
-    a9 = abs(sum(g9[i][0] * g9[(i + 1) % len(g9)][1] - g9[(i + 1) % len(g9)][0] * g9[i][1] for i in range(len(g9))) / 2)
-    report.append(f"9: green built round the end of its line, {round(a9)} sq yds, {round(min(polyd(p, b) for b in near_b for p in g9), 1)} yds from the nearest bunker")
+def harding_green9():
+    if holes[9]['green'] is None:
+        pts9 = holes[9]['line']; e9 = pts9[-1]; d9 = dist(e9, pts9[-2])
+        ux, uz = (e9[0] - pts9[-2][0]) / d9, (e9[1] - pts9[-2][1]) / d9
+        g9 = [(e9[0] + ux * a + uz * l, e9[1] + uz * a - ux * l) for a, l in catmull(G9)]
+        # at least 3.5 yds clear of every bunker (room for the fringe), pulled in where it isn't
+        c9 = centroid(g9); near_b = [b for b in bunkers if dist(centroid(b), c9) < 90]
+        for i, p in enumerate(g9):
+            while min(polyd(p, b) for b in near_b) < 3.5: p = (p[0] + (c9[0] - p[0]) * 0.02, p[1] + (c9[1] - p[1]) * 0.02)
+            g9[i] = p
+        g9 = simplify(g9, 0.12, closed=True)
+        for kind, lst in [('green', greens), ('tee', tees), ('fairway', fairways)]:
+            assert not any(inpoly(p, q) for q in lst for p in g9), f'the 9th green overlaps a {kind}'
+        holes[9]['green'] = len(greens); built_greens.append(len(greens))
+        greens.append(g9); gcent.append(centroid(g9))
+        holes[9]['line'] = pts9[:-1] + [tuple(round(v, 1) for v in gcent[-1])]
+        a9 = abs(sum(g9[i][0] * g9[(i + 1) % len(g9)][1] - g9[(i + 1) % len(g9)][0] * g9[i][1] for i in range(len(g9))) / 2)
+        report.append(f"9: green built round the end of its line, {round(a9)} sq yds, {round(min(polyd(p, b) for b in near_b for p in g9), 1)} yds from the nearest bunker")
+HOOKS['harding-park'].update({'waypoints': harding_waypoint13, 'greens': harding_green9})
+hook('waypoints')
+hook('greens')
 
 # Each set of tees on the real tee box whose distance to the green, along the line of play,
 # comes closest to the scorecard's; used only when it's within 12 yds of it.
@@ -307,10 +368,9 @@ def along(p, pts):
         if best is None or d < best[0]: best = (d, s + t)
         s += L
     return plen(pts) - best[1], best[0]
-# How far to the side of the line of play a tee box may sit: 14 yds, but the 18th's forward
-# tees stand on the peninsula well to the side of the back tee's line (the White tee box is
-# about 32 yds off it).
-TEE_OFF = {18: 40}
+# How far to the side of the line of play a tee box may sit: 14 yds, or as the course's
+# settings say (tee_off).
+TEE_OFF = CFG['tee_off']
 for n in range(1, 19):
     h = holes[n]; pts = h['line']; h['tees'] = {}
     cand = []
@@ -333,13 +393,13 @@ for n in range(1, 19):
             h['tees'][tee] = {'box': None, 'g': want}
         report.append(f"{n} {tee}: card {want}, {'tee box ' + str(best[0]) + ' at ' + str(round(best[1])) if best and abs(best[1] - want) <= 12 else 'no tee box close enough: placed on the line'}")
 
-# Lake Merced: beyond the boundary from the south tip (vertex 34) clockwise round the
-# west end to the 18th green (vertex 12). Its far side is drawn 450 yds out, from a
-# simplified copy of the shore so the outline never crosses itself.
-NB = len(boundary)
-lake_idx = list(range(34, NB)) + list(range(0, 13))
+# The lake beyond the boundary (see the course's settings): from vertex `from` round to
+# vertex `to`, its far side `out` yds away, drawn from a simplified copy of the shore so the
+# outline never crosses itself.
+NB = len(boundary); LK = CFG['lake']
+lake_idx = list(range(LK['from'], NB)) + list(range(0, LK['to'] + 1)) if LK['from'] > LK['to'] else list(range(LK['from'], LK['to'] + 1))
 shore = [boundary[i] for i in lake_idx]
-simple = [boundary[i] for i in [34, 35, 36, 38, 39, 40, 41, 3, 11, 12]]
+simple = [boundary[i] for i in LK['simple']]
 cx, cz = np.mean(np.array(boundary), axis=0)
 def outward(i, pts):
     a = pts[max(0, i - 1)]; b = pts[min(len(pts) - 1, i + 1)]
@@ -351,15 +411,17 @@ def outward(i, pts):
 far = []
 for i, p in enumerate(simple):
     nx, nz = outward(i, simple)
-    far.append((round(p[0] + nx * 450, 1), round(p[1] + nz * 450, 1)))
+    far.append((round(p[0] + nx * LK['out'], 1), round(p[1] + nz * LK['out'], 1)))
 lake = shore + far[::-1]
-# Trees: Harding Park's cypress fill the ground between the holes. Seeded, so the same
-# every time: a jittered grid, kept off the line of play of every hole (Harding and
-# Fleming), the fairways, greens, tees, bunkers and practice ground; in rows with gaps
-# along the holes, thinner further back, and denser in the woods.
-rnd = random.Random(1925)
+# Trees fill the ground between the holes (see the course's settings for their kind and
+# size). Seeded, so the same every time: a jittered grid, kept off the line of play of every
+# hole (the course's and any other's, like Harding's Fleming nine), the fairways, greens,
+# tees, bunkers, ponds and practice ground; in rows with gaps along the holes, thinner
+# further back, and denser in the woods.
+TR = CFG['trees']
+rnd = random.Random(TR['seed'])
 hlines = [holes[n]['line'] for n in range(1, 19)]
-flines = [[yd(p) for p in lines[i]['geometry']['coordinates']] for i in FLEMING]
+flines = [[yd(p) for p in lines[i]['geometry']['coordinates']] for i in OTHER]
 xs = [p[0] for p in boundary]; zs = [p[1] for p in boundary]
 def bbox(poly): return (min(p[0] for p in poly), min(p[1] for p in poly), max(p[0] for p in poly), max(p[1] for p in poly))
 def near(p, polys_, pad):
@@ -369,7 +431,7 @@ def near(p, polys_, pad):
         if polyd(p, poly[0]) <= pad: return True
     return False
 FW = [(f, bbox(f)) for f in fairways]; GR = [(g, bbox(g)) for g in greens]; TE = [(t, bbox(t)) for t in tees]
-BU = [(b, bbox(b)) for b in bunkers]; RA = [(r, bbox(r)) for r in ranges]; WO = [(w, bbox(w)) for w in woods]
+BU = [(b, bbox(b)) for b in bunkers]; RA = [(r, bbox(r)) for r in ranges]; WO = [(w, bbox(w)) for w in woods]; PO = [(w, bbox(w)) for w in ponds]
 trees = []
 STEP = 12
 for gx in np.arange(min(xs), max(xs), STEP):
@@ -377,7 +439,7 @@ for gx in np.arange(min(xs), max(xs), STEP):
         # Each spot draws all its numbers first, so a change to the map in one place moves
         # only the trees there, not every tree after it.
         jx, jz, roll = rnd.uniform(-4.5, 4.5), rnd.uniform(-4.5, 4.5), rnd.random()
-        h, r, tone = round(rnd.uniform(13, 23), 1), round(rnd.uniform(3.8, 6.8), 1), rnd.randrange(3)
+        h, r, tone = round(rnd.uniform(*TR['h']), 1), round(rnd.uniform(*TR['r']), 1), rnd.randrange(3)
         p = (gx + jx, gz + jz)
         if not inpoly(p, boundary) or polyd(p, boundary) == 0 and min(segd(p, boundary[i], boundary[(i + 1) % NB]) for i in range(NB)) < 3: continue
         inwood = near(p, WO, 0)
@@ -388,19 +450,23 @@ for gx in np.arange(min(xs), max(xs), STEP):
         if roll > keep: continue
         if dl < 30: continue
         if any(lined(p, l) < 19 for l in flines): continue
-        if near(p, FW, 7) or near(p, GR, 13) or near(p, TE, 6) or near(p, BU, 4) or near(p, RA, 6): continue
+        if near(p, FW, 7) or near(p, GR, 13) or near(p, TE, 6) or near(p, BU, 4) or near(p, RA, 6) or near(p, PO, 3): continue
         trees.append([round(p[0], 1), round(p[1], 1), h, r, tone])
-# The 4th's "large cypress at the corner of the dogleg" (PGA; Arccos: "do not get greedy"):
-# one big tree inside the turn, 30 yds left of the line of play where it bends (as close as
-# any tree stands to a line), 27 yds tall and 18 across; the trees round it make way.
-t4 = holes[4]['line']; c4 = t4[1]
-d1 = np.array(c4) - np.array(t4[0]); d1 /= np.linalg.norm(d1)
-d2 = np.array(t4[2]) - np.array(c4); d2 /= np.linalg.norm(d2)
-inward = d2 - d1; inward /= np.linalg.norm(inward)
-big = tuple(np.array(c4) + inward * 30 / math.cos(math.acos(float(np.dot(d1, d2))) / 2))
-assert min(lined(big, l) for l in hlines) >= 29.9 and not near(big, FW + GR + TE + BU, 4), "the 4th's cypress isn't in the rough"
-trees = [t for t in trees if dist(t, big) > 9 + t[3] + 1] + [[round(big[0], 1), round(big[1], 1), 27, 9, 0]]
-report.append(f"4: the cypress at the corner stands at {round(big[0], 1)}, {round(big[1], 1)}")
+def harding_cypress():
+    """The 4th's "large cypress at the corner of the dogleg" (PGA; Arccos: "do not get greedy"):
+    one big tree inside the turn, 30 yds left of the line of play where it bends (as close as
+    any tree stands to a line), 27 yds tall and 18 across; the trees round it make way."""
+    global trees
+    t4 = holes[4]['line']; c4 = t4[1]
+    d1 = np.array(c4) - np.array(t4[0]); d1 /= np.linalg.norm(d1)
+    d2 = np.array(t4[2]) - np.array(c4); d2 /= np.linalg.norm(d2)
+    inward = d2 - d1; inward /= np.linalg.norm(inward)
+    big = tuple(np.array(c4) + inward * 30 / math.cos(math.acos(float(np.dot(d1, d2))) / 2))
+    assert min(lined(big, l) for l in hlines) >= 29.9 and not near(big, FW + GR + TE + BU, 4), "the 4th's cypress isn't in the rough"
+    trees = [t for t in trees if dist(t, big) > 9 + t[3] + 1] + [[round(big[0], 1), round(big[1], 1), 27, 9, 0]]
+    report.append(f"4: the cypress at the corner stands at {round(big[0], 1)}, {round(big[1], 1)}")
+HOOKS['harding-park']['trees'] = harding_cypress
+hook('trees')
 # Fairways OSM doesn't have. Seven of Harding's holes have no fairway mapped (2, 4, 5, 7,
 # 9, 13 and 15), so the whole hole would play as rough. Each gets one shaped like the
 # course's mapped ones, which run from 120-170 yds off the back tee to the green, 23-40 yds
@@ -417,8 +483,8 @@ report.append(f"4: the cypress at the corner stands at {round(big[0], 1)}, {roun
 #   across the middle sits in the fairway).
 # Never more than 19 yds either side of the middle, so no tree (all at least 30 yds from
 # every line) stands in one. Marked in fairwaysBuilt.
-BUILD_FW = {2: 30, 4: 32, 5: 26, 7: 30, 9: 34, 13: 30, 15: 28}
-PAR5 = {4, 9}
+BUILD_FW = CFG['build_fw']
+PAR5 = CFG['par5']
 def smooth01(x):
     x = max(0.0, min(1.0, x)); return x * x * (3 - 2 * x)
 def knotted(knots, s):
@@ -526,21 +592,21 @@ for kind, lst in [('fairway', fairways), ('green', greens), ('tee', tees), ('bun
         assert crossings(poly) == 0, f'{kind} {i} crosses itself'
 def r1(poly): return [[round(x, 1), round(z, 1)] for x, z in poly]
 data = {
-    'source': 'OpenStreetMap (© OpenStreetMap contributors, ODbL): course boundary way 16753068 and its golf=* features',
+    'source': f"OpenStreetMap (© OpenStreetMap contributors, ODbL): course boundary way {CFG['way']} and its golf=* features",
     'origin': {'lat': lat0, 'lon': lon0},
     'boundary': r1(boundary),
-    'lakeFrom': 34, 'lakeTo': 12,
+    'lakeFrom': LK['from'], 'lakeTo': LK['to'],
     'lake': r1(lake),
     'holes': {str(n): {'line': r1(holes[n]['line']), 'green': holes[n]['green'], 'tees': holes[n]['tees'],
                        **({'built': True} if holes[n].get('built') else {})} for n in range(1, 19)},
     'greens': [r1(g) for g in greens], 'fairways': [r1(f) for f in fairways], 'fairwaySpine': [r1(sp) for sp in spines], 'fairwaysBuilt': built_fw, 'greensBuilt': built_greens,
     'bunkers': [r1(b) for b in bunkers], 'tees': [r1(t) for t in tees], 'ranges': [r1(r) for r in ranges], 'woods': [r1(w) for w in woods],
-    'paths': [r1(p) for p in paths], 'trees': trees,
+    **({'ponds': [r1(w) for w in ponds]} if ponds else {}),
+    'paths': [r1(p) for p in paths], 'trees': trees, **({'treeKind': TR['kind']} if TR['kind'] != 'cypress' else {}),
 }
-js = """// GolfCourseMaps: real courses, as mapped in OpenStreetMap, for the Game tab. No
-// dependencies; the node tests load it too.
-//
-// TPC Harding Park: the course boundary (OpenStreetMap way 16753068) and the golf
+# What each course's file says it holds, and what was built by hand where OSM has a gap.
+NOTES = {
+    'harding-park': """// TPC Harding Park: the course boundary (OpenStreetMap way 16753068) and the golf
 // features inside it (the line of play of each hole, greens, fairways, tee boxes,
 // bunkers, practice ground, woods and cart paths), in yards east (x) and north (z) of
 // the middle of the course. Map data © OpenStreetMap contributors, available under the
@@ -568,18 +634,44 @@ js = """// GolfCourseMaps: real courses, as mapped in OpenStreetMap, for the Gam
 //   a notch cut deep into the 6th green.
 // - fairwaySpine: for each fairway, the line its mowing stripes run square to: its hole's
 //   line of play, corners rounded, so a dogleg's stripes turn with it.
-(function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.GolfCourseMaps = factory();
-})(typeof self !== 'undefined' ? self : this, function () {
-  'use strict';
-  return { 'harding-park': """ + json.dumps(data, separators=(',', ':')) + """ };
-});
-"""
+
+""",
+    'edgewood-tahoe': """// Edgewood Tahoe: the course boundary (OpenStreetMap way 63521167) and the golf
+// features inside it (the line of play of each hole, greens, fairways, tee boxes,
+// bunkers, ponds, woods and cart paths), in yards east (x) and north (z) of the middle of
+// the course. Map data © OpenStreetMap contributors, available under the Open Database
+// License: https://www.openstreetmap.org/copyright
+//
+// Built by hand from OSM where it has a gap (each one is marked in the data):
+// - Lake Tahoe lies beyond the boundary down the west side, by the 16th green, the 17th
+//   and the 18th (lakeFrom → lakeTo, boundary vertices), where the USGS heights are the
+//   lake's surface; its far side is drawn 2,500 yds out. The rest of the boundary is the
+//   property line: out of bounds.
+// - The ponds and Edgewood Creek are OSM's water: penalty areas.
+// - The trees are placed in the ground between the holes (OSM doesn't map them one by one):
+//   tall pines (treeKind).
+// - Holes 4 and 14 have no fairway in OSM: each has one built down its line of play, shaped
+//   like the course's mapped ones (fairwaysBuilt lists them).
+// - Each set of tees stands on the real tee box closest to its scorecard yardage.
+// - A few spikes in OSM's outlines (slips of the mapper's mouse) are taken out.
+// - fairwaySpine: for each fairway, the line its mowing stripes run square to: its hole's
+//   line of play, corners rounded, so a dogleg's stripes turn with it.
+""",
+}
+def wrap(part, body, notes):
+    return (f"// GolfCourseData['{CID}'].{part}: {CFG['name']} for the Game tab, loaded when a round on it\n"
+            "// starts (js/courses.js). No dependencies; the node tests load it too. Built by\n"
+            "// scripts/build-course-map.py: don't edit it by hand.\n//\n" + notes +
+            "(function (root, id, part, data) {\n"
+            "  if (typeof module === 'object' && module.exports) module.exports = data;\n"
+            "  else { var all = root.GolfCourseData = root.GolfCourseData || {}; (all[id] = all[id] || {})[part] = data; }\n"
+            f"}})(typeof self !== 'undefined' ? self : this, '{CID}', '{part}', " + body + ");\n")
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
+js = wrap('map', json.dumps(data, separators=(',', ':')), NOTES[CID])
 open(OUT, 'w').write(js)
 if args.tiles:
     from PIL import Image
-    import glob, os
+    import glob
     Z = 15; NT = 2 ** Z
     def tile_xy(lat, lon):
         fx = (lon + 180) / 360 * NT
@@ -599,11 +691,15 @@ if args.tiles:
             if t is None: raise SystemExit(f'missing tile 15-{i // 256}-{j // 256}.png')
             return t[j % 256, i % 256]
         return (h(i0, j0) * (1 - u) * (1 - v) + h(i0 + 1, j0) * u * (1 - v) + h(i0, j0 + 1) * (1 - u) * v + h(i0 + 1, j0 + 1) * u * v)
-    STEPE, UNIT, BASE = 6, 0.1, -50                         # yds between heights; 0.1 ft steps from -50 ft
+    STEPE, UNIT, BASE = 6, 0.1, CFG['elev_base']              # yds between heights; 0.1 ft steps up from the base
     ex0, ez0 = math.floor(min(xs) - 30), math.floor(min(zs) - 30)
     nx = int(math.ceil((max(xs) + 30 - ex0) / STEPE)) + 1; nz = int(math.ceil((max(zs) + 30 - ez0) / STEPE)) + 1
-    # Lake Merced's surface: the shore's height (the tiles have the lake bed in places).
-    lake_level = round(min(metres(*boundary[i]) for i in lake_idx) * 3.28084, 1)
+    # The lake's surface: the shore's height (Harding: the tiles have Lake Merced's bed in
+    # places), or the lowest ground in it (Edgewood: past a beach, the water is level).
+    if LK['level'] == 'shore': lake_level = round(min(metres(*boundary[i]) for i in lake_idx) * 3.28084, 1)
+    else:
+        inlake = [(ex0 + i * STEPE, ez0 + j * STEPE) for j in range(nz) for i in range(nx)]
+        lake_level = round(min(metres(x, z) for x, z in inlake if inpoly((x, z), lake) and not inpoly((x, z), boundary)) * 3.28084, 1)
     B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     def two(v): return B64[v >> 6] + B64[v & 63]
     rows = []; ft_min, ft_max = 1e9, -1e9
@@ -615,7 +711,8 @@ if args.tiles:
             if inpoly((x, z), lake) and not inpoly((x, z), boundary): ft = lake_level
             ft = max(ft, lake_level)
             ft_min, ft_max = min(ft_min, ft), max(ft_max, ft)
-            q = int(round((ft - BASE) / UNIT)); q = max(0, min(4095, q))
+            q = int(round((ft - BASE) / UNIT))
+            assert 0 <= q <= 4095, f'{round(ft)} ft is outside what the file can hold ({BASE} to {BASE + 409.5} ft): change elev_base'
             if prev is None: out.append(two(q))
             else:
                 dq = q - prev
@@ -624,29 +721,18 @@ if args.tiles:
         rows.append(''.join(out))
     elev = {'source': "USGS 3D Elevation Program (3DEP), via AWS Terrain Tiles (zoom 15)", 'unit': 'ft above sea level (NAVD88)',
             'x0': ex0, 'z0': ez0, 'step': STEPE, 'nx': nx, 'nz': nz, 'q': UNIT, 'base': BASE, 'lake': lake_level, 'rows': rows}
-    ejs = """// GolfCourseElev: the height of the ground on the Game tab's courses. No dependencies;
-// the node tests load it too.
-//
-// TPC Harding Park: the ground's height every 6 yds over the course, in feet above sea
-// level, from the USGS 3D Elevation Program (3DEP, public domain) by way of the AWS
-// Terrain Tiles (zoom 15, about 4 m a pixel). In the course map's yards (x east, z north
-// of its middle): heights start at (x0, z0) and run east along each row, rows going north.
-// Lake Merced is held at its shore's height. Built by scripts/build-course-map.py.
+    enotes = f"""// The ground's height every 6 yds over the course, in feet above sea level, from the USGS
+// 3D Elevation Program (3DEP, public domain) by way of the AWS Terrain Tiles (zoom 15, about
+// 4 m a pixel). In the course map's yards (x east, z north of its middle): heights start at
+// (x0, z0) and run east along each row, rows going north. The lake is held at its surface.
 //
 // Each row is a string: its first height in two characters, then each next one as the
 // change from the one before (one character, -3.1 to +3.1 ft in 0.1 ft steps), or, for a
 // bigger change, '/' and the height in two characters. A height in two characters is
 // (feet - base) / q in base 64 (A-Z a-z 0-9 + /).
-(function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.GolfCourseElev = factory();
-})(typeof self !== 'undefined' ? self : this, function () {
-  'use strict';
-  return { 'harding-park': """ + json.dumps(elev, separators=(',', ':')) + """ };
-});
 """
-    open(args.elev_out, 'w').write(ejs)
+    ejs = wrap('elev', json.dumps(elev, separators=(',', ':')), enotes)
+    open(ELEV_OUT, 'w').write(ejs)
     print('elevation', nx, 'x', nz, 'every', STEPE, 'yds;', round(ft_min, 1), 'to', round(ft_max, 1), 'ft; lake', lake_level, 'ft;', len(ejs), 'bytes')
 print('\n'.join(report))
 print('trees', len(trees), 'file', len(js), 'bytes', 'lake pts', len(lake))
-print('18 line', holes[18]['line'], 'length', round(plen(holes[18]['line'])))
