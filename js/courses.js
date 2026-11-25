@@ -1,13 +1,14 @@
-// GolfCourses: real courses for the Game tab. Needs js/course-maps.js (GolfCourseMaps);
-// the node tests load it too.
+// GolfCourses: real courses for the Game tab. Needs js/course-maps.js (GolfCourseMaps)
+// and js/course-elev.js (GolfCourseElev); the node tests load it too.
 //
 // Each course: its scorecard (par and each set of tees' yardage for every hole, with a
-// short note from course guides) and its map (js/course-maps.js: the ground as mapped in
-// OpenStreetMap, © OpenStreetMap contributors, ODbL).
+// short note from course guides), its map (js/course-maps.js: the ground as mapped in
+// OpenStreetMap, © OpenStreetMap contributors, ODbL) and the height of its ground
+// (js/course-elev.js: from the USGS 3D Elevation Program).
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./course-maps.js'));
-  else root.GolfCourses = factory(root.GolfCourseMaps);
-})(typeof self !== 'undefined' ? self : this, function (MAPS) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./course-maps.js'), require('./course-elev.js'));
+  else root.GolfCourses = factory(root.GolfCourseMaps, root.GolfCourseElev);
+})(typeof self !== 'undefined' ? self : this, function (MAPS, ELEV) {
   'use strict';
 
   var HARDING = {
@@ -47,9 +48,12 @@
       { title: '2020 PGA Championship course guide (PGA.com)', url: 'https://www.pga.com/story/2020-pga-championship-tpc-harding-park-course-guide' },
       { title: 'Hole-by-hole guide (Irish Examiner)', url: 'https://www.irishexaminer.com/sport/golf/arid-40027592.html' },
       { title: 'A hole-by-hole look (CBS San Francisco)', url: 'https://www.cbsnews.com/sanfrancisco/news/pga-championship-a-hole-by-hole-look-at-tpc-harding-park/' },
-      { title: 'Course map: OpenStreetMap (© OpenStreetMap contributors, ODbL)', url: 'https://www.openstreetmap.org/way/16753068' }
+      { title: 'Hole-by-hole lowdown, 2009 Presidents Cup (NBC Bay Area)', url: 'https://www.nbcbayarea.com/news/sports/hole-by-hole-lowdown-of-harding-park/1859473/' },
+      { title: 'Course map: OpenStreetMap (© OpenStreetMap contributors, ODbL)', url: 'https://www.openstreetmap.org/way/16753068' },
+      { title: 'Elevation: USGS 3D Elevation Program, via AWS Terrain Tiles', url: 'https://registry.opendata.aws/terrain-tiles/' }
     ],
-    map: MAPS ? MAPS['harding-park'] : null
+    map: MAPS ? MAPS['harding-park'] : null,
+    elev: ELEV ? ELEV['harding-park'] : null
   };
 
   var LIST = [HARDING];

@@ -103,11 +103,59 @@
       var a = m.boundary[i], b = m.boundary[(i + 1) % nb], lake = isLakeEdge(m, i), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
       for (var d = 0; d < len; d += lake ? STAKES.lake : STAKES.ob) (lake ? G.lakeStakes : G.obStakes).push([a[0] + (b[0] - a[0]) * d / len, a[1] + (b[1] - a[1]) * d / len]);
     }
+    G.elev = elevOf(course.elev);
     G.clouds = [0, 1, 2, 3].map(function () { return { x: rnd(), y: 0.2 + rnd() * 0.55, w: 0.12 + rnd() * 0.12 }; });
     G.hills = [0, 1, 2].map(function () { return rnd() * 6.28; });
     return (GROUNDS[course.id] = G);
   }
   function treesNear(G, x, z) { return G.grid[Math.floor(x / CELL) + ',' + Math.floor(z / CELL)] || []; }
+
+  // ---------------------------------------------------------------------------
+  // The height of the ground (js/course-elev.js, from the USGS 3D Elevation Program)
+  // ---------------------------------------------------------------------------
+  var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  // A course's heights, unpacked once: feet above sea level every `step` yds (see the
+  // file for how a row is packed).
+  function elevOf(E) {
+    if (!E || !E.rows) return null;
+    var h = new Float32Array(E.nx * E.nz);
+    function two(r, k) { return B64.indexOf(r.charAt(k)) * 64 + B64.indexOf(r.charAt(k + 1)); }
+    E.rows.forEach(function (r, j) {
+      var q = two(r, 0), k = 2;
+      h[j * E.nx] = E.base + q * E.q;
+      for (var i = 1; i < E.nx; i++) {
+        var c = B64.indexOf(r.charAt(k));
+        if (c === 63) { q = two(r, k + 1); k += 3; } else { q += c - 31; k += 1; }
+        h[j * E.nx + i] = E.base + q * E.q;
+      }
+    });
+    return { x0: E.x0, z0: E.z0, step: E.step, nx: E.nx, nz: E.nz, h: h, lake: E.lake };
+  }
+  // The ground's height at a point, in feet above sea level (between the grid's heights;
+  // level beyond its edge). 0 on a course without heights.
+  function heightAt(G, x, z) {
+    var e = G && G.elev;
+    if (!e) return 0;
+    var fx = clamp((x - e.x0) / e.step, 0, e.nx - 1.001), fz = clamp((z - e.z0) / e.step, 0, e.nz - 1.001);
+    var i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, k = j * e.nx + i, h = e.h;
+    return h[k] * (1 - u) * (1 - v) + h[k + 1] * u * (1 - v) + h[k + e.nx] * (1 - u) * v + h[k + e.nx + 1] * u * v;
+  }
+  // How the ground slopes at a point, facing `heading`: along (the rise in yds for each yd
+  // ahead: + is uphill) and side (the rise for each yd to the right), each over 3 yds
+  // either way.
+  function slopeAt(G, x, z, heading) {
+    if (!G || !G.elev) return { along: 0, side: 0 };
+    var d = 3, f = FL.fwd(heading), rx = f.z, rz = -f.x;
+    var ah = heightAt(G, x + f.x * d, z + f.z * d) - heightAt(G, x - f.x * d, z - f.z * d);
+    var sh = heightAt(G, x + rx * d, z + rz * d) - heightAt(G, x - rx * d, z - rz * d);
+    return { along: ah / 3 / (2 * d), side: sh / 3 / (2 * d) };
+  }
+  // How far a shot plays: d yds to a spot dh yds higher (+) or lower. The ball comes down
+  // at its landing angle, so rising ground meets it sooner: it plays dh / tan(landing)
+  // longer (about a yard for every 3 ft with an iron, more with a driver's flatter fall).
+  function playsLike(d, dh, landing) { return d + clamp(dh / Math.tan(clamp(landing || 45, 20, 70) * Math.PI / 180), -0.4 * d, 0.4 * d); }
+  // A club's usual landing angle, without one in his shots.
+  function landingOf(club) { var k = C.clubKind(club); return isWedge(club) ? 50 : k === 'driver' ? 38 : k === 'wood' ? 42 : k === 'hybrid' ? 44 : 46; }
 
   // buildHole(course, n, teeId) → hole n from that set of tees, on the course's ground:
   //   n, par, tee, yds (the scorecard's), note, L (the line of play's length to the middle of
@@ -275,6 +323,7 @@
         mis: e.mis.filter(function (s) { return isNum(s.carry_yds) && s.carry_yds > 0; }),
         misRate: e.shots.length ? e.mis.length / e.shots.length : 0,
         full: C.median(top.map(totalOf)), carry: C.median(top.map(function (s) { return s.carry_yds; })),
+        landing: C.median(top.map(function (s) { return s.landing_deg; }).filter(isNum)) || landingOf(club),
         spread: { off: offs.length ? offs.reduce(function (t, v) { return t + v; }, 0) / offs.length : 0, offSd: sdOf(offs), lenSd: sdOf(tots) }
       };
     });
@@ -611,6 +660,57 @@
   var MIS_CURVE = { thin: 0.3, fat: 0.5, shank: 0.2, toe: 0.6 };
   var MIS_SHANK = 26; // degrees a shank starts off to the heel side
 
+  // A sloped lie: slope is { along, side } as slopeAt gives it, facing the shot. With the
+  // ball above his feet the face points left of where he's aimed, for a right-hander (a
+  // lofted face tilted toward the target points where the slope tips it: the more loft,
+  // the more), and his swing flattens, drawing it; below his feet, the other way. Uphill
+  // it launches higher, flies a little shorter and stops sooner; downhill it comes out
+  // lower and runs on, and both, like a steep sidehill lie, make a clean strike harder.
+  //   → null on level ground, or { above, up (degrees: + ball above his feet, + uphill),
+  //     face, path (degrees, his hand's way: + open, + in-to-out), launch (degrees more),
+  //     carry and roll (shares of them), q (how much harder the strike is) }.
+  var LOFT = { Driver: 10.5, '2w': 13, '3w': 15, '4w': 16.5, '5w': 18, '7w': 21, '9w': 24, '2hy': 17, '3hy': 19, '4hy': 22, '5hy': 25, '6hy': 28, '7hy': 31,
+    '2i': 18, '3i': 20, '4i': 22, '5i': 25, '6i': 28, '7i': 32, '8i': 36, '9i': 40, PW: 45, GW: 50, AW: 50, SW: 56, LW: 60 };
+  function loftOf(club, equip) { var l = C.clubLoft(club, equip); return isNum(l) ? l : LOFT[club] || (isWedge(club) ? 56 : 30); }
+  function lieSlope(slope, club, hand, equip) {
+    if (!slope) return null;
+    var h = hand === 'L' ? -1 : 1, above = Math.atan(h * slope.side) / RAD, up = Math.atan(slope.along) / RAD;
+    if (Math.abs(above) < 1 && Math.abs(up) < 1) return null;
+    var loft = loftOf(club, equip);
+    return {
+      above: above, up: up,
+      face: -Math.atan(Math.tan(loft * RAD) * Math.sin(above * RAD)) / RAD, path: 0,
+      launch: 0.8 * up, carry: up > 0 ? 1 - 0.012 * up : 1 + 0.004 * -up, roll: clamp(1 - 0.04 * up, 0.5, 1.8),
+      q: 0.03 * Math.max(0, Math.abs(up) - 3) + 0.02 * Math.max(0, Math.abs(above) - 4)
+    };
+  }
+  // A shot from a sloped lie (for the swing meter and the range: the real swing works the
+  // slope in itself): its start line and curve turned by the face and path, as the laws
+  // have it, and its height, carry and roll changed.
+  function slopeShot(shot, ls, hand) {
+    if (!ls) return shot;
+    var h = hand === 'L' ? -1 : 1, law = clubLaw(shot.club), fp = facePathOf(shot), out = {};
+    Object.keys(shot).forEach(function (k) { out[k] = shot[k]; });
+    var C0 = shot.carry_yds, R0 = (isNum(shot.total_yds) ? shot.total_yds : totalOf(shot)) - C0, Cy = C0 * ls.carry, R = R0 > 0 ? R0 * ls.roll * ls.carry : R0;
+    out.carry_yds = Cy;
+    out.total_yds = Cy + R;
+    if (isNum(shot.launch_deg)) out.launch_deg = Math.max(1, shot.launch_deg + ls.launch);
+    if (isNum(shot.apex_ft)) out.apex_ft = shot.apex_ft * (1 + 0.02 * ls.up) * ls.carry;
+    if (fp) {
+      var face = fp.face + h * ls.face, path = fp.path + h * ls.path, start = law.face * face + (1 - law.face) * path, cY = law.curve * Cy * (face - path);
+      out.curve_ft = 3 * cY;
+      out.offline_ft = 3 * (Math.tan(start * RAD) * (Cy + 0.6 * R) + cY * (1 + 1.2 * R / Cy));
+    }
+    return out;
+  }
+  function slopeWords(ls) {
+    if (!ls) return '';
+    var w = [];
+    if (Math.abs(ls.up) >= 3) w.push(ls.up > 0 ? 'uphill lie' : 'downhill lie');
+    if (Math.abs(ls.above) >= 3) w.push(ls.above > 0 ? 'ball above your feet' : 'ball below your feet');
+    return w.join(', ');
+  }
+
   // The shape of a shot in a golfer's words, for his hand: where it started (a pull
   // starts to the left for a right-hander, a push to the right) and how it curved (a
   // draw curves left for a right-hander and a big one is a hook; a fade curves right
@@ -642,7 +742,8 @@
     opts = opts || {};
     var cfg = opts.easy ? SWING.easy : SWING.normal, rnd = opts.rnd || Math.random, lie = opts.lie || 'fairway', h = opts.hand === 'L' ? -1 : 1;
     var club = pool.club, prof = swingProfile(pool), law = prof.law, kind = C.clubKind(club);
-    var still = !!opts.still, tempo = clamp(sw.tempo, -1, 1), st = strikeOf(sw, cfg), q = st.q + (still ? 0 : Math.abs(gauss(rnd)) * 0.1);
+    var ls = lieSlope(opts.slope, club, opts.hand, opts.equip);
+    var still = !!opts.still, tempo = clamp(sw.tempo, -1, 1), st = strikeOf(sw, cfg), q = st.q + (ls ? ls.q : 0) + (still ? 0 : Math.abs(gauss(rnd)) * 0.1);
     // The strike: a mis-hit, or one of his solid shots, the better the swing the better struck.
     var pMis = pool.misRate * Math.min(1, q) * Math.min(1, q) + clamp((q - 1) * 0.6, 0, 0.8), mis = null, real, base;
     if (!still && rnd() < pMis) {
@@ -665,19 +766,19 @@
     var nS = zS * prof.sdStart * wild, nD = zD * prof.sdF2p * wild;
     var u = clamp(h * sw.strike, -3, 3), uOff = deadband(u, cfg.strikeMid);
     var dFace = -cfg.face * tempo, dPath = -cfg.path * tempo, dSwipe = cfg.swipe * deadband(sw.angle, cfg.dead);
-    var face = prof.face + nS + (1 - law.face) * nD + h * (dFace - TWIST * uOff);
-    var path = prof.path + nS - law.face * nD + h * dPath + dSwipe;
+    var face = prof.face + nS + (1 - law.face) * nD + h * (dFace - TWIST * uOff + (ls ? ls.face : 0));
+    var path = prof.path + nS - law.face * nD + h * (dPath + (ls ? ls.path : 0)) + dSwipe;
     var f2p = face - path, spin = f2p + h * GEAR[kind] * uOff;
     var start = law.face * face + (1 - law.face) * path;
     if (mis === 'shank') start = h * MIS_SHANK + 0.3 * start;
     // A big curve costs a little carry; an open face (to the path) flies higher and stops
     // quicker, a shut one lower, running on; off the middle it goes shorter.
     var open = clamp(h * spin, -6, 6), C0 = out.carry_yds, R0 = (isNum(out.total_yds) ? out.total_yds : totalOf(out)) - C0;
-    var Cy = C0 * (1 - 0.004 * Math.max(0, Math.abs(spin) - 2)) * (mis ? 1 : Math.max(0.75, 1 - 0.06 * uOff * uOff));
-    var R = R0 * (Cy / C0) * (R0 > 0 ? clamp(1 - 0.06 * open, 0.5, 1.6) : 1);
+    var Cy = C0 * (1 - 0.004 * Math.max(0, Math.abs(spin) - 2)) * (mis ? 1 : Math.max(0.75, 1 - 0.06 * uOff * uOff)) * (ls ? ls.carry : 1);
+    var R = R0 * (Cy / C0) * (R0 > 0 ? clamp(1 - 0.06 * open, 0.5, 1.6) * (ls ? ls.roll : 1) : 1);
     out.carry_yds = Cy;
     out.total_yds = Cy + R;
-    if (isNum(out.launch_deg)) out.launch_deg = Math.max(1, out.launch_deg + 0.35 * open);
+    if (isNum(out.launch_deg)) out.launch_deg = Math.max(1, out.launch_deg + 0.35 * open + (ls ? ls.launch : 0));
     if (isNum(out.apex_ft)) out.apex_ft = out.apex_ft * (1 + 0.03 * open) * Cy / C0;
     if (isNum(out.landing_deg)) out.landing_deg = clamp(out.landing_deg + 0.4 * open, 1, 80);
     var cY = law.curve * Cy * spin * (mis ? MIS_CURVE[mis] : 1), sl = Math.tan(start * RAD);
@@ -690,7 +791,7 @@
         angle: sw.angle, strike: u, q: q, mis: mis, misCause: mis ? misCause(st) : null, real: real, hand: h,
         dFace: dFace, dPath: dPath, dSwipe: h * dSwipe,
         face: h * face, path: h * path, f2p: h * spin, start: start, curve: cY, carry: Cy, side: sl * Cy + cY,
-        shape: shapeOf(start, cY, Cy, h), pMis: pMis, own: { face: h * prof.face, path: h * prof.path, n: prof.n }
+        shape: shapeOf(start, cY, Cy, h), pMis: pMis, own: { face: h * prof.face, path: h * prof.path, n: prof.n }, slope: ls
       }
     };
   }
@@ -703,7 +804,7 @@
     opts = opts || {};
     var depth = clamp(isNum(power) ? power : 1, 0.05, 1), target = tempoTarget(depth), back = 0.8;
     var sw = { ok: true, depth: depth, power: depth, back: back, down: back / target, pause: 0, ratio: target, target: target, tempo: 0, angle: 0, strike: 0 };
-    var out = swingShot(pool, sw, { lie: lie, still: true, hand: opts.hand, easy: opts.easy });
+    var out = swingShot(pool, sw, { lie: lie, still: true, hand: opts.hand, easy: opts.easy, slope: opts.slope, equip: opts.equip });
     var tr = out && FL.trajectory(out.shot, flightOpts(pool.club, opts.equip));
     return { side: tr ? tr.rest.x : 0, shape: out ? out.rep.shape : 'Straight' };
   }
@@ -785,6 +886,9 @@
     }
     if (!rep.mis && Math.abs(rep.strike) > 0.6) tips.push('Off the ' + (rep.strike > 0 ? 'heel' : 'toe') + ': you came back through ' + through + '. Swipe back up through it.');
     if (!putt && !rep.mis && rep.depth > 1.04) tips.push('Past full: a longer backswing adds little and costs control. Stop at the Full line.');
+    var ls = rep.slope;
+    if (!putt && ls && Math.abs(ls.above) >= 3) tips.push('Ball ' + (ls.above > 0 ? 'above' : 'below') + ' your feet: the face pointed ' + degText(ls.face) + ' ' + (ls.above > 0 ? side[0] : side[1]) + ' of your aim. Aim a little ' + (ls.above > 0 ? side[1] : side[0]) + ' to allow for it.');
+    if (!putt && ls && Math.abs(ls.up) >= 3) tips.push(ls.up > 0 ? 'Uphill lie: it launches higher and flies shorter. Take a little more club.' : 'Downhill lie: it comes out lower and runs. Take a little less club, and swing smoothly to catch it clean.');
     return tips;
   }
   // What his club usually does, from his range shots, when it's worth knowing: a face
@@ -803,29 +907,45 @@
   // ---------------------------------------------------------------------------
   var CUP = 0.06;  // the hole's radius (yds): 2¼ in
   var ROLL_COST = { fairway: 1, green: 1, fringe: 1.2, rough: 2.6, trees: 4 };
+  var ROLL_MU = 0.15; // a fairway's rolling resistance, as a grade: a ball rolls R yds on level fairway
   var LAND_ROLL = { rough: 0.5, trees: 0.35, bunker: 0 };
   var STOPS = { water: 1, penalty: 1, ob: 1 };
   function flightOpts(club, equip) {
     var win = C.launchWindow(club, equip);
     return { kind: C.clubKind(club), club: club, launch: win ? (win[0] + win[1]) / 2 : null };
   }
-  // How far a ball that lands at `land` and would roll R yds along `dir` really rolls:
-  // less after landing in the rough or the trees, slowing more in them as it goes; it
-  // stops in a bunker and goes into water or out of bounds.
+  // How far a ball that lands at `land` and would roll R yds along `dir` on level fairway
+  // really rolls, and where it stops: { d, lie, end }. It's a ball rolling to a stop: what
+  // it has left to spend (R × ROLL_MU, less after landing in the rough or the trees) goes on
+  // the grass it rolls over (more in the rough, ROLL_COST) and on climbing; going downhill
+  // gives some back. A side slope turns it downhill, more as it slows. It stops in a
+  // bunker and goes into water or out of bounds.
   function rollOut(H, land, dir, R) {
     var lie = lieAt(H, land.x, land.z);
-    if (STOPS[lie] || R <= 0.05) return { d: 0, lie: lie };
-    var budget = R * (LAND_ROLL[lie] != null ? LAND_ROLL[lie] : 1), d = 0, step = 0.5;
-    while (budget > 1e-6) {
-      var nd = d + step, l = lieAt(H, land.x + dir.x * nd, land.z + dir.z * nd);
-      if (STOPS[l]) return { d: nd, lie: l };
-      if (l === 'bunker') return { d: nd + Math.min(0.8, budget), lie: 'bunker' };
-      var use = step * (ROLL_COST[l] || 1);
-      if (use >= budget) { d += step * budget / use; break; }
-      budget -= use;
-      d = nd;
+    if (STOPS[lie] || R <= 0.05) return { d: 0, lie: lie, end: { x: land.x, z: land.z } };
+    var G = H.ground, E = R * ROLL_MU * (LAND_ROLL[lie] != null ? LAND_ROLL[lie] : 1), step = 0.5;
+    var x = land.x, z = land.z, dx = dir.x, dz = dir.z, d = 0, h = heightAt(G, x, z) / 3, maxD = 4 * R + 5;
+    for (var guard = 0; E > 1e-6 && guard < 4000 && d < maxD; guard++) {
+      var nx = x + dx * step, nz = z + dz * step, l = lieAt(H, nx, nz);
+      if (STOPS[l]) return { d: d + step, lie: l, end: { x: nx, z: nz } };
+      if (l === 'bunker') { var e = Math.min(0.8, E / (2 * ROLL_MU)); return { d: d + step + e, lie: 'bunker', end: { x: nx + dx * e, z: nz + dz * e } }; }
+      var h2 = heightAt(G, nx, nz) / 3, use = step * ROLL_MU * (ROLL_COST[l] || 1) + (h2 - h);
+      if (use >= E) { var f = use > 0 ? E / use : 1; x += dx * step * f; z += dz * step * f; d += step * f; break; }
+      E -= use;
+      x = nx; z = nz; d += step; h = h2;
+      if (G.elev) {
+        var rx = dz, rz = -dx, side = (heightAt(G, x + rx, z + rz) - heightAt(G, x - rx, z - rz)) / 3 / 2;
+        var turn = clamp(-side * step / (2 * Math.max(E, 0.03)), -0.15, 0.15), c = Math.cos(turn), sn = Math.sin(turn);
+        var ndx = dx * c + rx * sn, ndz = dz * c + rz * sn;
+        dx = ndx; dz = ndz;
+      }
     }
-    return { d: d, lie: lieAt(H, land.x + dir.x * d, land.z + dir.z * d) };
+    return { d: d, lie: lieAt(H, x, z), end: { x: x, z: z } };
+  }
+  // A point on the ground, in yds along and to the side of a shot hit from `from` along `heading`.
+  function localOf(from, heading, p) {
+    var dx = p.x - from.x, dz = p.z - from.z, sh = Math.sin(heading), ch = Math.cos(heading);
+    return { along: dx * sh + dz * ch, side: dx * ch - dz * sh };
   }
   // The same flight with only a share (f) of its roll: it lands in the same spot.
   function shortRoll(shot, tr, f) {
@@ -839,20 +959,64 @@
   // about a third of the way up (so a low punch can run under them). The first few yds
   // don't count (more from under the trees, where the ball starts beneath the branches).
   var TRUNK = 0.5, LEAVES = 0.35;
-  function treeHit(H, placed, from) {
-    var skip = from.lie === 'trees' ? 14 : 5, sm = placed.samples, lt = placed.local.samples;
+  // trueY(s): the ball's height s yds along, above the ground it was hit from (the drawn
+  // flight's own height when not given); h0: that ground's height (yds). Each tree stands
+  // on its own ground.
+  function treeHit(H, placed, from, trueY, h0) {
+    var skip = from.lie === 'trees' ? 14 : 5, sm = placed.samples, lt = placed.local.samples, G = H.ground;
     for (var i = 1; i < sm.length; i++) {
       if (lt[i].z < skip) continue;
-      var p = sm[i], near = treesNear(H.ground, p.x, p.z);
+      var p = sm[i], y = trueY ? trueY(lt[i].z) : p.y, near = treesNear(G, p.x, p.z);
       for (var j = 0; j < near.length; j++) {
         var t = near[j], r = t.r * 0.85, dx = p.x - t.x, dz = p.z - t.z;
-        if (p.y >= t.h || Math.abs(dx) > r || Math.abs(dz) > r) continue;
+        if (Math.abs(dx) > r || Math.abs(dz) > r) continue;
+        var yy = y - (G.elev ? heightAt(G, t.x, t.z) / 3 - (h0 || 0) : 0);
+        if (yy >= t.h || yy < 0) continue;
         var d = Math.hypot(dx, dz);
-        if (d < TRUNK || (d < r && p.y > LEAVES * t.h)) return { i: i, t: sm[i].t, tree: t, p: p };
+        if (d < TRUNK || (d < r && yy > LEAVES * t.h)) return { i: i, t: sm[i].t, tree: t, p: p };
       }
     }
     return null;
   }
+  // Where a flight comes down on the real ground, s yds along from where it was hit, and
+  // the slope it lands on along its line (grade: + uphill). Its height counts from the
+  // ground it was hit from (h0, yds): rising ground meets it sooner; over falling ground
+  // it flies on past its carry, down at its landing angle, until it meets it.
+  function groundMeet(G, tr, from, heading, h0) {
+    var C = tr.carry, tanD = Math.tan(tr.landing * Math.PI / 180), s0 = Math.max(1, tr.apexPoint.z);
+    function g(s) { var q = FL.offsetPoint(from.x, from.z, heading, s, tr.lateral(s)); return heightAt(G, q.x, q.z) / 3 - h0; }
+    function y(s) { return s <= C ? tr.height(s) : -tanD * (s - C); }
+    var ps = s0, pd = y(s0) - g(s0);
+    if (pd <= 0) return { s: s0, grade: (g(s0 + 1) - g(s0 - 1)) / 2 };
+    for (var s = s0 + 1; s <= C + 160; s += 1) {
+      var dd = y(s) - g(s);
+      if (dd <= 0) { var m = ps + (s - ps) * pd / (pd - dd); return { s: m, grade: (g(m + 1) - g(m - 1)) / 2 }; }
+      ps = s; pd = dd;
+    }
+    return { s: C + 160, grade: 0 };
+  }
+  // When a flight reaches s yds along (past its carry, at the speed it landed).
+  function timeAt(tr, s) {
+    if (s >= tr.carry) { var t1 = Math.max(0, tr.hang - 0.05), v = (tr.carry - tr.along(t1)) / Math.max(1e-3, tr.hang - t1); return tr.hang + (s - tr.carry) / Math.max(1, v); }
+    var lo = 0, hi = tr.hang;
+    for (var k = 0; k < 40; k++) { var mid = (lo + hi) / 2; if (tr.along(mid) < s) lo = mid; else hi = mid; }
+    return (lo + hi) / 2;
+  }
+  // The same flight, coming down s yds along instead of at its carry, and rolling R yds.
+  // It bends just as it did (the curve grows with the square of the distance) and starts
+  // on the same line; only where it comes down changes.
+  function landedAt(shot, tr, s, R) {
+    var out = {}, k = s / tr.carry, cY = tr.curveY * k * k;
+    Object.keys(shot).forEach(function (key) { out[key] = shot[key]; });
+    out.carry_yds = s;
+    out.total_yds = s + R;
+    out.curve_ft = 3 * cY;
+    out.offline_ft = 3 * (tr.start * (s + 0.6 * R) + cY * (1 + 1.2 * R / s));
+    if (isNum(shot.hang_time_s)) out.hang_time_s = timeAt(tr, s);
+    return out;
+  }
+  // Landing on a slope: an upslope stops the first bounce short, a downslope kicks it on.
+  function rollOnLanding(R, grade) { return R > 0 ? R * clamp(1 - 3 * grade, 0.5, 1.6) : R; }
   // A flight that hits a tree: it flies to the tree, then drops to the ground below.
   function cutAtTree(placed, hit, drop) {
     var p0 = placed.at(hit.t), fall = clamp(Math.sqrt(2 * Math.max(0.2, p0.y) / FL.G_YDS), 0.3, 1.4), tEnd = hit.t + fall;
@@ -913,10 +1077,21 @@
   function playShot(H, from, aim, shot, opts) {
     opts = opts || {};
     var heading = headingTo(from, aim), fo = flightOpts(shot.club, opts.equip);
-    var tr = FL.trajectory(shot, fo);
-    if (!tr) return null;
+    var tr0 = FL.trajectory(shot, fo);
+    if (!tr0) return null;
+    // On the real ground: the flight comes down where it meets it (sooner uphill, later
+    // downhill), and the first bounce goes with the slope it lands on.
+    var G = H.ground, h0 = heightAt(G, from.x, from.z) / 3, tr = tr0, fs = { kind: fo.kind, club: fo.club, launch: fo.launch, start: tr0.start };
+    if (G.elev) {
+      var meet = groundMeet(G, tr0, from, heading, h0);
+      if (Math.abs(meet.s - tr0.carry) > 0.25 || Math.abs(meet.grade) > 0.01) {
+        shot = landedAt(shot, tr0, meet.s, rollOnLanding(tr0.roll, meet.grade));
+        tr = FL.trajectory(shot, fs) || tr0;
+      }
+    }
+    var trueY = G.elev ? function (s) { return s <= tr0.carry ? tr0.height(s) : -Math.tan(tr0.landing * Math.PI / 180) * (s - tr0.carry); } : null;
     var placed = FL.place(tr, from.x, from.z, heading), result = 'ok', holed = false, treeOf = null;
-    var hit = treeHit(H, placed, from);
+    var hit = treeHit(H, placed, from, trueY, h0);
     if (hit) {
       var back = Math.hypot(hit.p.x - from.x, hit.p.z - from.z) || 1, r = opts.rnd ? opts.rnd() : 0.5;
       var pull = Math.min(back, 1.2 + 1.8 * r);
@@ -926,21 +1101,26 @@
       treeOf = hit.tree;
     } else {
       var land = placed.land, rx = placed.rest.x - land.x, rz = placed.rest.z - land.z, rd = Math.hypot(rx, rz);
-      var ro = rd > 0.05 && tr.roll > 0 ? rollOut(H, land, { x: rx / rd, z: rz / rd }, rd) : { d: rd, lie: lieAt(H, land.x, land.z) };
-      if (tr.roll <= 0 && STOPS[lieAt(H, land.x, land.z)]) ro = { d: 0, lie: lieAt(H, land.x, land.z) };
-      var f = rd > 0.05 ? clamp(ro.d / rd, 0, 1) : 1;
+      var ro = rd > 0.05 && tr.roll > 0 ? rollOut(H, land, { x: rx / rd, z: rz / rd }, rd) : { d: rd, lie: lieAt(H, land.x, land.z), end: { x: placed.rest.x, z: placed.rest.z } };
+      if (tr.roll <= 0 && STOPS[lieAt(H, land.x, land.z)]) ro = { d: 0, lie: lieAt(H, land.x, land.z), end: { x: land.x, z: land.z } };
+      var end = ro.end;
       // Into the hole: rolling over it slowly enough, or landing right in it.
       if (opts.pin) {
-        var pin = opts.pin, ux = rd > 0.05 ? rx / rd : 0, uz = rd > 0.05 ? rz / rd : 0, rolled = rd * f;
+        var pin = opts.pin, ex = end.x - land.x, ez = end.z - land.z, rolled = Math.hypot(ex, ez), ux = rolled > 0.05 ? ex / rolled : 0, uz = rolled > 0.05 ? ez / rolled : 0;
         var along = clamp((pin.x - land.x) * ux + (pin.z - land.z) * uz, 0, rolled);
         var near = Math.hypot(land.x + ux * along - pin.x, land.z + uz * along - pin.z);
         if (Math.hypot(land.x - pin.x, land.z - pin.z) <= CUP || (near <= CUP && rolled - along <= 3)) {
           holed = true;
-          f = rd > 0.05 ? along / rd : 0;
+          end = { x: land.x + ux * along, z: land.z + uz * along };
         }
       }
-      if (f < 0.999) {
-        tr = FL.trajectory(shortRoll(shot, placed, f), fo);
+      // Where it stops, if not where the drawn flight would: rebuilt on the same line.
+      if (Math.hypot(end.x - placed.rest.x, end.z - placed.rest.z) > 0.05) {
+        var loc = localOf(from, heading, end), s2 = {};
+        Object.keys(shot).forEach(function (k) { s2[k] = shot[k]; });
+        s2.total_yds = loc.along;
+        s2.offline_ft = 3 * loc.side;
+        tr = FL.trajectory(s2, { kind: fo.kind, club: fo.club, launch: fo.launch, start: tr.start }) || tr;
         placed = FL.place(tr, from.x, from.z, heading);
       }
       if (holed) result = 'holed';
@@ -1023,21 +1203,26 @@
   // comes down).
   function treesInWay(H, a, b, reach, low) {
     var len = dist(a, b), top = Math.min(30, 0.16 * reach) * (low ? LIE.trees.low : 1), n = Math.max(8, Math.ceil(len / 6)), hit = [];
+    var G = H.ground, ha = heightAt(G, a.x, a.z) / 3, hb = heightAt(G, b.x, b.z) / 3;
     for (var k = 1; k < n; k++) {
       var u = k / n;
       if (u < 0.08 || u > 0.92) continue;
-      var x = a.x + (b.x - a.x) * u, z = a.z + (b.z - a.z) * u, y = top * 4 * u * (1 - u), near = treesNear(H.ground, x, z);
+      var x = a.x + (b.x - a.x) * u, z = a.z + (b.z - a.z) * u, y = top * 4 * u * (1 - u) + (hb - ha) * u, near = treesNear(G, x, z);
       for (var i = 0; i < near.length; i++) {
-        var t = near[i];
+        var t = near[i], yy = y - (G.elev ? heightAt(G, t.x, t.z) / 3 - ha : 0);
         var d = Math.hypot(x - t.x, z - t.z);
-        if (y < t.h && hit.indexOf(t) < 0 && (d < TRUNK + 0.5 || (d < t.r * 0.85 + 1 && y > LEAVES * t.h))) hit.push(t);
+        if (yy < t.h && yy > 0 && hit.indexOf(t) < 0 && (d < TRUNK + 0.5 || (d < t.r * 0.85 + 1 && yy > LEAVES * t.h))) hit.push(t);
       }
       if (hit.length >= 2) return 2;
     }
     return hit.length;
   }
-  function aimFor(H, ball, pin, reach) {
-    var low = ball.lie === 'trees', dPin = dist(ball, pin), best = null, cost = Infinity;
+  // landing: the club's landing angle (an iron's 46° when not given), for how far a spot
+  // plays with the climb to it.
+  function aimFor(H, ball, pin, reach, landing) {
+    var low = ball.lie === 'trees', G = H.ground, hb = heightAt(G, ball.x, ball.z) / 3, best = null, cost = Infinity;
+    function far(q) { return G.elev ? playsLike(dist(ball, q), heightAt(G, q.x, q.z) / 3 - hb, landing || 46) : dist(ball, q); }
+    var dPin = far(pin);
     // What a spot costs: the hole it leaves to play (along the line of play, or to the pin
     // once that's further), its lie, how far off straight down the hole it is, a carry over
     // water or out of bounds with little to spare (his good carry, about 93% of his reach,
@@ -1059,14 +1244,14 @@
     var b = toHole(H, ball.x, ball.z), ahead = null;
     for (var s = Math.max(b.s + 10, 0); s <= H.L; s += STEP) {
       var p = H.at(s);
-      if (dist(ball, p) <= reach) ahead = p; else if (ahead) break;
+      if (far(p) <= reach) ahead = p; else if (ahead) break;
     }
     var h0 = headingTo(ball, dPin <= reach + 5 ? pin : ahead || pin), fan = ball.lie === 'rough' || ball.lie === 'trees' ? 80 : 40;
-    var dMax = Math.min(reach, dPin + 10);
+    var dMax = Math.min(reach, dist(ball, pin) + 10) * 1.3;
     for (var da = -fan; da <= fan; da += 5) {
-      for (var f = 1; f >= 0.35 - 1e-9; f -= 0.05) {
+      for (var f = 1; f >= 0.25 - 1e-9; f -= 0.05) {
         var q = FL.offsetPoint(ball.x, ball.z, h0 + da * Math.PI / 180, dMax * f, 0), l = lieAt(H, q.x, q.z);
-        if (!(l in AIM_COST)) continue;
+        if (!(l in AIM_COST) || far(q) > Math.min(reach, dPin + 10)) continue;
         var c = costOf(q, l, da, dMax * f);
         if (c < cost) { cost = c; best = { x: q.x, z: q.z, pin: false }; }
       }
@@ -1103,12 +1288,14 @@
   }
 
   return {
-    buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf,
+    buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, elevOf: elevOf, heightAt: heightAt, slopeAt: slopeAt, playsLike: playsLike, landingOf: landingOf,
+    groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf,
     rankShots: rankShots, clubPools: clubPools, clubList: clubList, totalOf: totalOf,
     METER: METER, timingOf: timingOf, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
     LAW: LAW, clubLaw: clubLaw, facePathOf: facePathOf, swingProfile: swingProfile, SWIPE: SWIPE, tempoTarget: tempoTarget, powerOfDepth: powerOfDepth,
     readSwing: readSwing, SWING: SWING, strikeOf: strikeOf, swingShot: swingShot, shapeOf: shapeOf, MIS_SHANK: MIS_SHANK,
     PUTT_SWING: PUTT_SWING, puttLength: puttLength, puttDepth: puttDepth, puttSwing: puttSwing, shapeAllowance: shapeAllowance,
+    LOFT: LOFT, loftOf: loftOf, lieSlope: lieSlope, slopeShot: slopeShot, slopeWords: slopeWords,
     swingTips: swingTips, ownShapeText: ownShapeText, tempoWord: tempoWord, faceWord: faceWord, pathWord: pathWord, ratioText: ratioText, goalText: goalText,
     DECK: DECK, lieFactor: lieFactor, playShot: playShot, rollOut: rollOut, TRUNK: TRUNK, LEAVES: LEAVES, CUP: CUP, flightOpts: flightOpts,
     PUTT: PUTT, puttTarget: puttTarget, putt: putt, TAP_IN: TAP_IN,

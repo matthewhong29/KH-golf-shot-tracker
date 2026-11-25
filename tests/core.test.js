@@ -807,7 +807,9 @@ eq([GG.adjustShot(drv, 1, 'tee').carry_yds, Math.round(GG.adjustShot(drv, 1, 'fa
 eq(base.carry_yds, 120, 'the real shot is left as it was');
 
 section('Game: a shot on the hole');
-const H1 = H1w, pin1 = GG.pinFor(H1, 3), tee1 = { x: H1.start.x, z: H1.start.z, lie: 'tee' }, down1 = H1.at(t1w.s + 175);
+// The flight and the roll on level ground first (the course without its heights).
+const HPF = Object.assign({}, HP, { id: 'harding-park-level', elev: null });
+const H1 = GG.buildHole(HPF, 1, 'white'), H2f = GG.buildHole(HPF, 2, 'white'), pin1 = GG.pinFor(H1, 3), tee1 = { x: H1.start.x, z: H1.start.z, lie: 'tee' }, down1 = H1.at(t1w.s + 175);
 const aimHd = GG.headingTo(tee1, down1), across = (p) => (p.x - tee1.x) * Math.cos(aimHd) - (p.z - tee1.z) * Math.sin(aimHd);
 const straight = GG.playShot(H1, tee1, down1, { club: '7i', carry_yds: 150, total_yds: 160, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
 eq([straight.result, straight.lie, Math.round(straight.carry), Math.round(GG.dist(tee1, straight.rest)), Math.abs(across(straight.rest)) < 0.01],
@@ -832,18 +834,57 @@ const H3 = GG.buildHole(HP, 3, 'white'), tee3 = { x: H3.start.x, z: H3.start.z, 
 const tree3 = H3.ground.trees.find((t) => GG.dist(tee3, t) > 40 && GG.dist(tee3, t) < 120 && GG.toHole(H3, t.x, t.z).s > s3);
 const low = GG.playShot(H3, tee3, tree3, { club: '7i', carry_yds: 140, total_yds: 150, apex_ft: 20, launch_deg: 8, landing_deg: 15, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H3, 3), rnd: FL.rng(1) });
 ok(low.result === 'tree' && low.tree && GG.dist(low.rest, low.tree) < low.tree.r + 4 && low.traj.hang < 4, 'a low shot into a cypress drops by the tree');
-const tee2 = { x: H2w.start.x, z: H2w.start.z, lie: 'tee' };
-const bk = H2w.ground.bunkers.map((b) => ({ b, c: GG.centroidOf(b.poly) })).find((o) => { const q = GG.toHole(H2w, o.c.x, o.c.z); return q.s - t2w.s > 200 && q.s - t2w.s < 260 && Math.abs(q.lat) < 30; }).c;
+const tee2 = { x: H2f.start.x, z: H2f.start.z, lie: 'tee' };
+const bk = H2f.ground.bunkers.map((b) => ({ b, c: GG.centroidOf(b.poly) })).find((o) => { const q = GG.toHole(H2f, o.c.x, o.c.z); return q.s - t2w.s > 200 && q.s - t2w.s < 260 && Math.abs(q.lat) < 30; }).c;
 const toBk = GG.headingTo(tee2, bk);
 let edge = 0;
-while (GG.lieAt(H2w, bk.x - Math.sin(toBk) * edge, bk.z - Math.cos(toBk) * edge) === 'bunker') edge += 0.25;
+while (GG.lieAt(H2f, bk.x - Math.sin(toBk) * edge, bk.z - Math.cos(toBk) * edge) === 'bunker') edge += 0.25;
 const landSpot = { x: bk.x - Math.sin(toBk) * (edge + 1.5), z: bk.z - Math.cos(toBk) * (edge + 1.5) }, c2 = GG.dist(tee2, landSpot);
-const intoSand = GG.playShot(H2w, tee2, bk, { club: '5hy', carry_yds: c2, total_yds: c2 + 12, apex_ft: 70, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H2w, 3), rnd: FL.rng(1) });
+const intoSand = GG.playShot(H2f, tee2, bk, { club: '5hy', carry_yds: c2, total_yds: c2 + 12, apex_ft: 70, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H2f, 3), rnd: FL.rng(1) });
 ok(intoSand.result === 'ok' && intoSand.lie === 'bunker' && GG.dist(intoSand.land, intoSand.rest) < 5, 'a ball rolling into a fairway bunker on the 2nd stays in it');
 const nearPin = { x: pin1.x - Math.sin(GG.headingTo(tee1, pin1)) * 30, z: pin1.z - Math.cos(GG.headingTo(tee1, pin1)) * 30, lie: 'fairway' };
 const chip = GG.playShot(H1, nearPin, pin1, { club: 'SW', carry_yds: 27, total_yds: 31, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
 eq([chip.result, chip.lie, chip.next], ['holed', 'holed', undefined], 'rolling over the hole slowly: in!');
 ok(GG.dist(chip.rest, pin1) < GG.CUP, '…and it stops in the cup');
+
+section('Game: the real ground (elevation)');
+const GR = H1w.ground, ft = (x, z) => GG.heightAt(GR, x, z);
+const climb = (n) => { const H = GG.buildHole(HP, n, 'blue'); return ft(H.green.x, H.green.z) - ft(H.start.x, H.start.z); };
+ok(Math.abs(climb(3) - 17) < 3 && Math.abs(climb(10) - 22) < 3, `the course guides' climbs: the 3rd plays uphill ${climb(3).toFixed(0)} ft (17), the 10th ${climb(10).toFixed(0)} ft tee to green (22)`);
+ok(climb(8) < -8 && climb(11) < 0 && climb(15) < -30, 'downhill on 8 and 11 (as the guides say), and the 15th falls away toward the lake');
+const H14b = GG.buildHole(HP, 14, 'blue'), low14 = Math.min(...Array.from({ length: 30 }, (_, i) => { const q = H14b.at(GG.toHole(H14b, H14b.start.x, H14b.start.z).s + 150 + 5 * i); return ft(q.x, q.z); }));
+ok(ft(H14b.green.x, H14b.green.z) - low14 > 8, 'the 14th: the approach climbs from the bottom of the fairway to the green');
+const lakeQ = HP.map.lake[HP.map.lake.length - 3];
+eq(Math.round(ft(lakeQ[0], lakeQ[1]) * 10) / 10, HP.elev.lake, 'Lake Merced is held at its shore’s height');
+eq([Math.round(GG.playsLike(150, 16 / 3, 46) * 10) / 10, Math.round(GG.playsLike(150, -16 / 3, 46) * 10) / 10, GG.playsLike(100, 90, 46)], [155.2, 144.8, 140], 'plays like: 16 ft up, 5 yds longer with an iron; down, shorter; never more than 40%');
+const flat7 = { club: '7i', carry_yds: 150, total_yds: 158, apex_ft: 75, launch_deg: 18, landing_deg: 45, offline_ft: 0, curve_ft: 0 };
+const H15b = GG.buildHole(HP, 15, 'blue'), tee15 = { x: H15b.start.x, z: H15b.start.z, lie: 'tee' }, down15 = H15b.at(GG.toHole(H15b, tee15.x, tee15.z).s + 160);
+const drop15 = GG.playShot(H15b, tee15, down15, flat7, { rnd: FL.rng(1) }), fall15 = (ft(tee15.x, tee15.z) - ft(drop15.land.x, drop15.land.z)) / 3;
+ok(drop15.carry > 150 + 0.6 * fall15 && drop15.carry < 150 + 1.6 * fall15, `downhill off the 15th tee: ${fall15.toFixed(0)} yds below the tee, a 150-yd carry flies ${drop15.carry.toFixed(0)}`);
+const H10b = GG.buildHole(HP, 10, 'blue'), s10 = GG.toHole(H10b, H10b.start.x, H10b.start.z).s;
+// The steepest 150 yds up the 10th: a 150-yd carry comes down sooner, about the climb ÷ tan(45°) short.
+let up10 = null;
+for (let k = 0; k < 60; k++) { const a = H10b.at(s10 + 120 + 4 * k), b = H10b.at(s10 + 120 + 4 * k + 150), rise = (ft(b.x, b.z) - ft(a.x, a.z)) / 3; if (!up10 || rise > up10.rise) up10 = { a, b, rise }; }
+const upShot = GG.playShot(H10b, { x: up10.a.x, z: up10.a.z, lie: 'fairway' }, up10.b, flat7, { rnd: FL.rng(1) });
+ok(up10.rise > 2 && upShot.carry < 150 - 0.5 * up10.rise && upShot.carry > 150 - 1.6 * up10.rise, `uphill on the 10th (${(up10.rise * 3).toFixed(0)} ft up): the ground meets it sooner, ${upShot.carry.toFixed(0)} of 150`);
+// Rolling: farther downhill, shorter uphill, and a side slope turns it.
+let steep = null;
+for (let s = 60; s < 300 && !steep; s += 4) {
+  const s0 = GG.toHole(H15b, tee15.x, tee15.z).s, back = H15b.at(s0 + s - 24), a = H15b.at(s0 + s), b = H15b.at(s0 + s + 24);
+  if ((ft(back.x, back.z) - ft(a.x, a.z)) / 72 > 0.03 && (ft(a.x, a.z) - ft(b.x, b.z)) / 72 > 0.03 && GG.lieAt(H15b, a.x, a.z) === 'fairway' && GG.lieAt(H15b, back.x, back.z) === 'fairway') steep = { a, h: GG.headingTo(a, b) };
+}
+const rollDir = (h) => ({ x: Math.sin(h), z: Math.cos(h) });
+const downRoll = steep && GG.rollOut(H15b, steep.a, rollDir(steep.h), 15), upRoll = steep && GG.rollOut(H15b, steep.a, rollDir(steep.h + Math.PI), 15);
+ok(steep && downRoll.d > 17 && upRoll.d < 13, `a 15-yd roll on the 15th's slope: ${steep ? downRoll.d.toFixed(0) : '?'} yds downhill, ${steep ? upRoll.d.toFixed(0) : '?'} back up it`);
+let sideSpot = null;
+for (let n = 1; n <= 18 && !sideSpot; n++) {
+  const H = GG.buildHole(HP, n, 'blue'), s0 = GG.toHole(H, H.start.x, H.start.z).s;
+  for (let s = 150; s < H.L - 40 && !sideSpot; s += 6) { const q = H.at(s), sl = GG.slopeAt(H.ground, q.x, q.z, q.h); if (Math.abs(sl.side) > 0.04 && Math.abs(sl.along) < 0.01 && GG.lieAt(H, q.x, q.z) === 'fairway') sideSpot = { H, q, sl }; }
+}
+const sideRoll = sideSpot && GG.rollOut(sideSpot.H, sideSpot.q, rollDir(sideSpot.q.h), 15), sideLoc = sideSpot && GG.localOf(sideSpot.q, sideSpot.q.h, sideRoll.end);
+ok(sideSpot && sideLoc.side * sideSpot.sl.side < 0 && Math.abs(sideLoc.side) > 1, `on a side slope the roll turns downhill (${sideSpot ? sideLoc.side.toFixed(1) : '?'} yds sideways over ${sideSpot ? sideRoll.d.toFixed(0) : '?'})`);
+const lvl = GG.rollOut(H1, H1.at(t1w.s + 200), rollDir(H1.at(t1w.s + 200).h), 15);
+ok(Math.abs(lvl.d - 15) < 0.6 && Math.abs(GG.localOf(H1.at(t1w.s + 200), H1.at(t1w.s + 200).h, lvl.end).side) < 0.01, 'on level fairway it rolls just as far as it would, and straight');
 
 section('Game: putting, clubs and the score');
 rnd = FL.rng(11);

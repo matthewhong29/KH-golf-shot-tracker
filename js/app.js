@@ -1918,7 +1918,7 @@
   const GM_MODES = [['swing', 'Real swing'], ['meter', 'Swing meter'], ['live', 'From the range']];
   const GM_MODE_OK = { swing: 1, meter: 1, live: 1 };
   // The course maps are OpenStreetMap's (ODbL), which asks for this wherever they're shown.
-  const GM_MAP_CREDIT = '<p class="gm-src">Course map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a></p>';
+  const GM_MAP_CREDIT = '<p class="gm-src">Course map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> · Elevation: <a href="https://www.usgs.gov/3d-elevation-program" target="_blank" rel="noopener">USGS 3DEP</a></p>';
   const GM_FROM = { rough: 'from the rough', bunker: 'from the sand', trees: 'punched out from under the trees' };
   const GM_WHERE = { fairway: 'In the fairway', rough: 'In the rough', bunker: 'In a bunker', trees: 'Under the trees', green: 'On the green', fringe: 'On the fringe', tee: 'On the tee' };
   let gm = null;
@@ -2101,8 +2101,17 @@
     const p = gm.pools[club], f = GM.lieFactor(club, gmLie()).dist;
     return (p ? p.full : GM_GUESS[club] || 120) * f;
   }
+  // The real ground: how much higher a spot is than the ball (yds, + uphill), how far it
+  // plays with this club (its landing angle), and the slope of the lie facing it.
+  function gmRise(at) { const G = gm.H.ground; return (GM.heightAt(G, at.x, at.z) - GM.heightAt(G, gm.ball.x, gm.ball.z)) / 3; }
+  function gmPlays(at, club) {
+    const c = club || gm.club, pool = gm.pools[c];
+    return GM.playsLike(GM.dist(gm.ball, at), gmRise(at), pool ? pool.landing : GM.landingOf(c));
+  }
+  function gmSlopeTo(at) { return GM.slopeAt(gm.H.ground, gm.ball.x, gm.ball.z, GM.headingTo(gm.ball, at)); }
+  function gmLieSlope(at) { return GM.lieSlope(gmSlopeTo(at || gmAimPoint()), gm.club, gmHand(), data.equipment); }
   function gmSuggest() {
-    const list = gmClubs(), d = GM.dist(gm.ball, gm.pin);
+    const list = gmClubs(), d = GM.playsLike(GM.dist(gm.ball, gm.pin), gmRise(gm.pin), 46);
     const withShots = {};
     list.forEach((c) => { if (gm.pools[c]) withShots[c] = gm.pools[c]; });
     const c = GM.suggestClub(withShots, d, gmLie());
@@ -2118,7 +2127,7 @@
     if (gm.aim) return gm.aim;
     const k = gm.round.mode + ':' + gm.club + '@' + gm.ball.x.toFixed(2) + ',' + gm.ball.z.toFixed(2);
     if (gm.autoKey !== k) {
-      const target = GM.aimFor(gm.H, gm.ball, gm.pin, gmReach(gm.club)), shape = gmShapeAt(target), allow = shape && Math.abs(shape.side) >= 3 ? shape.side : 0;
+      const target = GM.aimFor(gm.H, gm.ball, gm.pin, gmReach(gm.club), gm.pools[gm.club] ? gm.pools[gm.club].landing : GM.landingOf(gm.club)), shape = gmShapeAt(target), allow = shape && Math.abs(shape.side) >= 3 ? shape.side : 0;
       const aim = allow ? Object.assign(FL.offsetPoint(target.x, target.z, GM.headingTo(gm.ball, target), 0, -allow), { pin: target.pin }) : target;
       Object.assign(gm, { autoKey: k, autoAim: aim, autoTarget: target, autoAllow: allow, autoShape: shape });
     }
@@ -2130,9 +2139,9 @@
   function gmShapeAt(at) {
     const pool = gm.pools[gm.club];
     if (gm.round.mode !== 'swing' || !pool || gmPutting()) return null;
-    const d = GM.dist(gm.ball, at), k = gm.club + '@' + gm.ball.x.toFixed(1) + ',' + gm.ball.z.toFixed(1) + ':' + Math.round(d) + ':' + gmHand() + (gm.round.easy ? 'e' : '');
+    const d = gmPlays(at), k = gm.club + '@' + gm.ball.x.toFixed(1) + ',' + gm.ball.z.toFixed(1) + ':' + Math.round(d) + ':' + Math.round(GM.headingTo(gm.ball, at) * 20) + ':' + gmHand() + (gm.round.easy ? 'e' : '');
     gm.shapes = gm.shapes || new Map();
-    if (!gm.shapes.has(k)) gm.shapes.set(k, GM.shapeAllowance(pool, GM.powerFor(pool, d, gmLie()), gmLie(), { hand: gmHand(), easy: gm.round.easy, equip: data.equipment }));
+    if (!gm.shapes.has(k)) gm.shapes.set(k, GM.shapeAllowance(pool, GM.powerFor(pool, d, gmLie()), gmLie(), { hand: gmHand(), easy: gm.round.easy, equip: data.equipment, slope: gmSlopeTo(at) }));
     return gm.shapes.get(k);
   }
   // A new spot for the ball (a new hole, or after a shot): pick the club and the view.
@@ -2228,7 +2237,7 @@
   function gmZone(ctx, cam, aim, hd) {
     const pool = gm.pools[gm.club];
     if (!pool) return;
-    const lie = gmLie(), f = GM.lieFactor(gm.club, lie), p = GM.powerFor(pool, GM.dist(gm.ball, aim), lie), k = p * f.dist, sp = pool.spread;
+    const lie = gmLie(), f = GM.lieFactor(gm.club, lie), p = GM.powerFor(pool, gmPlays(aim), lie), k = p * f.dist, sp = pool.spread;
     const shape = gmShapeAt(aim), c = FL.offsetPoint(aim.x, aim.z, hd, 0, shape ? shape.side : sp.off * k * f.spray);
     const rx = Math.max(2, 1.5 * sp.offSd * k * f.spray), rz = Math.max(2, 1.5 * sp.lenSd * k), pts = [];
     for (let i = 0; i < 40; i++) {
@@ -2296,7 +2305,8 @@
     if (card.done) return `Hole ${card.n}: ${card.picked ? 'picked up' : plural(card.score, 'stroke')}`;
     const where = GM_WHERE[b.lie] || GM.LIE_WORDS[b.lie] || '';
     const far = gmPutting() || b.lie === 'green' ? `${gmFtText(d * 3)} from the hole` : `${gmYds(d)} to the pin`;
-    return [`Shot ${card.strokes + 1}`, where, far, card.penalties ? plural(card.penalties, 'penalty stroke') : ''].filter(Boolean).join(' · ');
+    const slope = gmPutting() || b.lie === 'green' ? '' : GM.slopeWords(GM.lieSlope(gmSlopeTo(gm.pin), gm.club || '7i', gmHand(), data.equipment));
+    return [`Shot ${card.strokes + 1}`, where + (slope ? ', ' + slope : ''), far, card.penalties ? plural(card.penalties, 'penalty stroke') : ''].filter(Boolean).join(' · ');
   }
 
   // ----- Controls under the map -----
@@ -2389,15 +2399,17 @@
     const el = $('.gm-aimtext', gm.box);
     if (!el) return;
     const aim = gmAimPoint(), d = GM.dist(gm.ball, aim), pool = gm.pools[gm.club], allow = !gm.aim && gm.autoAllow ? gm.autoAllow : 0;
-    const atPin = GM.dist(allow ? gm.autoTarget : aim, gm.pin) < 1.5;
+    const atPin = GM.dist(allow ? gm.autoTarget : aim, gm.pin) < 1.5, rise = gmRise(aim), plays = gmPlays(aim);
+    // The climb to the spot, when it's worth a club's thought: "plays 163, 21 ft uphill".
+    const climb = Math.abs(rise) >= 1.5 ? `plays ${Math.round(plays)}, ${Math.round(Math.abs(rise) * 3)} ft ${rise > 0 ? 'uphill' : 'downhill'}` : '';
     let sub = '';
     if (gm.round.mode === 'live') sub = pool ? `A good ${C.clubName(gm.club, data.clubs).toLowerCase()} goes about ${Math.round(pool.full)}` : 'Tap the map to aim';
     else if (pool) {
-      const p = GM.powerFor(pool, d, gmLie()), full = gmReach(gm.club);
-      sub = d > full + 2 ? `Out of reach: a full swing goes about ${Math.round(full)}` : p >= 0.97 ? 'A full swing' : `About a ${Math.round(p * 100)}% swing`;
+      const p = GM.powerFor(pool, plays, gmLie()), full = gmReach(gm.club);
+      sub = plays > full + 2 ? `Out of reach: a full swing goes about ${Math.round(full)}` : p >= 0.97 ? 'A full swing' : `About a ${Math.round(p * 100)}% swing`;
       if (allow) sub += ` · ${gmYds(Math.abs(allow))} ${allow > 0 ? 'left' : 'right'} for your ${gm.autoShape.shape.toLowerCase()}`;
     }
-    el.innerHTML = `Aiming ${gmYds(d)}${atPin ? ' at the pin' : ''}<span class="s">${esc(sub)}</span>`;
+    el.innerHTML = `Aiming ${gmYds(d)}${atPin ? ' at the pin' : ''}${climb ? `<span class="s">${esc(climb)}</span>` : ''}<span class="s">${esc(sub)}</span>`;
     if (gm.meter && gm.meter.kind === 'swing' && gm.meter.phase === 'ready') gmMeterSetup('swing');
     if (gm.pad && gm.pad.kind === 'swing' && gm.pad.phase !== 'swing') { gm.pad.target = gmPadTarget('swing'); gmPadDraw(); }
   }
@@ -2428,7 +2440,7 @@
     const m = old || { kind, phase: 'ready', t0: 0, t1: 0, power: 0, raf: 0 };
     if (kind === 'swing') {
       const cfg = gmSwingCfg(), pool = gm.pools[gm.club];
-      m.target = pool ? GM.powerFor(pool, GM.dist(gm.ball, gmAimPoint()), gmLie()) : 1;
+      m.target = pool ? GM.powerFor(pool, gmPlays(gmAimPoint()), gmLie()) : 1;
       m.win = cfg.win;
       const z0 = gmPct('swing', -cfg.win), z1 = gmPct('swing', cfg.win);
       $('.gm-zone', el).style.left = z0 + '%';
@@ -2558,7 +2570,7 @@
   function gmPadTarget(kind) {
     if (kind === 'putt') return gmClamp(GM.puttDepth(GM.dist(gm.ball, gm.pin) * 3, gm.round.easy), 0.05, 1.25);
     const pool = gm.pools[gm.club];
-    return pool ? GM.powerFor(pool, GM.dist(gm.ball, gmAimPoint()), gmLie()) : 1;
+    return pool ? GM.powerFor(pool, gmPlays(gmAimPoint()), gmLie()) : 1;
   }
   function gmPuttTickDepth(ft) { const c = GM.PUTT_SWING.normal; return Math.pow(ft / c.full, 1 / c.exp); }
   function gmPadSetup(kind) {
@@ -2854,13 +2866,13 @@
       gmMsgHtml('Practice stroke', `A stroke like that rolls about ${gmFtText(r.rep.len)}${r.holed ? ', and it would drop' : ''}.`, gmPuttReportHtml(r.rep, ft, true));
       return;
     }
-    const out = GM.swingShot(gm.pools[gm.club], sw, { lie: gmLie(), easy: gm.round.easy, hand: gmHand(), still: true });
+    const out = GM.swingShot(gm.pools[gm.club], sw, { lie: gmLie(), easy: gm.round.easy, hand: gmHand(), still: true, slope: gmSlopeTo(gmAimPoint()), equip: data.equipment });
     const r = out.rep, side = Math.round(Math.abs(r.side));
     gmPadWord(r, 'practice');
     gmMsgHtml(`Practice swing · ${r.shape}`, `A swing like that: ${Math.round(r.carry)} yds carry${side >= 1 ? `, ${gmYds(side)} ${r.side < 0 ? 'left' : 'right'}` : ', on line'}.`, gmSwingReportHtml(r, true));
   }
   function gmRealSwing(sw) {
-    const rnd = gmRnd(), lie = gmLie(), out = GM.swingShot(gm.pools[gm.club], sw, { lie, rnd, easy: gm.round.easy, hand: gmHand() });
+    const rnd = gmRnd(), lie = gmLie(), out = GM.swingShot(gm.pools[gm.club], sw, { lie, rnd, easy: gm.round.easy, hand: gmHand(), slope: gmSlopeTo(gmAimPoint()), equip: data.equipment });
     if (!out) { gmPadCancel(); return; }
     gmPadWord(out.rep, out.rep.mis ? out.rep.shape.toLowerCase() + ', ' + GM_MIS_WORD[out.rep.mis].toLowerCase() : out.rep.shape.toLowerCase());
     gmPlay(out.shot, { kind: 'real', rep: out.rep, power: sw.power, rnd, lie });
@@ -2976,7 +2988,7 @@
     const m = gm.meter, e = GM.timingOf(pos, gm.round.easy), pool = gm.pools[gm.club];
     gmMeterText(GM.timingWord(e));
     const rnd = gmRnd(), pick = GM.pickShot(pool, e, rnd);
-    gmPlay(GM.adjustShot(pick.shot, m.power, gmLie()), { kind: 'meter', e, power: m.power, pick, rnd, lie: gmLie() });
+    gmPlay(GM.slopeShot(GM.adjustShot(pick.shot, m.power, gmLie()), gmLieSlope(), gmHand()), { kind: 'meter', e, power: m.power, pick, rnd, lie: gmLie() });
   }
   function gmLiveShot() {
     const carry = numOrNull('gmCarry'), total = numOrNull('gmTotal'), off = numOrNull('gmOff');
@@ -2988,7 +3000,7 @@
     const shot = { club: gm.club, carry_yds: carry, total_yds: total, offline_ft: off ? (ui.game.dir === 'L' ? -Math.abs(off) : Math.abs(off)) : 0, curve_ft: null,
       ball_speed_mph: null, launch_deg: null, apex_ft: null, landing_deg: null, hang_time_s: null };
     ui.game.dir = null;
-    gmPlay(GM.adjustShot(shot, 1, gmLie()), { kind: 'live', rnd: gmRnd(), lie: gmLie() });
+    gmPlay(GM.slopeShot(GM.adjustShot(shot, 1, gmLie()), gmLieSlope(), gmHand()), { kind: 'live', rnd: gmRnd(), lie: gmLie() });
   }
   function r1(v) { return Math.round(v * 10) / 10; }
   function r2(v) { return Math.round(v * 100) / 100; }

@@ -86,7 +86,9 @@
     if (curve == null) { curve = 0; est.push('curve'); }
     if (off == null) { off = curve; est.push('offline'); }
     var cY = curve / 3, oY = off / 3;
-    var start = (oY - cY * (1 + 1.2 * R / C)) / (C + 0.6 * R);
+    // opts.start: the start line (yds sideways per yd ahead) when it's known, as when the
+    // game moves where a ball stops (a roll down a slope) but not how it flew.
+    var start = num(opts.start) != null ? opts.start : (oY - cY * (1 + 1.2 * R / C)) / (C + 0.6 * R);
     function lateral(s) { var r = s / C; return start * s + cY * r * r; }
 
     var V = num(shot.ball_speed_mph);
@@ -126,7 +128,7 @@
     var apexT = k ? -Math.log(1 - sA * ek / C) / k : H * sA / C;
 
     return {
-      club: club, carry: C, total: C + R, apex: A, launch: L, landing: D, hang: H, roll: R, rollT: rollT, apexT: apexT,
+      club: club, carry: C, total: C + R, apex: A, launch: L, landing: D, hang: H, roll: R, rollT: rollT, apexT: apexT, start: start, curveY: cY,
       duration: H + rollT, land: land, rest: rest, apexPoint: { x: lateral(sA), y: A, z: sA },
       estimated: est, at: at, height: height, lateral: lateral, along: along, samples: samples
     };
@@ -741,6 +743,49 @@
       ctx.stroke();
     });
   }
+  // The lie of the land on the map from above (H.ground.elev, from GolfGame): each slope
+  // shaded as if lit from the north-west, darker facing away and lighter facing the light,
+  // made once per course as a small image, a pixel for each height in the grid, and kept
+  // inside the course's boundary.
+  function shadeOf(G) {
+    if (G.shade !== undefined) return G.shade;
+    var e = G.elev, cv = e && typeof document !== 'undefined' ? document.createElement('canvas') : null, c = cv && cv.getContext ? cv.getContext('2d') : null;
+    if (!c) return (G.shade = null);
+    cv.width = e.nx; cv.height = e.nz;
+    var img = c.createImageData(e.nx, e.nz), d = img.data, LX = -0.5, LY = 0.7071, LZ = 0.5, EX = 3;
+    for (var j = 0; j < e.nz; j++) {
+      for (var i = 0; i < e.nx; i++) {
+        var a = e.h[j * e.nx + Math.max(0, i - 1)], b = e.h[j * e.nx + Math.min(e.nx - 1, i + 1)];
+        var u = e.h[Math.max(0, j - 1) * e.nx + i], v = e.h[Math.min(e.nz - 1, j + 1) * e.nx + i];
+        var gx = EX * (b - a) / 3 / (2 * e.step), gz = EX * (v - u) / 3 / (2 * e.step), n = Math.sqrt(gx * gx + 1 + gz * gz);
+        var lit = (-gx * LX + LY - gz * LZ) / n - LY, k = 4 * (j * e.nx + i);
+        if (lit < 0) { d[k] = 0; d[k + 1] = 20; d[k + 2] = 0; d[k + 3] = Math.min(150, -lit * 900); }
+        else { d[k] = 255; d[k + 1] = 255; d[k + 2] = 230; d[k + 3] = Math.min(90, lit * 700); }
+      }
+    }
+    c.putImageData(img, 0, 0);
+    // Only on the course: kept inside its boundary.
+    if (G.boundary) {
+      c.globalCompositeOperation = 'destination-in';
+      c.beginPath();
+      G.boundary.forEach(function (q, k) { var px = (q[0] - e.x0) / e.step + 0.5, pz = (q[1] - e.z0) / e.step + 0.5; if (k) c.lineTo(px, pz); else c.moveTo(px, pz); });
+      c.closePath();
+      c.fill();
+      c.globalCompositeOperation = 'source-over';
+    }
+    return (G.shade = cv);
+  }
+  function drawShade(ctx, cam, G) {
+    var e = G.elev, sh = e && cam.pitch < -80 * DEG ? shadeOf(G) : null;
+    if (!sh) return;
+    var p0 = project(cam, e.x0, 0, e.z0), px = project(cam, e.x0 + e.step, 0, e.z0), pz = project(cam, e.x0, 0, e.z0 + e.step);
+    if (!p0 || !px || !pz) return;
+    ctx.save();
+    ctx.transform(px.x - p0.x, px.y - p0.y, pz.x - p0.x, pz.y - p0.y, p0.x, p0.y);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(sh, -0.5, -0.5);
+    ctx.restore();
+  }
   // Everything on a hole that doesn't move, on the course's ground (H.ground, from
   // GolfGame.buildHole): out of bounds and Lake Merced beyond the boundary; the rough,
   // practice ground, fairways (mowed in stripes), tee boxes, greens, bunkers and cart
@@ -776,6 +821,7 @@
     });
     G.tees.forEach(function (o) { fillGround(ctx, cam, o.poly, COL.tee); });
     if (H.teeBoxDrawn) fillGround(ctx, cam, H.teeBox, COL.tee);
+    drawShade(ctx, cam, G); // the slopes, on the map; under the greens, which putt level
     G.greens.forEach(function (o, i) { if (i !== H.green.index) fillGround(ctx, cam, o.poly, COL.green); });
     fillGround(ctx, cam, H.green.fringePoly, COL.fringe);
     fillGround(ctx, cam, H.green.poly, COL.green);
