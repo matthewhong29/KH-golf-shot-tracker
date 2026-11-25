@@ -129,6 +129,7 @@
       player: local.player || b.player || { name: playerInfo().name },
       clubs: Object.assign({}, b.clubs || {}, local.clubs || {}),
       equipment: b.equipment || null,
+      yardageChart: C.yardageChart(b.yardage_chart),
       // local.baselineSessionId: null = use the file's; '' = none (first session per club)
       baseline_session_id: local.baselineSessionId != null ? (local.baselineSessionId || null) : (b.baseline_session_id || null),
       goals: C.mergeGoals(b.personal_goals, local.goals),
@@ -1818,6 +1819,26 @@
       <a class="vid-open" href="https://www.youtube.com/watch?v=${esc(v.id)}" target="_blank" rel="noopener">Open in YouTube <span aria-hidden="true">↗</span></a>
     </div>`;
   }
+  // A yardage chart (M2's): each club's numbers, and which ones the game plays now.
+  function chartCard() {
+    const ch = data.yardageChart;
+    if (!ch) return '';
+    const since = GM ? GM.clubPools(data.sessions.filter((x) => (x.date || '') >= ch.date), data.equipment) : {};
+    const fmt = (v) => Array.isArray(v) ? `${C.fmtRaw(v[0])}–${C.fmtRaw(v[1])}` : C.isNum(v) ? C.fmtRaw(v) : '';
+    // longest first, as a chart lists them
+    const clubs = C.sortClubs(Object.keys(ch.clubs)).reverse().sort((a, b) => C.chartMid(ch.clubs[b].carry_yds) - C.chartMid(ch.clubs[a].carry_yds));
+    const rows = clubs.map((c) => {
+      const x = ch.clubs[c];
+      const sub = [x.total_yds ? `${fmt(x.total_yds)}\u00a0total` : '', x.ball_speed_mph ? `ball\u00a0${fmt(x.ball_speed_mph)}\u00a0mph` : '', x.club_speed_mph ? `club\u00a0${fmt(x.club_speed_mph)}\u00a0mph` : ''].filter(Boolean).join(' · ');
+      return `<li class="yc-row">${clubBadge(c, true)}<span class="yr-main"><span class="yr-top"><span class="yr-carry">${fmt(x.carry_yds)} <span class="yr-u">yds carry</span></span>${since[c] ? '<span class="yc-now">Range sessions now</span>' : ''}</span>
+        ${sub ? `<span class="yr-sub">${esc(sub)}</span>` : ''}</span></li>`;
+    }).join('');
+    const left = clubs.filter((c) => !since[c]).length;
+    return `<div class="card"><div class="card-head"><span class="head-ico">${icon('flag')}</span><h3 class="card-title">Your yardage chart</h3></div>
+      <p class="note">${esc(ch.source || 'How far each club goes, from a chart rather than a range session.')}</p>
+      <ul class="yard-list yc-list">${rows}</ul>
+      <p class="hint">${left ? `The game plays these numbers for ${left === clubs.length ? 'every club' : plural(left, 'club')} until a range session from ${esc(C.fmtDate(ch.date, { short: true }))} on has it, so your range sessions will change it, mis-hits and all.` : 'Your range sessions since this chart have every club now, so the game plays those.'}</p></div>`;
+  }
   const HERO_ART = `<svg class="hero-art" viewBox="0 0 160 110" aria-hidden="true"><path d="M6 106C24 32 90 8 126 86" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray=".01 13"/><path d="M140 20v78" stroke="#fff" stroke-width="5" stroke-linecap="round"/><path d="M143 20l17 7-17 7z" fill="#fff"/><circle cx="128" cy="94" r="7" fill="#fff"/></svg>`;
   function renderTips() {
     const el = $('#view-tips');
@@ -1853,9 +1874,10 @@
           <p class="note">How far each club usually carries: the middle of your solid shots, the number to play on the course. The lighter bar is how far a pure strike goes. Tap a club for its numbers.</p>
           <ul class="yard-list">${rows}</ul>
           <p class="hint">A pure strike is one of your best-struck shots: the top quarter by ball speed, launched at a normal height. Each club uses its last ${PRACTICE_POOL} sessions, so these grow as you improve, and one bad day doesn’t move them.</p></div>
+        ${chartCard()}
         <div class="card" id="practiceCard">${practiceCard(ui.practiceClub, pc[ui.practiceClub], t)}</div>
         ${clubsCard(clubs)}`
-      : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>`}`;
+      : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>${chartCard()}`}`;
     const drillsView = t ? `${t.focus.map((f, i) => focusCard(f, i, true)).join('')}
         <div class="card lesson"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Check it with a coach</h3></div><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>`
       : `<div class="card"><p class="empty">No drills for ${esc(playerName())} yet. Once his first range sessions are in, ask Claude for a plan built from them.</p></div>`;
@@ -2018,6 +2040,9 @@
   const GM_FROM = { rough: 'from the rough', bunker: 'from the sand', trees: 'punched out from under the trees' };
   const GM_WHERE = { fairway: 'In the fairway', rough: 'In the rough', bunker: 'In a bunker', trees: 'Under the trees', green: 'On the green', fringe: 'On the fringe', tee: 'On the tee' };
   let gm = null;
+  // The clubs he plays: his range shots, or (with a yardage chart) the chart's numbers for each
+  // club on it until a range session from the chart's date on has that club.
+  function gmPools() { return GM.playPools(data.sessions, data.equipment, data.yardageChart); }
   function gmClamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function gmState() { const st = loadJSON(key('game')); return st && typeof st === 'object' ? st : {}; }
   function gmStore(st) { if (!saveJSON(key('game'), st)) toast('Couldn’t save the round on this phone'); }
@@ -2071,7 +2096,7 @@
   function renderGameNow() {
     const el = $('#view-game');
     if (!GM || !COURSES || !FL) { el.innerHTML = '<div class="card"><p class="empty">The game didn’t load. Reload the page to try again.</p></div>'; return; }
-    const st = gmState(), pools = GM.clubPools(data.sessions, data.equipment), round = gmRound(st);
+    const st = gmState(), pools = gmPools(), round = gmRound(st);
     if (!round || ui.game.setup) { el.innerHTML = gmSetupHtml(st, pools, round); return; }
     if (round.cards.every((c) => c.done)) { el.innerHTML = gmOverHtml(round); return; }
     el.innerHTML = gmPlayHtml(round);
@@ -2097,6 +2122,7 @@
         <p class="note">${esc(course.place)} · par ${COURSES.par(course)}. ${esc(course.blurb)}</p>
         <ul class="gm-how">
           <li>Every shot flies like your real range shots with that club: its distance, its height and your usual shape.</li>
+          ${data.yardageChart ? `<li>Clubs on your yardage chart play its numbers, struck clean every time, until a range session from ${esc(C.fmtDate(data.yardageChart.date, { short: true }))} on has them. Your swing still sends them left or right.</li>` : ''}
           <li><strong>Real swing:</strong> put your thumb on the ball, drag down for the backswing, then swipe up through the ball. A gold ring rises at the pace of a perfect tempo: 3 : 1, back to down.</li>
           <li>Quick from the top shuts the face, so it starts ${lefty ? 'right' : 'left'}; slow leaves it open, so it starts ${lefty ? 'left' : 'right'}. Swipe up and to the ${lefty ? 'left' : 'right'} for a draw, up and to the ${lefty ? 'right' : 'left'} for a fade.</li>
           <li>Tap the map to aim. The oval shows where most of your shots with that club finish.</li>
@@ -3421,6 +3447,7 @@
     const r = rep.real;
     if (!r || r.made) return '';
     const sess = gmSessionOf(r), name = C.clubName(rep.club, data.clubs).toLowerCase();
+    if (r.chart) return `${rep.mis ? 'A mis-hit with' : 'Struck like'} your ${name} on your yardage chart${rep.mis ? '' : `: ${C.fmtRaw(Math.round(r.carry_yds))} yds carry`}.`;
     return `${rep.mis ? 'A mis-hit like' : 'Struck like'} your ${name}${sess ? ` on ${C.fmtDate(sess.date, { short: true })}` : ''}${r.time ? ` at ${r.time}` : ''}: ${C.fmtRaw(r.carry_yds)} yds carry.`;
   }
   function gmSwingReportHtml(rep, practice) {
@@ -3958,7 +3985,8 @@
       const side = C.isNum(real.offline_ft) && Math.round(Math.abs(real.offline_ft)) ? `, ${Math.round(Math.abs(real.offline_ft))} ft ${real.offline_ft < 0 ? 'left' : 'right'}` : '';
       const how = [Math.round(info.power * 100) < 100 ? `at ${Math.round(info.power * 100)}% power` : '', GM_FROM[info.lie] || ''].filter(Boolean).join(', ');
       const wasMis = (gm.pools[shot.club] || { mis: [] }).mis.indexOf(real) >= 0;
-      sub = `${wasMis ? 'A mis-hit, like' : 'It flew like'} your ${name.toLowerCase()}${sess ? ` on ${C.fmtDate(sess.date, { short: true })}` : ''}${real.time ? ` at ${real.time}` : ''}: ${C.fmtRaw(real.carry_yds)} yds carry${side}${how ? `. This one was ${how}` : ''}.`;
+      sub = real.chart ? `It flew like your ${name.toLowerCase()} on your yardage chart: ${C.fmtRaw(Math.round(real.carry_yds))} yds carry${how ? `. This one was ${how}` : ''}.`
+        : `${wasMis ? 'A mis-hit, like' : 'It flew like'} your ${name.toLowerCase()}${sess ? ` on ${C.fmtDate(sess.date, { short: true })}` : ''}${real.time ? ` at ${real.time}` : ''}: ${C.fmtRaw(real.carry_yds)} yds carry${side}${how ? `. This one was ${how}` : ''}.`;
     } else if (GM_FROM[info.lie]) sub = `Played ${GM_FROM[info.lie]}.`;
     if (card.done && card.picked) line = `${line ? line + ' ' : ''}That’s double par, so you pick up.`;
     // The shot he planned, and whether it came off.
@@ -4038,7 +4066,7 @@
     gmDraw();
   }
   function gmStartRound() {
-    const st = gmState(), pools = GM.clubPools(data.sessions, data.equipment), set = gmSettings(st, pools), course = gmCourse();
+    const st = gmState(), pools = gmPools(), set = gmSettings(st, pools), course = gmCourse();
     const old = gmRound(st);
     if (old && !old.finished && old.cards.some((c) => !c.done)) {
       if (!window.confirm('Start a new round? The one you’re playing ends.')) return;
@@ -4582,7 +4610,7 @@
     // ----- Game -----
     'gm-set'(b) {
       const st = gmState(), k = b.dataset.k, v = k === 'one' ? Number(b.dataset.v) : b.dataset.v;
-      st.last = Object.assign(gmSettings(st, GM.clubPools(data.sessions, data.equipment)), { [k]: v });
+      st.last = Object.assign(gmSettings(st, gmPools()), { [k]: v });
       gmStore(st);
       renderGame();
     },
@@ -4912,8 +4940,8 @@
   };
   const changes = {
     scope(el) { ui.scope = el.value; renderStats(); },
-    'gm-easy'(el) { const st = gmState(); st.last = Object.assign(gmSettings(st, GM.clubPools(data.sessions, data.equipment)), { easy: el.checked }); gmStore(st); },
-    'gm-hand'(el) { const st = gmState(); st.last = Object.assign(gmSettings(st, GM.clubPools(data.sessions, data.equipment)), { hand: el.checked ? 'L' : 'R' }); gmStore(st); renderGame(); },
+    'gm-easy'(el) { const st = gmState(); st.last = Object.assign(gmSettings(st, gmPools()), { easy: el.checked }); gmStore(st); },
+    'gm-hand'(el) { const st = gmState(); st.last = Object.assign(gmSettings(st, gmPools()), { hand: el.checked ? 'L' : 'R' }); gmStore(st); renderGame(); },
     'prog-metric'(el) { ui.progMetric = el.value; renderProgress(); },
     'ns-device'(el) { $('#nsOtherWrap').hidden = el.value !== 'other'; },
     'entry-other-club'(el) {

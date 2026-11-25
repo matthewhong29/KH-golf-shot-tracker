@@ -174,6 +174,38 @@ function checkPlayerFile(file, playerId) {
       });
     }
   }
+  // yardage_chart (optional): how far each club goes from an estimate or a fitting, not a range
+  // session: { date, source, clubs: { "7i": { carry_yds, total_yds, ball_speed_mph,
+  // club_speed_mph } } }, each a number or [low, high]. The game plays it for each club until a
+  // range session from its date on has the club.
+  let chartClubs = 0;
+  if (data.yardage_chart != null) {
+    const ch = data.yardage_chart, w = 'yardage_chart';
+    if (typeof ch !== 'object' || Array.isArray(ch)) errors.push(`${w} must be an object`);
+    else {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ch.date || '')) errors.push(`${w}.date must be the day it was added, YYYY-MM-DD (range sessions from that day on replace it)`);
+      if (!ch.clubs || typeof ch.clubs !== 'object' || Array.isArray(ch.clubs) || !Object.keys(ch.clubs).length) errors.push(`${w}.clubs must list each club, like { "7i": { "carry_yds": 153, "total_yds": 160 } }`);
+      else Object.entries(ch.clubs).forEach(([club, x]) => {
+        const wc = `${w}.clubs.${club}`;
+        if (!CLUB_RE.test(club)) errors.push(`${wc}: "${club}" isn't a standard club name`);
+        else if (!clubs[club]) warnings.push(`${wc}: club ${club} is missing from the top-level "clubs" map`);
+        if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${wc} must be an object`); return; }
+        const mid = {};
+        for (const k of ['carry_yds', 'total_yds', 'ball_speed_mph', 'club_speed_mph']) {
+          const v = x[k];
+          if (v == null) continue;
+          const one = typeof v === 'number' && Number.isFinite(v), two = Array.isArray(v) && v.length === 2 && v.every((n) => typeof n === 'number' && Number.isFinite(n)) && v[0] <= v[1];
+          if (!one && !two) { errors.push(`${wc}.${k} must be a number or a [low, high] range`); continue; }
+          mid[k] = one ? v : (v[0] + v[1]) / 2;
+          const [lo, hi] = RANGES[k];
+          if (mid[k] <= lo || mid[k] > hi) warnings.push(`${wc}.${k} = ${JSON.stringify(v)} looks out of range`);
+        }
+        if (mid.carry_yds == null) errors.push(`${wc} needs carry_yds`);
+        else chartClubs++;
+        if (mid.carry_yds != null && mid.total_yds != null && mid.total_yds < mid.carry_yds) warnings.push(`${wc}: total is shorter than carry`);
+      });
+    }
+  }
   // swing_reviews (optional): frames from a swing video with markup; see CLAUDE.md and js/review.js.
   let reviews = 0;
   if (data.swing_reviews != null) {
@@ -196,7 +228,7 @@ function checkPlayerFile(file, playerId) {
       reviews = data.swing_reviews.length;
     }
   }
-  return { errors, warnings, sessions: sessionIds.size, shots: shotIds.size, goals, reviews, name: data.player && data.player.name };
+  return { errors, warnings, sessions: sessionIds.size, shots: shotIds.size, goals, reviews, chartClubs, name: data.player && data.player.name };
 }
 
 // Checks data/players.json. Returns { errors, warnings, files: [{ id, name, file }] }.
@@ -229,7 +261,7 @@ function report(label, res) {
   for (const e of res.errors) console.log(`✗ ${label}: ${e}`);
 }
 function summary(res) {
-  return `${res.sessions} sessions, ${res.shots} shots, ${res.goals} goal${res.goals === 1 ? '' : 's'}${res.reviews ? `, ${res.reviews} swing review${res.reviews === 1 ? '' : 's'}` : ''}${res.warnings.length ? `, ${res.warnings.length} warning(s)` : ''}`;
+  return `${res.sessions} sessions, ${res.shots} shots, ${res.goals} goal${res.goals === 1 ? '' : 's'}${res.reviews ? `, ${res.reviews} swing review${res.reviews === 1 ? '' : 's'}` : ''}${res.chartClubs ? `, a yardage chart of ${res.chartClubs} clubs` : ''}${res.warnings.length ? `, ${res.warnings.length} warning(s)` : ''}`;
 }
 
 // js/tips.js: each drill's animation must draw, and a video id must look like a YouTube id.

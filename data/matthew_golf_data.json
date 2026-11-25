@@ -32,12 +32,171 @@
     "Device rule from Matthew, for the August sessions: sessions with Rapsodo-only metrics (club speed, smash factor, launch direction, shot type) are Rapsodo; sessions without them are Toptracer at Topgolf."
   ],
   "clubs": {
+    "SW": "Sand wedge",
+    "GW": "Gap wedge",
     "PW": "Pitching wedge",
     "9i": "9 iron",
+    "8i": "8 iron",
     "7i": "7 iron",
+    "6i": "6 iron",
+    "5i": "5 iron",
     "5hy": "5 hybrid",
+    "4i": "4 iron",
+    "5w": "5 wood",
     "3w": "3 wood",
     "Driver": "Driver"
+  },
+  "equipment": {
+    "note": "His bag, from his yardage chart (Nov 25, 2026). The gap wedge is 52° and the sand wedge 56°; the other clubs’ models and lofts aren’t known yet, so they use the general launch targets. Irons: Callaway Edge, regular flex, confirmed only for Aug 5.",
+    "bag": {
+      "Driver": {
+        "model": null,
+        "loft_deg": null
+      },
+      "3w": {
+        "model": null,
+        "loft_deg": null
+      },
+      "5w": {
+        "model": null,
+        "loft_deg": null
+      },
+      "5hy": {
+        "model": null,
+        "loft_deg": null
+      },
+      "4i": {
+        "model": null,
+        "loft_deg": null
+      },
+      "5i": {
+        "model": null,
+        "loft_deg": null
+      },
+      "6i": {
+        "model": null,
+        "loft_deg": null
+      },
+      "7i": {
+        "model": null,
+        "loft_deg": null
+      },
+      "8i": {
+        "model": null,
+        "loft_deg": null
+      },
+      "9i": {
+        "model": null,
+        "loft_deg": null
+      },
+      "PW": {
+        "model": null,
+        "loft_deg": null
+      },
+      "GW": {
+        "model": null,
+        "loft_deg": 52
+      },
+      "SW": {
+        "model": null,
+        "loft_deg": 56
+      }
+    }
+  },
+  "yardage_chart": {
+    "date": "2026-11-25",
+    "date_note": "The day Matthew sent it; the chat it came from was earlier.",
+    "source": "From a chat with Claude about Matthew’s clubs, which he says is very close to what he really hits. It isn’t a range session: no mis-hits, and no misses left or right.",
+    "clubs": {
+      "Driver": {
+        "club_speed_mph": [
+          104,
+          106
+        ],
+        "ball_speed_mph": 157,
+        "carry_yds": [
+          248,
+          253
+        ],
+        "total_yds": [
+          265,
+          272
+        ]
+      },
+      "3w": {
+        "club_speed_mph": 99,
+        "ball_speed_mph": 150,
+        "carry_yds": 235,
+        "total_yds": 248
+      },
+      "5w": {
+        "club_speed_mph": 95,
+        "ball_speed_mph": 142,
+        "carry_yds": 220,
+        "total_yds": 231
+      },
+      "5hy": {
+        "club_speed_mph": 92,
+        "ball_speed_mph": 134,
+        "carry_yds": 205,
+        "total_yds": 213,
+        "note": "“Hybrid” on the chart; his range sessions have a 5 hybrid."
+      },
+      "4i": {
+        "club_speed_mph": 88,
+        "ball_speed_mph": 125,
+        "carry_yds": 190,
+        "total_yds": 197
+      },
+      "5i": {
+        "club_speed_mph": 86,
+        "ball_speed_mph": 120,
+        "carry_yds": 180,
+        "total_yds": 186
+      },
+      "6i": {
+        "club_speed_mph": 83,
+        "ball_speed_mph": 114,
+        "carry_yds": 168,
+        "total_yds": 173
+      },
+      "7i": {
+        "club_speed_mph": 79.5,
+        "ball_speed_mph": 107,
+        "carry_yds": 153,
+        "total_yds": 160
+      },
+      "8i": {
+        "club_speed_mph": 76,
+        "ball_speed_mph": 100,
+        "carry_yds": 140,
+        "total_yds": 144
+      },
+      "9i": {
+        "club_speed_mph": 73,
+        "ball_speed_mph": 93,
+        "carry_yds": 127,
+        "total_yds": 130
+      },
+      "PW": {
+        "club_speed_mph": 70,
+        "ball_speed_mph": 87,
+        "carry_yds": 113,
+        "total_yds": 115
+      },
+      "GW": {
+        "club_speed_mph": 67,
+        "ball_speed_mph": 80,
+        "carry_yds": 98,
+        "total_yds": 99
+      },
+      "SW": {
+        "club_speed_mph": 64,
+        "ball_speed_mph": 74,
+        "carry_yds": 84,
+        "total_yds": 85
+      }
+    }
   },
   "baseline_session_id": null,
   "personal_goals": [],

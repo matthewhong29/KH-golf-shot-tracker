@@ -9,7 +9,7 @@ A phone-first web page that tracks golf shots for Matthew's family. GitHub Pages
 | Player | id (URL `?player=`) | File | About |
 |---|---|---|---|
 | Dad | `dad` | `data/dad_golf_data.json` | 56, 6′1″; has had lessons and knows the basics; older Lynx Black Cat irons (3 iron to PW), Callaway Edge 5 hybrid and driver |
-| M2 (Matthew) | `matthew` | `data/matthew_golf_data.json` | Matthew himself. Six August 2026 sessions from his own file (Rapsodo and Toptracer, partly filled: twelve 9 iron carries, single best shots for the 7 iron and driver), plus his swing notes. Callaway Edge irons, regular flex, confirmed only for Aug 5. On his page, photos and videos go straight to Claude |
+| M2 (Matthew) | `matthew` | `data/matthew_golf_data.json` | Matthew himself. Six August 2026 sessions from his own file (Rapsodo and Toptracer, partly filled: twelve 9 iron carries, single best shots for the 7 iron and driver), plus his swing notes. Callaway Edge irons, regular flex, confirmed only for Aug 5. Also his Toptracer games from May 1–3, 2026 (early summer), and a yardage chart for his whole bag (Nov 25), which the game plays until new range sessions replace it. On his page, photos and videos go straight to Claude |
 | M3 (Matthew's brother) | `brother` | `data/brother_golf_data.json` | 14, 5′0″; has had lessons and knows the basics; plays for fun and wants to keep up with his friends on the team |
 
 If it isn't clear whose photos they are, ask Matthew before adding anything.
@@ -38,6 +38,14 @@ Dad or M3 takes photos of the Toptracer or Rapsodo screen and texts them to Matt
 4. **Check before committing.** Re-read your rows against the photo one more time. Then `node scripts/check-data.js` (it checks every player's file) and `node tests/core.test.js` must both pass.
 5. **Commit and push to `main`.** Matthew, the repo owner, approved pushing data updates straight to `main`, because that branch is what the website serves. If your session requires a different branch, ask once whether to push to `main`. Use a commit message like "Add 12 shots for Dad from 2026-11-01 (SW, 5w)". The site updates about a minute after the push.
 6. **End with a short summary Matthew can forward:** shots per club, average carry per club (solid shots), each club's typical carry and pure-strike carry from the Practice tab's "Your yardages", how many likely mis-hits, outliers and warm-up or half swings there were, which clubs the page now marks "Needs work" (and any that dropped off the list), and anything notable, such as misses to one side or a club that went farther than last time. Use plain words, short and encouraging. Both have had lessons and know the basics, so skip beginner advice (grip, posture, ball position); for M3, keep it fun.
+
+## Yardage charts
+
+A player's `yardage_chart` is how far each club goes from an estimate or a fitting, not a range session (README, "Data format"). M2's came from a chat with Claude, which Matthew says is very close to what he really hits.
+
+- Never turn a chart into shots, and never add its numbers to a session. None of the stats use it. The Practice tab lists it, and the Game tab plays it for each club until a range session from the chart's `date` on has that club.
+- When Matthew sends a new chart, replace the whole `yardage_chart` and set its `date` to the day it's added. Keep `[low, high]` where the chart gives a range. Put any loft it gives (like "GW (52°)") in `equipment.bag`, and add any new club to the `clubs` map.
+- `node scripts/check-data.js` checks it.
 
 ## Adding or updating goals
 

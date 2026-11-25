@@ -331,6 +331,38 @@
     });
     return out;
   }
+  // A yardage chart (GolfCore.yardageChart) as clubs he can play before his range sessions
+  // have them: one clean shot each, at the chart's carry and total (the middle of a range),
+  // with no mis-hits and no miss of its own. The swing still sends it left or right, the way
+  // a club with only a shot or two does (it leans on an ordinary golfer's scatter, PRIOR),
+  // and the oval on the map is that scatter at the chart's distance, 4% long or short.
+  function chartPools(chart) {
+    var out = {};
+    if (!chart || !chart.clubs) return out;
+    Object.keys(chart.clubs).forEach(function (club) {
+      var c = chart.clubs[club], carry = C.chartMid(c.carry_yds), total = C.chartMid(c.total_yds);
+      if (!isNum(carry) || carry <= 0) return;
+      var shot = { id: null, chart: true, club: club, time: null, carry_yds: carry, total_yds: isNum(total) && total >= carry ? total : null,
+        ball_speed_mph: C.chartMid(c.ball_speed_mph), launch_deg: null, apex_ft: null, landing_deg: null, hang_time_s: null, curve_ft: 0, offline_ft: 0 };
+      var full = totalOf(shot);
+      out[club] = {
+        club: club, chart: true, ranked: [shot], pure: carry, pureSpeed: shot.ball_speed_mph, curve: 0, mis: [], misRate: 0, full: full, carry: carry,
+        landing: landingOf(club), spread: { off: 0, offSd: carry * Math.tan(PRIOR.start * RAD), lenSd: 0.04 * full }
+      };
+    });
+    return out;
+  }
+  // The clubs a player plays: his range shots, club by club. With a yardage chart, each club
+  // on it plays the chart until a range session from the chart's date on has that club (the
+  // older sessions are what the chart stands in for); clubs not on it play all his sessions.
+  function playPools(sessions, equip, chart) {
+    if (!chart || !chart.clubs) return clubPools(sessions, equip);
+    var out = chartPools(chart), all = clubPools(sessions, equip);
+    var since = clubPools((sessions || []).filter(function (s) { return s && String(s.date || '') >= chart.date; }), equip);
+    Object.keys(all).forEach(function (c) { if (!out[c]) out[c] = all[c]; });
+    Object.keys(since).forEach(function (c) { out[c] = since[c]; });
+    return out;
+  }
   function clubList(pools) {
     return Object.keys(pools).map(function (c) { return pools[c]; }).sort(function (a, b) { return a.full - b.full || C.clubRank(a.club) - C.clubRank(b.club); });
   }
@@ -1832,7 +1864,7 @@
   return {
     buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, elevOf: elevOf, heightAt: heightAt, slopeAt: slopeAt, playsLike: playsLike, landingOf: landingOf,
     groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf,
-    rankShots: rankShots, clubPools: clubPools, clubList: clubList, totalOf: totalOf,
+    rankShots: rankShots, clubPools: clubPools, chartPools: chartPools, playPools: playPools, clubList: clubList, totalOf: totalOf,
     METER: METER, timingOf: timingOf, meterBackTime: meterBackTime, meterDownSpeed: meterDownSpeed, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
     LAW: LAW, clubLaw: clubLaw, facePathOf: facePathOf, swingProfile: swingProfile, SWIPE: SWIPE, tempoTarget: tempoTarget, powerOfDepth: powerOfDepth,
     readSwing: readSwing, SWING: SWING, strikeOf: strikeOf, swingShot: swingShot, shapeOf: shapeOf, MIS_SHANK: MIS_SHANK,

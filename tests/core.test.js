@@ -423,6 +423,13 @@ eq(bro.rounds_reset, '2026-11-25', 'M3’s rounds before Nov 26 (Matthew’s tes
   const may3 = m2.sessions.find((s) => s.id === '2026-05-03-toptracer');
   eq([byClub(may1), byClub(may2), byClub(may3)], [{ PW: 8, '7i': 14, '9i': 23 }, { Driver: 30, '7i': 19, '3w': 19, '5hy': 33 }, { PW: 13, '9i': 25 }],
     'M2 in May: 8 pitching wedges, 14 7 irons and 23 9 irons on the 1st; 30 drivers, 19 7 irons, 19 3 woods and 33 5 hybrids on the 2nd; 13 wedges and 25 9 irons on the 3rd');
+  const yc = C.yardageChart(m2.yardage_chart);
+  eq([yc.date, Object.keys(yc.clubs).length, yc.clubs.Driver.carry_yds, yc.clubs['7i'].carry_yds, yc.clubs.SW.total_yds, m2.equipment.bag.GW.loft_deg, m2.equipment.bag.SW.loft_deg],
+    ['2026-11-25', 13, [248, 253], 153, 85, 52, 56], 'M2’s yardage chart: 13 clubs, the driver’s carry a range, the 52° gap wedge and 56° sand wedge in his bag');
+  ok(Object.keys(yc.clubs).every((c) => m2.clubs[c]), 'every club on his chart is in his clubs map');
+  eq([C.yardageChart(null), C.yardageChart({ date: 'Nov 25', clubs: { '7i': { carry_yds: 153 } } }), C.yardageChart({ date: '2026-11-25', clubs: { '7i': { total_yds: 160 }, Bat: { carry_yds: 1 } } }),
+    C.yardageChart({ date: '2026-11-25', clubs: { '7i': { carry_yds: [160, 150], total_yds: 'far' }, PW: { carry_yds: 113 } } })],
+    [null, null, null, { date: '2026-11-25', source: '', clubs: { PW: { carry_yds: 113 } } }], 'a chart needs a date and a carry; anything else on it is left out');
   eq([may2.shots[13].offline_ft, may2.shots[20].offline_ft, may2.shots[20].curve_ft, may2.shots[5].curve_ft, may1.shots[0].total_yds], [252, -15, 45, null, 68],
     'offline in yards became feet (R 84 yd is 252 ft, L 5 yd is -15); a bare “1 ft” curve with no side is null; “Distance trend” is the total');
   const nine = C.clubData([m2.sessions.find((s) => s.id === '2026-08-d-9i-12-shots')])['9i'];
@@ -1478,6 +1485,36 @@ section('Reading the launch monitor’s screen (js/live.js)');
   eq([LV.boxFrom({ x: 300, y: 50 }, { x: 100, y: 150 }, 1000, 500), LV.okBox({ x: 0.1, y: 0.1, w: 0.2, h: 0.1 }), LV.okBox({ x: 0.9, y: 0.1, w: 0.2, h: 0.1 }), LV.okBox({ x: 0.1, y: 0.1, w: 0, h: 0.1 })],
     [{ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }, true, false, false], 'a box from two corners, as fractions of the window, and only boxes inside it count');
   eq(LV.FIELDS.map((x) => x.id), ['carry', 'total', 'side', 'speed', 'launch', 'start', 'apex', 'descent'], 'the numbers it can read, carry first');
+}
+
+// ---------------------------------------------------------------------------
+section('Game: a yardage chart (M2’s), until range sessions replace it');
+{
+  const m2 = JSON.parse(fs.readFileSync(path.join(root, 'data', 'matthew_golf_data.json'), 'utf8'));
+  const chart = C.yardageChart(m2.yardage_chart), pools = GG.playPools(m2.sessions, m2.equipment, chart);
+  eq(C.sortClubs(Object.keys(pools)), ['SW', 'GW', 'PW', '9i', '8i', '7i', '6i', '5i', '5hy', '4i', '5w', '3w', 'Driver'], 'every club on his chart plays, the ones his range sessions never had too');
+  eq([pools.Driver.carry, pools.Driver.full, pools['7i'].carry, pools['7i'].full, pools.SW.carry, pools['7i'].misRate, pools['7i'].mis.length, pools['7i'].ranked.length, pools['7i'].chart],
+    [250.5, 268.5, 153, 160, 84, 0, 0, 1, true], 'each plays the chart’s carry and total (the middle of a range), one clean shot, no mis-hits; his early-May range shots don’t count against it');
+  ok(GG.clubList(pools).map((p) => p.club).join() === 'SW,GW,PW,9i,8i,7i,6i,5i,4i,5hy,5w,3w,Driver', 'shortest to longest: the 205-yd hybrid sits between the 4 iron and the 5 wood');
+  const c7 = carryOf(pools['7i'], s31), cD = FL.trajectory(GG.swingShot(pools.Driver, s31, { still: true, lie: 'tee' }).shot, GG.flightOpts('Driver')).carry;
+  ok(Math.abs(c7 - 153) / 153 < 0.06 && Math.abs(cD - 250.5) / 250.5 < 0.06, `a perfect full swing carries the chart: the 7 iron ${c7.toFixed(0)} (153), the driver off the tee ${cD.toFixed(0)} (248–253)`);
+  const prof = GG.swingProfile(pools['7i']);
+  ok(Math.abs(prof.start) < 1e-9 && Math.abs(prof.f2p) < 1e-9 && prof.sdStart > 2 && prof.sdF2p > 1.5, 'with no miss of its own, the swing sends it left or right with an ordinary golfer’s scatter');
+  ok(pools['7i'].spread.offSd > 6 && pools['7i'].spread.offSd < 7.5 && Math.abs(pools['7i'].spread.lenSd - 6.4) < 1e-9, 'the oval on the map: that scatter at 153 yds, and 4% long or short');
+  // a range session from the chart's date on takes the club over (that club only)
+  const later = { id: '2026-11-28-toptracer', date: '2026-11-28', shots: [
+    { id: 'L-1', club: '7i', carry_yds: 158, total_yds: 165, ball_speed_mph: 110, launch_deg: 18, apex_ft: 80, landing_deg: 40, hang_time_s: 5, curve_ft: 10, offline_ft: 12 },
+    { id: 'L-2', club: '7i', carry_yds: 150, total_yds: 157, ball_speed_mph: 106, launch_deg: 17, apex_ft: 74, landing_deg: 39, hang_time_s: 4.8, curve_ft: -6, offline_ft: -9 }] };
+  const p2 = GG.playPools(m2.sessions.concat([later]), m2.equipment, chart);
+  ok(!p2['7i'].chart && p2['7i'].ranked.length === 2 && p2['9i'].chart && p2.Driver.chart, 'a range session after the chart has the 7 iron: the 7 iron plays it, the rest still play the chart');
+  const sameDay = GG.playPools(m2.sessions.concat([Object.assign({}, later, { date: '2026-11-25' })]), m2.equipment, chart);
+  ok(!sameDay['7i'].chart, 'a range session on the chart’s own day counts as after it');
+  // without a chart, only the clubs he has hit, from his range shots
+  const none = GG.playPools(m2.sessions, m2.equipment, null);
+  ok(!none.GW && !none['8i'] && none['7i'].ranked.length > 1 && !none['7i'].chart, 'with no chart, the game plays his range shots as before');
+  // the meter plays the chart shot too: on the line, and off it the same clean strike
+  const pk = GG.pickShot(pools['7i'], 0, FL.rng(3)), pk2 = GG.pickShot(pools['7i'], 0.8, FL.rng(3));
+  ok(pk.shot.chart && pk.shot.carry_yds === 153 && pk2.shot.chart && pk2.grade !== 'mishit', 'the swing meter plays the chart’s shot, and a timing a little off doesn’t make it a mis-hit');
 }
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

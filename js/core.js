@@ -228,6 +228,30 @@
   // Sessions
   // ---------------------------------------------------------------------------
   function sessionShots(s) { return s && Array.isArray(s.shots) ? s.shots.filter(Boolean) : []; }
+  // A yardage chart: how far each club goes from an estimate or a fitting, not a range
+  // session. { date, source, clubs: { "7i": { carry_yds, total_yds, ball_speed_mph,
+  // club_speed_mph } } }, each number a value or a [low, high] range. What isn't one is left
+  // out, and a chart needs its date and a club with a carry. The game plays it (see
+  // GolfGame.playPools) until range sessions from its date on have the club.
+  var CHART_KEYS = ['carry_yds', 'total_yds', 'ball_speed_mph', 'club_speed_mph'];
+  function chartNum(v) {
+    if (isNum(v) && v > 0) return v;
+    return Array.isArray(v) && v.length === 2 && isNum(v[0]) && isNum(v[1]) && v[0] > 0 && v[1] >= v[0] ? [v[0], v[1]] : null;
+  }
+  // a chart number as one value: the middle of a range
+  function chartMid(v) { return Array.isArray(v) ? (v[0] + v[1]) / 2 : isNum(v) ? v : null; }
+  function yardageChart(raw) {
+    if (!raw || typeof raw !== 'object' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.date || '') || !raw.clubs || typeof raw.clubs !== 'object') return null;
+    var clubs = {};
+    Object.keys(raw.clubs).forEach(function (c) {
+      var x = raw.clubs[c];
+      if (!x || typeof x !== 'object' || !/^(Driver|[2-9]w|[1-7]hy|[1-9]i|PW|GW|AW|SW|LW)$/.test(c)) return;
+      var out = {};
+      CHART_KEYS.forEach(function (k) { var v = chartNum(x[k]); if (v) out[k] = v; });
+      if (out.carry_yds) clubs[c] = out;
+    });
+    return Object.keys(clubs).length ? { date: raw.date, source: typeof raw.source === 'string' ? raw.source : '', clubs: clubs } : null;
+  }
   function hasSummary(s) { return !!(s && s.summary && typeof s.summary === 'object' && Object.keys(s.summary).length); }
   function isSummaryOnly(s) { return !sessionShots(s).length && hasSummary(s); }
   function compareSessions(a, b) {
@@ -1483,7 +1507,7 @@
     fmtAvg: fmtAvg, fmtSigned: fmtSigned, fmtDate: fmtDate, shortDevice: shortDevice, plural: plural,
     summarize: summarize, median: median,
     normClub: normClub, clubRank: clubRank, sortClubs: sortClubs, clubName: clubName, launchFloor: launchFloor, misKind: misKind, rateChange: rateChange,
-    sessionShots: sessionShots, hasSummary: hasSummary, isSummaryOnly: isSummaryOnly, compareSessions: compareSessions,
+    sessionShots: sessionShots, hasSummary: hasSummary, isSummaryOnly: isSummaryOnly, compareSessions: compareSessions, yardageChart: yardageChart, chartMid: chartMid,
     asList: asList, clubData: clubData, entryHasData: entryHasData, metricStat: metricStat, mishits: mishits,
     sessionMishits: sessionMishits, outliers: outliers, sessionOutliers: sessionOutliers, OUTLIER: OUTLIER,
     practiceSwings: practiceSwings, fullSwings: fullSwings, sessionPractice: sessionPractice, practiceText: practiceText, WARMUP: WARMUP,
