@@ -1176,5 +1176,91 @@ const besideOf = (n, club) => { const H = GG.buildHole(HP, n, 'white'), pin = GG
 eq([besideOf(12, 'Driver'), besideOf(17, '3w')], [{ side: -1, pen: true, what: 'ob' }, { side: -1, pen: true, what: 'water' }], 'out of bounds down the left of the 12th, Lake Merced left of the 17th');
 eq([GG.worseSide(side({ pen: 5 }, { pen: 4 })), GG.worseSide(side({ pen: 1 }, {})), GG.worseSide(side({ all: 2.4 }, {}))], [null, null, null], 'trouble on both sides, or not much of it: no side is worse');
 }
+
+section('Game: swinging the phone (reading its gyroscope)');
+{
+  // A phone swung like a club, as its gyroscope reports it: body-frame rates (°/s) about
+  // 60 times a second. The world: T toward the target, U up; the shaft up toward the
+  // hands. The swing turns about n = shaft × T, back to `turn`°, then down through impact
+  // `down` s after the top; the face rolls open on the way back (`roll`°) and back to `face`°
+  // open; a downswing plane tilted about the target line makes a path (`path`°).
+  const phoneSwing = (o) => {
+    o = Object.assign({ hand: 'R', turn: 240, back: 0.8, down: 0.8 / 3, pause: 0, roll: 70, face: 0, path: 0, hz: 60, hold: 'upright', screen: 'target', lie: 60, follow: 120, gravity: 'up', pin: false, pw: 2 }, o);
+    const h = o.hand === 'L' ? -1 : 1, R = Math.PI / 180, dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const unit = (a) => { const m = Math.hypot(a[0], a[1], a[2]); return [a[0] / m, a[1] / m, a[2] / m]; }, sc = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const add = (...vs) => vs.reduce((t, v) => [t[0] + v[0], t[1] + v[1], t[2] + v[2]], [0, 0, 0]);
+    const U = [0, 0, 1], T = [-h, 0, 0], W = [0, 1, 0], s0 = unit([0, -Math.cos(o.lie * R), Math.sin(o.lie * R)]), n = unit(cross(s0, T));
+    const z = o.screen === 'target' ? T : sc(T, -1);
+    let M = o.hold === 'upright' ? [cross(s0, z), s0, z] : [s0, cross(z, s0), z];
+    const rot = (v, ax, a) => { const k = unit(ax), c = Math.cos(a), sn = Math.sin(a); return add(sc(v, c), sc(cross(k, v), sn), sc(k, dot(k, v) * (1 - c))); };
+    // the downswing speeds up from rest at the top (o.pw 2: evenly, as a club does)
+    const tB = o.back, tP = tB + o.pause, tI = tP + o.down, vI = o.turn * o.pw / o.down, tF = o.follow ? 2 * o.follow / vI : 0;
+    const th = (t) => t <= 0 ? 0 : t <= tB ? o.turn * (t / tB) * (t / tB) * (3 - 2 * t / tB) : t <= tP ? o.turn : t <= tI ? o.turn * (1 - Math.pow((t - tP) / o.down, o.pw))
+      : (t - tI >= tF ? -o.follow : -(vI * (t - tI) - vI * (t - tI) * (t - tI) / (2 * tF)));
+    const roll = (t) => (t <= tP ? o.roll * th(t) / o.turn : o.face + (o.roll - o.face) * th(t) / o.turn);  // and on through impact at the same rate
+    const out = [], dt = 0.0005;
+    let t = -0.35, next = t, truth = null, prev = 0;
+    while (t < tI + tF + 0.15) {
+      const thd = (th(t + dt / 2) - th(t - dt / 2)) / dt * R, rd = (roll(t + dt / 2) - roll(t - dt / 2)) / dt * R, sNow = o.hold === 'upright' ? M[1] : M[0];
+      const w = add(sc(n, thd), sc(sNow, -h * rd), sc(T, thd < 0 && t > tP && t <= tI + 0.05 ? h * Math.tan(o.path * R) * thd : 0));
+      const now = th(t);
+      if (!truth && t > tP && prev > 0 && now <= 0) { const F = o.screen === 'target' ? M[2] : sc(M[2], -1), v = cross(w, sc(sNow, -1)); truth = { face: Math.atan2(dot(F, W), dot(F, T)) / R, path: Math.atan2(dot(v, W), dot(v, T)) / R }; }
+      prev = now;
+      if (t >= next) {
+        const wb = [dot(w, M[0]), dot(w, M[1]), dot(w, M[2])].map((v) => (o.pin ? Math.max(-2000, Math.min(2000, v / R * 1.6)) : v / R));
+        const g = [dot(U, M[0]), dot(U, M[1]), dot(U, M[2])].map((v) => v * 9.81 * (o.gravity === 'ios' ? -1 : 1));
+        out.push(o.gravity !== 'none' && t < 0 ? { t: t + 1, w: wb, g } : { t: t + 1, w: wb });
+        next += 1 / o.hz;
+      }
+      const a = Math.hypot(w[0], w[1], w[2]) * dt;
+      if (a > 0) M = M.map((v) => rot(v, w, a));
+      t += dt;
+    }
+    out.truth = truth;
+    return out;
+  };
+  const rm = (o, opts) => { const sm = phoneSwing(o); return Object.assign(GG.readMotion(sm, Object.assign({ hand: o.hand, putt: o.putt }, opts || {})), { truth: sm.truth }); };
+  const m31 = rm({}), m41 = rm({ back: 0.8, down: 0.2 }), m21 = rm({ back: 0.8, down: 0.4 }), mHalf = rm({ turn: 120, back: 0.6, down: 0.3 }), mP = rm({ pause: 0.3 });
+  ok(m31.ok && m31.motion && Math.abs(m31.depth - 1) < 0.01 && Math.abs(m31.ratio - 3) < 0.15, `a full 3 : 1 swing of the phone reads full (${m31.depth.toFixed(3)}) and ${m31.ratio.toFixed(2)} : 1`);
+  ok(Math.abs(m41.ratio - 4) < 0.25 && m41.tempo > 0.2 && Math.abs(m21.ratio - 2) < 0.1 && m21.tempo < -0.3, `4 : 1 reads quick (${m41.ratio.toFixed(2)}), 2 : 1 slow (${m21.ratio.toFixed(2)})`);
+  ok(Math.abs(mHalf.depth - 0.5) < 0.01 && Math.abs(mHalf.ratio - 2) < 0.1 && Math.abs(mP.pause - 0.3) < 0.06 && Math.abs(mP.ratio - 3) < 0.15, 'a half swing at 2 : 1, and a pause at the top that counts in neither half');
+  const mOpen = rm({ face: 10 }), mShut = rm({ face: -8 });
+  ok(Math.abs(mOpen.face - mOpen.truth.face) < 0.5 && mOpen.face > 7 && Math.abs(mShut.face - mShut.truth.face) < 0.5 && mShut.face < -5 && Math.abs(m31.face) < 0.5,
+    `where the screen faced at impact: ${mOpen.face.toFixed(1)}° open (it was ${mOpen.truth.face.toFixed(1)}), ${mShut.face.toFixed(1)}° (${mShut.truth.face.toFixed(1)}), square reads ${m31.face.toFixed(1)}`);
+  const mIn = rm({ path: 4 }), mOut = rm({ path: -5 });
+  ok(Math.abs(mIn.path - mIn.truth.path) < 1 && mIn.path > 1.5 && Math.abs(mOut.path - mOut.truth.path) < 1 && mOut.path < -3 && Math.abs(mIn.face - mIn.truth.face) < 1,
+    `the path: a flatter downswing reads ${mIn.path.toFixed(1)}° in-to-out (it was ${mIn.truth.path.toFixed(1)}), a steeper one ${mOut.path.toFixed(1)}° (${mOut.truth.path.toFixed(1)}), the face still right`);
+  const variants = [['a left-hander', { hand: 'L', face: 10 }], ['held sideways', { hold: 'sideways', face: 6 }], ['the screen facing him', { screen: 'him', face: 6 }],
+    ['gravity the other way round (as some phones give it)', { gravity: 'ios', face: 6, path: 3 }], ['no gravity', { gravity: 'none', face: 6 }], ['a flatter lie', { lie: 45, face: 6, path: -3 }],
+    ['a left-hander, sideways, facing him', { hand: 'L', hold: 'sideways', screen: 'him', face: -5, path: 3 }], ['120 times a second', { hz: 120, face: 5 }], ['a fast swing', { back: 0.75, down: 0.25, face: 4 }]];
+  variants.forEach(([what, o]) => {
+    const r = rm(o);
+    ok(r.ok && Math.abs(r.depth - 1) < 0.02 && Math.abs(r.ratio - (o.back || 0.8) / (o.down || 0.8 / 3)) < 0.25,
+      `${what}: reads full at ${r.ok ? `${r.ratio.toFixed(2)} : 1, face ${r.face.toFixed(1)}° (${r.truth.face.toFixed(1)}), path ${r.path.toFixed(1)}° (${r.truth.path.toFixed(1)})` : r.why}`);
+    ok(r.ok && Math.abs(r.face - r.truth.face) < 1 && Math.abs(r.path - r.truth.path) < 1, `${what}: the face and path within 1°`);
+  });
+  // Not a swing.
+  const quiet = Array.from({ length: 60 }, (_, k) => ({ t: k / 60, w: [0.5, -0.3, 0.2] }));
+  const noDown = phoneSwing({ turn: 180, down: 99, follow: 0 }).filter((q) => q.t < 1.9), pinned = rm({ pin: true, back: 0.5, down: 0.1 });
+  eq([GG.readMotion(quiet, {}).why, GG.readMotion(noDown, {}).why, pinned.why], ['still', 'noThrough', 'tooFast'], 'held still, stopped at the top, or too fast for the gyroscope: not read as a swing');
+  // A putt: a small stroke, read on its own scale.
+  const mPutt = rm({ turn: 18, back: 0.5, down: 0.25, roll: 2, face: 1, putt: true, follow: 6 }), mShort = rm({ turn: 8, back: 0.45, down: 0.225, roll: 1, face: 0.5, putt: true, follow: 6 });
+  ok(mPutt.ok && Math.abs(mPutt.depth - 0.6) < 0.02 && Math.abs(mPutt.ratio - 2) < 0.12 && Math.abs(mPutt.face - mPutt.truth.face) < 0.5 && mShort.ok && Math.abs(mShort.depth - 8 / 30) < 0.02,
+    `a putting stroke of 18° reads ${Math.round(mPutt.depth * 100)}% of a full one at ${mPutt.ratio.toFixed(2)} : 1; a slow-starting 8° one ${Math.round(mShort.depth * 100)}%`);
+  // The shot: the phone's face and path, a share of them, in place of the tempo's.
+  const pool7 = m3Pools['7i'], shotOf = (sw) => GG.swingShot(pool7, sw, { still: true }).rep, base = shotOf(m31), opened = shotOf(Object.assign({}, m31, { face: 10 }));
+  ok(Math.abs(opened.face - base.face - GG.MOTION.face * (10 - GG.MOTION.faceDead)) < 0.05 && opened.start > base.start && opened.motion && Math.abs(opened.phoneFace - 10) < 1e-9,
+    `the phone 10° open at impact opens the club ${(opened.face - base.face).toFixed(1)}° (past the 4° a phone can't be held to), and the ball starts further right`);
+  const quickSq = shotOf(Object.assign({}, m31, { tempo: 0.3, ratio: 4 }));
+  ok(Math.abs(quickSq.face - base.face) < 0.05 && quickSq.q > base.q, 'with the phone, a quick tempo spoils the strike but doesn’t move the face it measured');
+  const inOut = shotOf(Object.assign({}, m31, { path: 9 }));
+  ok(Math.abs(inOut.path - base.path - GG.MOTION.path * (9 - GG.MOTION.pathDead)) < 0.05, 'its path, past 3°, moves the club’s path');
+  const puttOpen = GG.puttSwing(10, Object.assign({}, mPutt, { face: 6 }), FL.rng(1), 'green', { still: true }), puttSq = GG.puttSwing(10, Object.assign({}, mPutt, { face: 0 }), FL.rng(1), 'green', { still: true });
+  ok(puttOpen.rep.start > puttSq.rep.start + 0.5 && puttOpen.rep.motion, `a putt with the screen 6° open starts ${(puttOpen.rep.start - puttSq.rep.start).toFixed(1)}° right`);
+  eq([GG.motionCue(1), GG.motionCue(0.75), GG.motionCue(0.4), GG.motionCue(0.5, true)], ['a full backswing', 'hands to the shoulder, the phone pointing up', 'hands to the hip, the phone level', 'a medium stroke'], 'how far back, in words he can feel');
+  ok(GG.swingTips(Object.assign({}, opened, { phoneFace: 9 })).some((x) => /screen came back 9.0° open/.test(x)) && !GG.swingTips(Object.assign({}, opened, { phoneFace: 9, tempo: 0.3, ratio: 4, back: 0.8 })).some((x) => /Early, so the face/.test(x)),
+    'the tips say where the screen faced, and don’t blame the tempo for a face the phone measured');
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

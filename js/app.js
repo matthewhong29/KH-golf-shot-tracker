@@ -2459,7 +2459,7 @@
     gmAimText();
   }
   // A swing (or a putt) that's under way: nothing else changes until it's hit.
-  function gmSwinging() { return !!gm && ((gm.meter && gm.meter.phase !== 'ready') || (gm.pad && gm.pad.phase === 'swing')); }
+  function gmSwinging() { return !!gm && ((gm.meter && gm.meter.phase !== 'ready') || (gm.pad && gm.pad.phase === 'swing') || (!!gmMo && gmMo.phase === 'swing')); }
   function gmAimText() {
     const el = $('.gm-aimtext', gm.box);
     if (!el) return;
@@ -2627,12 +2627,197 @@
   const GM_PUTT_TICKS = [10, 20, 30, 45];
   const GM_PAD_FONT = "'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
   function gmPadHtml(kind) {
-    const putt = kind === 'putt';
-    return `<div class="gm-pad" id="gmPad" data-kind="${kind}" tabindex="0" role="group" aria-label="${putt ? 'Putting pad: drag down from the ball for the backstroke, then stroke up through it' : 'Swing pad: drag down from the ball for the backswing, then swipe up through it'}">
+    const putt = kind === 'putt', mo = gmMo && gmMo.on;
+    const label = mo ? (putt ? 'Putting with the phone: hold still, then make your stroke' : 'Swinging the phone: hold still, then swing')
+      : putt ? 'Putting pad: drag down from the ball for the backstroke, then stroke up through it' : 'Swing pad: drag down from the ball for the backswing, then swipe up through it';
+    return `<div class="gm-pad${mo ? ' mo' : ''}" id="gmPad" data-kind="${kind}" tabindex="0" role="group" aria-label="${label}">
       <canvas class="gm-pad-c" aria-hidden="true"></canvas>
       <div class="gm-pad-row"><p class="gm-pad-text" aria-live="polite"></p>
         <button type="button" class="gm-practice" data-action="gm-practice" aria-pressed="${!!ui.game.practice}" aria-label="${putt ? 'Practice stroke: one that doesn’t count' : 'Practice swing: one that doesn’t count'}">Practice</button></div>
+      ${gmMotionHtml()}
     </div>`;
+  }
+  // ----- Swinging the phone -----
+  // He holds the phone like a grip, the screen facing the target like the clubface, and
+  // swings it (GolfGame.readMotion reads its gyroscope). It's offered on phones and
+  // tablets, after a word on safety, and he can go back to the pad any time. The state
+  // lives here, not on the round, so it carries on from shot to shot and hole to hole.
+  let gmMo = null;
+  function gmMotionAvail() {
+    return typeof window !== 'undefined' && typeof window.DeviceMotionEvent !== 'undefined'
+      && ((navigator.maxTouchPoints || 0) > 0 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches));
+  }
+  function gmMotionHtml() {
+    if (!gmMotionAvail()) return '';
+    if (gmMo && gmMo.ask) {
+      return `<div class="gm-mo-ask" role="group" aria-label="Before you swing the phone">
+        <p class="t">Before you swing the phone</p>
+        <ul>
+          <li>Hold it in both hands like the grip of a club, the screen facing the target like the clubface, and hold on tight. A case with a wrist strap helps.</li>
+          <li>Make sure no one is near you and there’s nothing you could hit.</li>
+          <li>Swing smoothly, not hard. It reads how far back you go, your tempo and where the screen faces at impact, not your speed: a half-speed swing is plenty.</li>
+        </ul>
+        <div class="gm-mo-btns"><button type="button" class="gm-practice on" data-action="gm-motion-go">I’m ready</button>
+          <button type="button" class="gm-practice" data-action="gm-motion-no">Not now</button></div>
+      </div>`;
+    }
+    return gmMo && gmMo.on
+      ? `<div class="gm-mo-row"><p class="gm-mo-safe">Grip it tight, keep clear of people and things, and swing smoothly.</p>
+          <button type="button" class="gm-practice" data-action="gm-motion">Use the pad</button></div>`
+      : '<div class="gm-mo-row"><p class="gm-mo-safe">Or hold your phone like a club and swing it.</p><button type="button" class="gm-practice" data-action="gm-motion">Swing the phone</button></div>';
+  }
+  const GM_MO_WHY = {
+    noThrough: 'Swing back down through the ball to hit it.',
+    noBack: 'Take the phone back further, then swing through.',
+    still: 'Hold still, then swing.',
+    tooFast: 'Too quick for the phone to follow: swing a little gentler.',
+    long: 'That took too long. Hold still, then swing.'
+  };
+  // Asking for the motion has to happen right in the tap (iPhones ask the player first).
+  function gmMotionStart() {
+    const go = () => {
+      gmMo = { on: true, phase: 'wait', buf: [], samples: [], stillSince: null, theta: 0, got: false, word: '' };
+      window.addEventListener('devicemotion', gmMotionEvent);
+      setTimeout(() => {
+        if (gmMo && gmMo.on && !gmMo.got) { gmMotionStop(); toast('This phone isn’t sharing its motion with the page. Swipe on the pad instead.'); }
+      }, 2000);
+      if (gm) gmControls();
+    };
+    const DM = window.DeviceMotionEvent;
+    if (DM && typeof DM.requestPermission === 'function') {
+      DM.requestPermission().then((r) => {
+        if (r === 'granted') go();
+        else { gmMo = null; if (gm) gmControls(); toast('Motion wasn’t allowed. To swing the phone, allow motion for this site in the browser’s settings (on an iPhone, Motion & Orientation Access), then try again.'); }
+      }).catch(() => { gmMo = null; if (gm) gmControls(); toast('The phone wouldn’t share its motion. Swipe on the pad instead.'); });
+    } else go();
+  }
+  function gmMotionStop() {
+    window.removeEventListener('devicemotion', gmMotionEvent);
+    gmMo = null;
+    if (gm) gmControls();
+  }
+  function gmMotionText(word) {
+    const p = gm && gm.pad;
+    if (!p || !gmMo || !gmMo.on) return;
+    if (word != null) gmMo.word = word;
+    const putt = p.kind === 'putt', cue = GM.motionCue(Math.min(1, p.target), putt);
+    const txt = gmMo.phase === 'swing' ? '…'
+      : gmMo.word ? gmMo.word
+        : gmMo.phase === 'ready' ? `${gmMo.miss ? gmMo.miss + ' ' : ''}Ready: ${putt ? 'stroke it' : 'swing'}. This one wants ${cue}.`
+          : gmMo.miss ? gmMo.miss + ' Hold still, then go again.'
+            : ui.game.practice ? (putt ? 'Practice stroke: hold still, then stroke it.' : 'Practice swing: hold still, then swing.')
+              : 'Hold the phone like a grip, the screen facing the target, and keep still.';
+    const t = $('.gm-pad-text', p.el);
+    if (t && t.textContent !== txt) t.textContent = txt;
+    p.el.classList.toggle('off', !!gm.busy);
+  }
+  function gmMotionEvent(e) {
+    const mo = gmMo;
+    if (!mo || !mo.on) { window.removeEventListener('devicemotion', gmMotionEvent); return; }
+    const r = e.rotationRate;
+    if (!r || r.alpha == null || r.beta == null || r.gamma == null) return;
+    mo.got = true;
+    const p = gm && gm.pad, t = e.timeStamp / 1000;
+    if (!p || gm.busy || (gm.phase !== 'aim' && gm.phase !== 'putt') || (p.kind === 'swing' && !gm.pools[gm.club])) {
+      if (mo.phase !== 'wait') Object.assign(mo, { phase: 'wait', buf: [], samples: [], stillSince: null });
+      return;
+    }
+    const g = e.accelerationIncludingGravity, smp = { t, w: [r.beta, r.gamma, r.alpha] };
+    if (g && g.x != null) smp.g = [g.x, g.y, g.z];
+    const putt = p.kind === 'putt', rate = Math.hypot(r.alpha, r.beta, r.gamma), M = GM.MOTION;
+    const still = putt ? M.stillPutt : M.still, start = putt ? M.startPutt : M.start;
+    if (mo.phase === 'wait' || mo.phase === 'ready') {
+      mo.buf.push(smp);
+      while (mo.buf.length > 2 && t - mo.buf[0].t > 0.5) mo.buf.shift();
+      if (mo.phase === 'ready') {
+        // Ready: a turn past `start` is the swing (the slow first inches of the takeaway
+        // are kept, from the buffer); stirring that never gets there is only fidgeting,
+        // and after half a second of it he has to settle again.
+        if (rate > start) {
+          Object.assign(mo, { phase: 'swing', samples: mo.buf.slice(), began: t, word: '', miss: '', movingSince: null });
+          gm.lastSwing = null;
+          gmMotionText();
+          return;
+        }
+        if (rate < still) mo.movingSince = null;
+        else if (mo.movingSince == null) mo.movingSince = t;
+        else if (t - mo.movingSince > 0.5) { Object.assign(mo, { phase: 'wait', stillSince: null, movingSince: null }); gmMotionText(''); gmPadDraw(); }
+        return;
+      }
+      if (rate < still) { if (mo.stillSince == null) mo.stillSince = t; } else mo.stillSince = null;
+      if (mo.stillSince != null && t - mo.stillSince >= 0.5) { mo.phase = 'ready'; gmMotionText(''); gmPadDraw(); }
+      return;
+    }
+    if (mo.phase !== 'swing') return;
+    mo.samples.push(smp);
+    const sw = GM.readMotion(mo.samples, { putt, hand: gmHand() });
+    mo.theta = sw.theta || 0;
+    if (!mo.drawing) { mo.drawing = true; requestAnimationFrame(() => { if (gmMo) { gmMo.drawing = false; gmPadDraw(); } }); }
+    if (sw.ok && t - sw.tImpact >= 0.25) { gmMotionFinish(sw); return; }
+    if (!sw.ok && (sw.why === 'tooFast' || t - mo.began > GM_PAD.maxT)) gmMotionMiss(sw.why === 'tooFast' ? 'tooFast' : 'long');
+    // Stopped again without coming through: not a swing.
+    else if (!sw.ok && rate < still && t - mo.began > 0.6) {
+      const quiet = mo.samples.slice(-8).every((q) => Math.hypot(q.w[0], q.w[1], q.w[2]) < still);
+      if (quiet) gmMotionMiss(sw.why === 'noThrough' ? 'noThrough' : 'noBack');
+    }
+  }
+  // A swing that couldn't be read: what went wrong, said until the next one starts.
+  function gmMotionMiss(why) {
+    Object.assign(gmMo, { phase: 'wait', buf: [], samples: [], stillSince: null, theta: 0, word: '', miss: GM_MO_WHY[why] || GM_MO_WHY.still });
+    gmMotionText();
+    gmPadDraw();
+  }
+  function gmMotionFinish(sw) {
+    const p = gm.pad, putt = p.kind === 'putt';
+    Object.assign(gmMo, { phase: 'wait', buf: [], samples: [], stillSince: null, word: '' });
+    p.last = gm.lastSwing = { samples: null, sw, kind: p.kind, word: '', motion: true, theta: sw.turn };
+    ui.game.shown = true;
+    try { if (navigator.vibrate) navigator.vibrate(12); } catch (err) { /* no vibration here */ }
+    if (ui.game.practice) { gmPractice(sw); return; }
+    if (putt) gmRealPutt(sw); else gmRealSwing(sw);
+  }
+  // The dial: the swing seen from in front, the ball at the bottom and the club going back
+  // round (clockwise for a right-hander), with quarters, full and past full, a gold line
+  // for this shot, and the club where the phone is (or where the last swing turned).
+  function gmMotionDraw(p) {
+    const c = p.ctx, w = p.w, h = p.h, putt = p.kind === 'putt', M = GM.MOTION, full = putt ? M.puttFull : M.full;
+    const cx = w / 2, cy = 98, R = 68, dir = gmHand() === 'L' ? -1 : 1;
+    // a turn of th (° of the phone) to a point on the dial: 240° of dial is a full one
+    const at = (th, r) => { const a = (th * 240 / full) * Math.PI / 180; return [cx - dir * Math.sin(a) * r, cy + Math.cos(a) * r]; };
+    c.clearRect(0, 0, w, h);
+    c.lineCap = 'round';
+    c.textBaseline = 'middle';
+    c.font = '650 15px ' + GM_PAD_FONT;
+    // the arc of the backswing, and past full in red
+    const arc = (a0, a1, col, lw) => { c.strokeStyle = col; c.lineWidth = lw; c.beginPath(); for (let k = 0; k <= 40; k++) { const q = at(a0 + (a1 - a0) * k / 40, R); if (k) c.lineTo(q[0], q[1]); else c.moveTo(q[0], q[1]); } c.stroke(); };
+    arc(0, full, 'rgba(255,255,255,0.28)', 6);
+    arc(full * 1.02, full * 1.3, 'rgba(232,70,58,0.5)', 6);
+    const marks = putt ? GM_PUTT_TICKS.map((ft) => [gmPuttTickDepth(ft), ft + ' ft']) : [[0.25, '¼'], [0.5, '½'], [0.75, '¾'], [1, 'Full']];
+    c.fillStyle = 'rgba(255,255,255,0.88)';
+    marks.forEach(([d, label]) => {
+      if (d > 1.3) return;
+      const a = at(d * full, R - 8), b = at(d * full, R + 8), q = at(d * full, R + 21);
+      c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineWidth = 2; c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
+      c.textAlign = 'center'; c.fillText(label, q[0], q[1]);
+    });
+    // the ball, the target line for this shot, and the club
+    c.fillStyle = '#ffffff';
+    const ball = at(0, R + 4);
+    c.beginPath(); c.arc(ball[0], ball[1], 6, 0, Math.PI * 2); c.fill();
+    const tg = at(Math.min(1.3, p.target) * full, R + 10);
+    c.setLineDash([7, 5]); c.strokeStyle = '#f2c94c'; c.lineWidth = 2.5;
+    c.beginPath(); c.moveTo(cx, cy); c.lineTo(tg[0], tg[1]); c.stroke(); c.setLineDash([]);
+    const mo = gmMo, live = mo && mo.phase === 'swing', last = gm.lastSwing && gm.lastSwing.motion && gm.lastSwing.kind === p.kind ? gm.lastSwing : null;
+    const th = live ? Math.max(-full * 0.6, mo.theta) : last ? last.theta : 0, head = at(th, R - 6);
+    c.strokeStyle = live || !last ? '#ffffff' : 'rgba(255,255,255,0.6)'; c.lineWidth = 5;
+    c.beginPath(); c.moveTo(cx, cy); c.lineTo(head[0], head[1]); c.stroke();
+    c.fillStyle = c.strokeStyle; c.beginPath(); c.arc(cx, cy, 6, 0, Math.PI * 2); c.fill();
+    if (last && !live && last.sw) {
+      c.textAlign = 'center'; c.fillStyle = gmTempoColor(last.sw.tempo);
+      c.fillText(`${GM.ratioText(last.sw.ratio)} · back ${Math.round(last.sw.depth * 100)}%`, cx, h - 14);
+    } else if (mo && mo.phase === 'ready' && !live) {
+      c.textAlign = 'center'; c.fillStyle = '#b9f2c9'; c.fillText(putt ? 'Ready: stroke it' : 'Ready: swing', cx, h - 14);
+    }
   }
   // How far back to drag for this shot: the swing it needs, or for a putt the backstroke
   // that rolls it a foot past.
@@ -2658,7 +2843,7 @@
     // Until his first swing, the pad shows how: a thumb going back and through at the
     // tempo it wants, three times (not when the phone asks for less motion).
     const pad = gm.pad;
-    if (!REDUCED && !ui.game.shown && !last) { pad.demo = { t0: performance.now(), y: null }; pad.raf = requestAnimationFrame((ts) => gmPadDemo(ts, pad)); }
+    if (!REDUCED && !ui.game.shown && !last && !(gmMo && gmMo.on)) { pad.demo = { t0: performance.now(), y: null }; pad.raf = requestAnimationFrame((ts) => gmPadDemo(ts, pad)); }
     if (!el.dataset.bound) {
       el.dataset.bound = '1';
       cv.addEventListener('pointerdown', gmPadDown);
@@ -2675,6 +2860,7 @@
   function gmPadText(word) {
     const p = gm && gm.pad;
     if (!p) return;
+    if (gmMo && gmMo.on) { gmMotionText(word); return; }
     if (word != null) p.word = word;
     const putt = p.kind === 'putt';
     const txt = (p.phase !== 'swing' && ui.game.practice) ? (putt ? 'Practice stroke: it won’t count.' : 'Practice swing: it won’t count.')
@@ -2688,6 +2874,7 @@
   function gmPadDraw(now) {
     const p = gm && gm.pad;
     if (!p) return;
+    if (gmMo && gmMo.on) { gmMotionDraw(p); return; }
     const c = p.ctx, w = p.w, h = p.h, x0 = p.x0, y0 = p.y0, F = p.full, putt = p.kind === 'putt', live = p.phase === 'swing';
     c.clearRect(0, 0, w, h);
     c.lineCap = 'round';
@@ -2825,7 +3012,7 @@
   function gmPadPt(p, e) { return { t: e.timeStamp / 1000, x: e.clientX - p.rect.left, y: e.clientY - p.rect.top }; }
   function gmPadDown(e) {
     const p = gm && gm.pad;
-    if (!p || !e.isPrimary || e.button > 0) return;
+    if (!p || !e.isPrimary || e.button > 0 || (gmMo && gmMo.on)) return;
     e.preventDefault();
     if (gm.busy || p.phase === 'swing' || (gm.phase !== 'aim' && gm.phase !== 'putt')) return;
     if (p.kind === 'swing' && !gm.pools[gm.club]) { toast('No range shots with this club yet. Play it from the range.'); return; }
@@ -2992,6 +3179,14 @@
     const cause = Math.abs(rep.curve) < 1.5 ? (Math.abs(f2p) < 1 ? ', the face square to the path' : '') : Math.abs(f2p) < 0.5 ? '' : `, the face ${deg(f2p)} ${f2p > 0 ? 'open' : 'shut'} to the path`;
     return `${st}${rep.mis === 'shank' ? ' (off the hosel)' : why}${cv}${cause}.`;
   }
+  // What the phone itself did at impact, as it read it (the club gets a share of it).
+  function gmPhoneWord(rep) {
+    const deg = (d) => (Math.round(Math.abs(d) * 10) / 10).toFixed(1) + '°';
+    const f = rep.phoneFace, pth = rep.phonePath;
+    const fw = !C.isNum(f) ? '' : Math.abs(f) < 1 ? 'the screen square' : `the screen ${deg(f)} ${f > 0 ? 'open' : 'shut'}`;
+    const pw = !C.isNum(pth) ? '' : Math.abs(pth) < 1 ? 'swinging straight along the line' : `swinging ${deg(pth)} ${pth > 0 ? 'in-to-out' : 'out-to-in'}`;
+    return `The phone at impact: ${[fw, pw].filter(Boolean).join(', ')}.`;
+  }
   function gmRealShotLine(rep) {
     const r = rep.real;
     if (!r || r.made) return '';
@@ -3007,6 +3202,7 @@
       ['<span class="k face"></span>Face', esc(GM.faceWord(rep.face))],
       ['Strike', esc(gmStrikeWord(rep))]
     ];
+    if (rep.motion) rows.pop();  // the phone can't feel where it was struck
     // A good swing that still curved off: that's the spread in his own shots with the club
     // (his face and path wander from swing to swing), and worth saying so. A planned draw
     // or fade moves them on purpose (rep.plan), and when it came off that's no spread.
@@ -3018,7 +3214,7 @@
     const foot = practice ? (rep.pMis >= 0.05 ? `About ${Math.round(rep.pMis * 100)} in 100 swings like that would be mis-hit.` : '') : gmRealShotLine(rep);
     const planned = v ? `<p class="gm-plan${v.ok ? ' ok' : ''}"><b>${esc(GM.SHOTS[rep.type].name)}:</b> ${esc(v.text)}</p>` : '';
     return `${planned}<div class="gm-rep">${gmFacePathSvg(rep)}<ul class="gm-rep-l">${rows.map(([k, v2]) => `<li><b>${k}</b> ${v2}</li>`).join('')}</ul></div>
-      <p class="gm-law"><span class="k ball"></span>${esc(gmBallWord(rep))}</p>
+      <p class="gm-law"><span class="k ball"></span>${esc(gmBallWord(rep))}</p>${rep.motion ? `<p class="gm-law">${esc(gmPhoneWord(rep))}</p>` : ''}
       <p class="gm-tip">${tip}</p>${foot ? `<span class="s gm-real">${esc(foot)}</span>` : ''}`;
   }
   function gmPuttReportHtml(rep, ft, practice) {
@@ -3029,7 +3225,7 @@
       ['Start', esc(startW)]
     ];
     const tips = GM.swingTips(rep, true);
-    if (past < -0.3) tips.push('Short: drag back a little further.');
+    if (past < -0.3) tips.push(rep.motion ? 'Short: take it back a little further.' : 'Short: drag back a little further.');
     else if (past > 4) tips.push('Long: a shorter backstroke, at the same tempo.');
     const tip = tips.length ? tips.slice(0, 2).map(esc).join(' ') : `<b>${esc(GM.tempoWord(rep))}</b> and a good pace${practice ? '.' : ': nicely done.'}`;
     return `<div class="gm-rep gm-rep-putt"><ul class="gm-rep-l">${rows.map(([k, v]) => `<li><b>${k}</b> ${v}</li>`).join('')}</ul></div><p class="gm-tip">${tip}</p>`;
@@ -3083,6 +3279,7 @@
   // the mis-hit (m) and the strike (q).
   function gmSwingRecord(rep) {
     const out = { r: r2(rep.ratio), g: r1(rep.target), a: r1(rep.angle), d: r2(rep.depth) };
+    if (rep.motion) out.mo = 1;
     if (C.isNum(rep.face)) Object.assign(out, { f: r1(rep.face), p: r1(rep.path), s: rep.shape, m: rep.mis || null, q: r2(rep.q) });
     if (C.isNum(rep.len)) Object.assign(out, { l: r1(rep.len), st: r1(rep.start) });
     return out;
@@ -3863,6 +4060,21 @@
       if (want !== gm.club && gm.pools[want]) { gm.club = want; gmView(); }
       gmControls();
       gmDraw();
+    },
+    'gm-motion'() {
+      if (!gm || gm.busy || gmSwinging()) return;
+      if (gmMo && gmMo.on) { gmMotionStop(); return; }
+      if (ui.game.motionOk) { gmMotionStart(); return; }
+      gmMo = { ask: true };
+      gmControls();
+    },
+    'gm-motion-go'() {
+      ui.game.motionOk = true;
+      gmMotionStart();
+    },
+    'gm-motion-no'() {
+      gmMo = null;
+      if (gm) gmControls();
     },
     'gm-practice'(b) {
       if (!gm || gm.busy || gmSwinging()) return;

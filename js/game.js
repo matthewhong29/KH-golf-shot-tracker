@@ -594,6 +594,220 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // The phone as the club: a motion swing
+  // ---------------------------------------------------------------------------
+  // He holds the phone like a grip, upright in both hands with the screen facing the
+  // target like the clubface, and swings it. The gyroscope says how fast the phone turns
+  // about each of its own axes, and adding that up says how it turned. The swing turns it
+  // about an axis square to the swing plane, back and then down: how far back is the
+  // backswing (a full one is about 240° from the ball, the club past vertical; a full
+  // putting stroke about 30°), and coming back to where it started is impact. The tempo is
+  // the time back over the time down, as on the pad. The phone's roll about its own long
+  // axis (the shaft) turns the screen, and where the screen points at impact, against the
+  // target line, is the clubface: rolled open on the way back and not rolled back, it's
+  // open. With the screen facing the target, the swing's own axis says which way is up the
+  // shaft, so which way is open, for either hand; gravity at address (when the phone gives
+  // it) says which way is level. Where the bottom of the "shaft" was heading at impact is
+  // the path: a downswing on a flatter plane than the backswing comes from the inside,
+  // in-to-out; a steeper one from outside, out-to-in. Wii golf games read a swing much the
+  // same way: the backswing sets the power and the controller's twist at impact hooks or
+  // slices it.
+  //   full / puttFull: ° of turn for a full swing / stroke. still, start: °/s below which
+  //   it's at rest and above which a swing has started (a putt starts slower: startPutt).
+  //   take: the share of a full turn that sets the swing's axis. face / path: how much of
+  //   the phone's face and path angles the club gets, past faceDead / pathDead (how still a
+  //   phone in two hands can be held, and what the sampling can trust); puttFace,
+  //   puttDead the same for a putt. flip: ° the face would have to roll shut on the way
+  //   back before it's taken that the screen faced away from the target. limit: °/s a
+  //   phone's gyroscope tops out at.
+  var MOTION = { steps: 8, fine: 32, limit: 1990, stillPutt: 8, full: 240, puttFull: 30, still: 25, start: 45, startPutt: 15, take: 0.12, face: 0.3, faceDead: 4, path: 0.3, pathDead: 3, maxFace: 10, maxPath: 8, puttFace: 0.25, puttDead: 2, flip: 25 };
+  function qmul(a, b) {
+    return [a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+      a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1], a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+  }
+  function qturn(w, dt) {  // the turn at w (rad/s) for dt s
+    var m = Math.sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]), a = m * dt / 2;
+    if (m < 1e-9) return [1, 0, 0, 0];
+    var k = Math.sin(a) / m;
+    return [Math.cos(a), w[0] * k, w[1] * k, w[2] * k];
+  }
+  function qrot(q, v) {  // v turned by q
+    var t = qmul(qmul(q, [0, v[0], v[1], v[2]]), [q[0], -q[1], -q[2], -q[3]]);
+    return [t[1], t[2], t[3]];
+  }
+  function qnorm(q) { var m = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]) || 1; return [q[0] / m, q[1] / m, q[2] / m, q[3] / m]; }
+  function vdot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+  function vcross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+  function vunit(a) { var m = Math.sqrt(vdot(a, a)) || 1; return [a[0] / m, a[1] / m, a[2] / m]; }
+  function vmix(a, b, u) { return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]; }
+  // readMotion(samples, opts) → a swing, as readSwing gives one, from the phone's
+  // gyroscope. samples: [{ t (s), w: [x, y, z], g: [x, y, z] }]: w in °/s about the
+  // phone's own axes (x across the screen, y up it, z out of it: the rotationRate's beta,
+  // gamma and alpha), g the accelerationIncludingGravity (m/s², if it gives one; either
+  // sign, as phones differ), from address (held still) to the follow-through. opts:
+  // { putt, hand ('L' for a left-hander), full (° for a full backswing) }.
+  //   Not a swing: { ok: false, why: 'still', 'noBack' or 'noThrough', depth, theta (° it's
+  //   turned back now, for drawing it as it goes) }.
+  //   A swing: readSwing's { ok, depth, power, back, down, pause, ratio, target, tempo,
+  //   angle: 0, strike: 0 }, and motion: true, face (° the phone was turned open at
+  //   impact, his hand's way: + open), path (° its swing at impact, + in-to-out), roll (°
+  //   it rolled open on the way back), turn (° back), peak (°/s: its fastest turn), long
+  //   ('y' when held upright, 'x' sideways), tImpact (s).
+  function readMotion(samples, opts) {
+    opts = opts || {};
+    var sm = samples || [], n = sm.length, putt = !!opts.putt, h = opts.hand === 'L' ? -1 : 1;
+    var full = opts.full || (putt ? MOTION.puttFull : MOTION.full), go = putt ? MOTION.startPutt : MOTION.start, i;
+    var rate = function (k) { var w = sm[k].w; return Math.sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]); };
+    if (n < 4) return { ok: false, why: 'still', depth: 0, theta: 0 };
+    // A gyroscope reads to about 2000°/s: a swing that pins it for three samples in a row
+    // turned faster than the phone could follow, and can't be read.
+    var pinned = 0;
+    for (i = 0; i < n && pinned < 3; i++) pinned = Math.max(Math.abs(sm[i].w[0]), Math.abs(sm[i].w[1]), Math.abs(sm[i].w[2])) >= MOTION.limit ? pinned + 1 : 0;
+    if (pinned >= 3) return { ok: false, why: 'tooFast', depth: 0, theta: 0 };
+    var iGo = -1;
+    for (i = 0; i < n; i++) if (rate(i) > go) { iGo = i; break; }
+    if (iGo < 0) return { ok: false, why: 'still', depth: 0, theta: 0 };
+    // From address (the last still moment before it moved): the attitude (q, address frame), the turn
+    // rate in that frame (W, rad/s), and its roll about each of its own two long axes.
+    var calm = putt ? MOTION.stillPutt : MOTION.still, ia = Math.max(0, iGo - 1);
+    while (ia > 0 && rate(ia) > calm) ia--;
+    var q = [1, 0, 0, 0], Q = [q], W = [], T = [sm[ia].t], rollX = [0], rollY = [0], aX = 0, aY = 0;
+    var wr = function (k) { k = clamp(k, 0, n - 1); return [sm[k].w[0] * RAD, sm[k].w[1] * RAD, sm[k].w[2] * RAD]; };
+    // The rate between samples k − 1 and k, u of the way: a smooth curve through the samples
+    // either side (Catmull-Rom), as a swing's turn speeds up and slows down smoothly.
+    var wAt = function (k, u) {
+      var a = wr(k - 2), b = wr(k - 1), c = wr(k), d = wr(k + 1), u2 = u * u, u3 = u2 * u, out = [0, 0, 0];
+      for (var j = 0; j < 3; j++) out[j] = 0.5 * (2 * b[j] + (c[j] - a[j]) * u + (2 * a[j] - 5 * b[j] + 4 * c[j] - d[j]) * u2 + (3 * b[j] - a[j] - 3 * c[j] + d[j]) * u3);
+      return out;
+    };
+    W.push(wr(ia));
+    // Between samples the rate follows that curve, in eight steps: a fast swing turns the
+    // phone 25° from one sample to the next, rolling it as it goes, and turns about a
+    // moving axis don't add up in one step.
+    for (i = ia + 1; i < n; i++) {
+      var dt = clamp(sm[i].t - sm[i - 1].t, 0, 0.1), w1 = wr(i), rx = 0, ry = 0;
+      for (var st = 0; st < MOTION.steps; st++) {
+        var ws = wAt(i, (st + 0.5) / MOTION.steps), ds = dt / MOTION.steps;
+        q = qmul(q, qturn(ws, ds));
+        rx += ws[0] * ds; ry += ws[1] * ds;
+      }
+      q = qnorm(q);
+      Q.push(q); W.push(qrot(q, w1)); T.push(sm[i].t);
+      rollX.push(rollX[rollX.length - 1] + rx); rollY.push(rollY[rollY.length - 1] + ry);
+      aX += Math.abs(rx); aY += Math.abs(ry);
+    }
+    var m = Q.length;
+    // The shaft is the phone's long axis as he holds it: the one it rolls about least.
+    var lng = aY <= aX ? 1 : 0, sb = lng === 1 ? [0, 1, 0] : [1, 0, 0], roll = lng === 1 ? rollY : rollX;
+    // Where the shaft points at each sample (the roll about it doesn't move it), in the
+    // address frame; the swing's axis from the takeaway: the turn that carried the shaft
+    // from where it was at address to where it was a little way back. Its swing alone (the
+    // turn less the roll about the shaft) gives how fast it was swinging.
+    var Sh = [], S = [], axis = null, s0b = qrot(Q[0], sb), far = 0;
+    for (i = 0; i < m; i++) {
+      var wb = wr(ia + i), along = vdot(wb, sb);
+      Sh.push(qrot(Q[i], sb));
+      S.push(qrot(Q[i], [wb[0] - along * sb[0], wb[1] - along * sb[1], wb[2] - along * sb[2]]));
+      if (i && !axis) {
+        far = Math.acos(clamp(vdot(s0b, Sh[i]), -1, 1)) / RAD;
+        if (far >= MOTION.take * full) axis = vunit(vcross(s0b, Sh[i]));
+      }
+    }
+    if (!axis) return { ok: false, why: far / full < SWIPE.minDepth ? 'noBack' : 'still', depth: far / full, theta: far };
+    // The swing's angle: the shaft's turn about that axis from address, unwound past a half
+    // turn (a full backswing goes two thirds of the way round).
+    var e1 = vunit([s0b[0] - vdot(s0b, axis) * axis[0], s0b[1] - vdot(s0b, axis) * axis[1], s0b[2] - vdot(s0b, axis) * axis[2]]), e2 = vcross(axis, e1), th = [0];
+    for (i = 1; i < m; i++) {
+      var a2 = Math.atan2(vdot(Sh[i], e2), vdot(Sh[i], e1)) / RAD, prevA = th[i - 1];
+      while (a2 - prevA > 180) a2 -= 360;
+      while (a2 - prevA < -180) a2 += 360;
+      th.push(a2);
+    }
+    var iMax = 0, iCross = -1;
+    for (i = 1; i < m; i++) {
+      if (th[i] > th[iMax]) iMax = i;
+      else if (th[i] <= 0 && th[iMax] / full >= SWIPE.minDepth) { iCross = i; break; }
+    }
+    var tmax = th[iMax], depth = Math.min(SWIPE.maxDepth, tmax / full);
+    if (depth < SWIPE.minDepth) return { ok: false, why: 'noBack', depth: Math.max(0, depth), theta: th[m - 1] };
+    if (iCross < 0) return { ok: false, why: 'noThrough', depth: depth, theta: th[m - 1] };
+    // When it started: the turn grows with the square of the time from rest, so its square
+    // root runs straight in time; followed back from 2% and 7% of the way, to none.
+    var at = function (frac) { for (var k = 1; k <= iMax; k++) if (th[k] >= frac * tmax) { var u = (frac * tmax - th[k - 1]) / Math.max(1e-9, th[k] - th[k - 1]); return T[k - 1] + (T[k] - T[k - 1]) * u; } return T[iMax]; };
+    var t1 = at(0.02), t2 = at(0.07), t0 = clamp(t1 - (t2 - t1) * Math.sqrt(0.02) / (Math.sqrt(0.07) - Math.sqrt(0.02)), Math.max(T[0] - 0.05, t1 - 0.25), t1);
+    // The top: when it got within a hair of its furthest, and when it left; a stop there of
+    // 0.12 s or more is a pause and counts in neither half.
+    var band = Math.max(0.5, 0.008 * tmax), iA = iMax, iL = iMax;
+    while (iA > 0 && th[iA - 1] >= tmax - band) iA--;
+    while (iL + 1 < iCross && th[iL + 1] >= tmax - band) iL++;
+    // Without a pause, the turn: where its rate crosses nought, between the samples either side.
+    var rateAt = function (k) { return vdot(S[k], axis); }, tTurn = T[iMax];
+    for (var k2 = Math.max(0, iMax - 1); k2 <= iMax && k2 + 1 < m; k2++) {
+      var r0 = rateAt(k2), r1 = rateAt(k2 + 1);
+      if (r0 >= 0 && r1 < 0) { tTurn = T[k2] + (T[k2 + 1] - T[k2]) * r0 / (r0 - r1); break; }
+    }
+    var pause = T[iL] - T[iA], tReach, tLeave;
+    if (pause >= SWIPE.pause) { tReach = T[iA]; tLeave = T[iL]; } else { tReach = tLeave = tTurn; pause = 0; }
+    // Impact: the turn carried on from the sample before it in fine steps (the phone turns
+    // 25° between samples there, rolling as it goes) to the moment the shaft is back where
+    // it was at address; the attitude then.
+    var u0 = 1, qI = Q[iCross], w0c = wr(ia + iCross - 1), w1c = wr(ia + iCross), dtc = T[iCross] - T[iCross - 1], qP = Q[iCross - 1], aP = th[iCross - 1];
+    for (var kc = 1; kc <= MOTION.fine; kc++) {
+      var qk = qnorm(qmul(qP, qturn(wAt(ia + iCross, (kc - 0.5) / MOTION.fine), dtc / MOTION.fine))), shk = qrot(qk, sb);
+      var ak = Math.atan2(vdot(shk, e2), vdot(shk, e1)) / RAD;
+      while (ak - aP > 180) ak -= 360;
+      while (ak - aP < -180) ak += 360;
+      if (ak <= 0) {
+        var fc = aP / Math.max(1e-9, aP - ak);
+        u0 = (kc - 1 + fc) / MOTION.fine;
+        qI = qnorm([qP[0] + (qk[0] - qP[0]) * fc, qP[1] + (qk[1] - qP[1]) * fc, qP[2] + (qk[2] - qP[2]) * fc, qP[3] + (qk[3] - qP[3]) * fc]);
+        break;
+      }
+      qP = qk; aP = ak;
+    }
+    var tImp = T[iCross - 1] + dtc * u0;
+    var back = Math.max(0.01, tReach - t0), down = Math.max(SWIPE.minDown, tImp - tLeave), target = tempoTarget(depth, putt), ratio = back / down;
+    // Which way is up the shaft: the target is out of the screen (ẑ), and the swing's axis
+    // crossed with it points up the shaft, toward the hands. Open, rolling about it, is
+    // clockwise looking down the shaft for a right-hander, and a golfer rolls it open on
+    // the way back.
+    var up = vunit(vcross([0, 0, 1], axis)), sg = vdot(up, sb) >= 0 ? 1 : -1;
+    var openBack = -h * sg * roll[iMax] / RAD, tz = 1;
+    // Rolled well shut on the way back, the screen must have faced him, not the target.
+    if (openBack < -MOTION.flip) { sg = -sg; openBack = -openBack; up = [-up[0], -up[1], -up[2]]; tz = -1; }
+    // Level: gravity at address, whichever sign the phone gives it (the shaft points more
+    // up than down), square to the target line; without it, up the shaft will do.
+    var tgt = [0, 0, tz], lvl = up, gs = [0, 0, 0], ng = 0;
+    for (i = 0; i <= ia; i++) if (sm[i].g) { gs = [gs[0] + sm[i].g[0], gs[1] + sm[i].g[1], gs[2] + sm[i].g[2]]; ng++; }
+    if (ng && vdot(gs, gs) > 1) {
+      var gu = vunit(gs);
+      if (vdot(gu, up) < 0) gu = [-gu[0], -gu[1], -gu[2]];
+      var gl = [gu[0] - vdot(gu, tgt) * tgt[0], gu[1] - vdot(gu, tgt) * tgt[1], gu[2] - vdot(gu, tgt) * tgt[2]];
+      if (vdot(gl, gl) > 0.25) lvl = vunit(gl);
+    }
+    var away = vcross(tgt, lvl);
+    away = [h * away[0], h * away[1], h * away[2]];
+    // The face: where the screen pointed at impact, level, against the target line.
+    var F = qrot(qI, tgt), face = Math.atan2(vdot(F, away), Math.max(1e-6, vdot(F, tgt))) / RAD;
+    // The path: where the club head (down the shaft from the hands) was going at impact.
+    var wI = qrot(qI, wAt(ia + iCross, u0)), shaft = qrot(qI, [sg * sb[0], sg * sb[1], sg * sb[2]]), v = vcross(wI, [-shaft[0], -shaft[1], -shaft[2]]);
+    var path = Math.atan2(vdot(v, away), Math.max(1e-6, vdot(v, tgt))) / RAD, peak = 0;
+    for (i = iMax; i <= iCross; i++) peak = Math.max(peak, Math.sqrt(vdot(W[i], W[i])) / RAD);
+    return {
+      ok: true, motion: true, depth: depth, power: powerOfDepth(depth), back: back, down: down, pause: pause, ratio: ratio, target: target,
+      tempo: Math.log(ratio / target), angle: 0, strike: 0, face: face, path: path, roll: openBack, turn: tmax, peak: peak,
+      long: lng === 1 ? 'y' : 'x', tImpact: tImp, theta: th[m - 1]
+    };
+  }
+  // How far back a backswing of `depth` is, in words he can feel with the phone in his
+  // hands (the turn from the ball: a quarter of the way round is the club level).
+  function motionCue(depth, putt) {
+    if (putt) return depth < 0.35 ? 'a short stroke' : depth < 0.7 ? 'a medium stroke' : 'a long stroke';
+    return depth < 0.3 ? 'a small swing, hands to the knee' : depth < 0.45 ? 'hands to the hip, the phone level' : depth < 0.65 ? 'hands to the chest'
+      : depth < 0.88 ? 'hands to the shoulder, the phone pointing up' : 'a full backswing';
+  }
+
   // How much each part of a swing counts. face/path: degrees the face and path move
   // for a tempo error of 1 (the ratio e times its target: about 2.7 times, so 4 : 1
   // instead of 3 : 1 is 0.29, shutting the face 3.2°). swipe: degrees of path for each
@@ -1032,6 +1246,13 @@
     if (plan && nD * h * plan < 0) nD *= 0.5;   // committed to a shape, he seldom curves it the other way
     var u = clamp(h * sw.strike, -3, 3), uOff = deadband(u, cfg.strikeMid);
     var dFace = -cfg.face * tempo, dPath = -cfg.path * tempo, dSwipe = cfg.swipe * deadband(sw.angle, cfg.dead);
+    // Swung with the phone: the face and the path are what it measured (a share of them,
+    // past what holding a phone can't keep still), not what the tempo and a swipe suggest.
+    if (sw.motion && isNum(sw.face)) {
+      dFace = clamp(MOTION.face * deadband(sw.face, MOTION.faceDead), -MOTION.maxFace, MOTION.maxFace);
+      dPath = isNum(sw.path) ? clamp(MOTION.path * deadband(sw.path, MOTION.pathDead), -MOTION.maxPath, MOTION.maxPath) : dPath;
+      dSwipe = 0;
+    }
     var face = prof.face + nS + (1 - law.face) * nD + h * (dFace - TWIST * uOff + (ls ? ls.face : 0) + su.face);
     var path = prof.path + nS - law.face * nD + h * (dPath + (ls ? ls.path : 0) + su.path) + dSwipe;
     var f2p = face - path, spin = f2p + h * GEAR[kind] * uOff;
@@ -1059,7 +1280,8 @@
         dFace: dFace, dPath: dPath, dSwipe: h * dSwipe,
         face: h * face, path: h * path, f2p: h * spin, start: start, curve: cY, carry: Cy, side: sl * Cy + cY,
         shape: shapeOf(start, cY, Cy, h), pMis: pMis, own: { face: h * prof.face, path: h * prof.path, n: prof.n }, slope: ls,
-        type: type, spun: !!out.spun, apex: out.apex_ft, lie: lie, plan: { face: su.face, path: su.path }
+        type: type, spun: !!out.spun, apex: out.apex_ft, lie: lie, plan: { face: su.face, path: su.path },
+        motion: !!sw.motion, phoneFace: sw.motion ? sw.face : null, phonePath: sw.motion ? sw.path : null
       }
     };
   }
@@ -1101,10 +1323,11 @@
     var tempo = clamp(sw.tempo, -1, 1), u = clamp(h * sw.strike, -3, 3), uOff = deadband(u, 0.35);
     var luck = opts.still ? function () { return 0; } : function () { return gauss(rnd); };
     var len = puttLength(Math.min(sw.depth, 1.2), opts.easy) * Math.exp(c.pace * tempo) * Math.max(0.7, 1 - 0.05 * uOff * uOff) * (1 + luck() * c.len * rough);
-    var start = h * (-c.face * tempo - TWIST * 0.5 * uOff) + c.swipe * deadband(sw.angle, c.dead) + luck() * c.line * rough;
+    var faceStart = sw.motion && isNum(sw.face) ? MOTION.puttFace * deadband(sw.face, MOTION.puttDead) : -c.face * tempo;
+    var start = h * (faceStart - TWIST * 0.5 * uOff) + c.swipe * deadband(sw.angle, c.dead) + luck() * c.line * rough;
     len = Math.max(0.3, len);
     var wander = luck() * c.read * ft * rough, lat = ft * Math.tan(start * RAD) + wander, past = len - ft, cap = past < 0 ? 0 : 0.2 * clamp(1 - past / 5, 0.25, 1);
-    var rep = { len: len, start: start, ratio: sw.ratio, target: sw.target, tempo: sw.tempo, back: sw.back, down: sw.down, angle: sw.angle, strike: u, past: past, hand: h };
+    var rep = { len: len, start: start, ratio: sw.ratio, target: sw.target, tempo: sw.tempo, back: sw.back, down: sw.down, angle: sw.angle, strike: u, past: past, hand: h, motion: !!sw.motion, phoneFace: sw.motion ? sw.face : null };
     if (past >= 0 && Math.abs(lat) <= cap) return { holed: true, along: ft, side: 0, rep: rep };
     return { holed: false, along: len, side: lat * len / Math.max(ft, 0.5), rep: rep };
   }
@@ -1129,16 +1352,16 @@
   // really curved: an in-to-out swipe draws it only if the face is shut to the path),
   // coming back through off the middle, and swinging past full.
   function swingTips(rep, putt) {
-    var tips = [], ideal = rep.back / rep.target, side = rep.hand > 0 ? ['left', 'right'] : ['right', 'left'];
+    var tips = [], ideal = rep.back / rep.target, side = rep.hand > 0 ? ['left', 'right'] : ['right', 'left'], stop = rep.motion ? 'Stop at a full backswing.' : 'Stop at the Full line.';
     var swipe = deadband(rep.angle, 3), dir = swipe > 0 ? 'up to the right' : 'up to the left', cause = rep.misCause;
     var through = (rep.strike * rep.hand > 0 ? 'right' : 'left') + ' of the ball';
-    if (rep.mis === 'thin') tips.push(cause === 'over' ? 'Thin: past full, the strike suffers. Stop at the Full line.' : cause === 'snatch' ? 'Thin: a snatched takeaway. Start the club back smoothly.' : 'Thin: rushing from the top pulls you up out of it.');
-    if (rep.mis === 'fat') tips.push(cause === 'over' ? 'Fat: past full, the strike suffers. Stop at the Full line.' : 'Fat: slow through the ball, so the club bottomed out behind it. Keep the speed up through impact.');
+    if (rep.mis === 'thin') tips.push(cause === 'over' ? 'Thin: past full, the strike suffers. ' + stop : cause === 'snatch' ? 'Thin: a snatched takeaway. Start the club back smoothly.' : 'Thin: rushing from the top pulls you up out of it.');
+    if (rep.mis === 'fat') tips.push(cause === 'over' ? 'Fat: past full, the strike suffers. ' + stop : 'Fat: slow through the ball, so the club bottomed out behind it. Keep the speed up through impact.');
     if (rep.mis === 'shank') tips.push('Shank: you came back through ' + through + ', onto the hosel. Swipe back up through the ball.');
     if (rep.mis === 'toe') tips.push('Off the toe: you came back through ' + through + '. Swipe back up through it.');
     if (Math.abs(rep.tempo) >= 0.12) {
       var r = ratioText(rep.ratio), want = goalText(rep.target), quick = rep.tempo > 0;
-      var face = putt || !isNum(rep.dFace) ? '' : quick ? ' Early, so the face shut ' + degText(rep.dFace) + ' and it started further ' + side[0] + '.'
+      var face = putt || rep.motion || !isNum(rep.dFace) ? '' : quick ? ' Early, so the face shut ' + degText(rep.dFace) + ' and it started further ' + side[0] + '.'
         : ' Late, so the face stayed ' + degText(rep.dFace) + ' open and it started further ' + side[1] + '.';
       if (quick) tips.push((rep.back > 1.1 ? 'Tempo ' + r + ': a slow backswing (' + secs(rep.back) + '), then a lunge. Take it back a little quicker and smoother, for ' + want + '.'
         : 'Tempo ' + r + ': quick from the top. Back in ' + secs(rep.back) + ' wants about ' + secs(ideal) + ' down, for ' + want + '.') + face);
@@ -1155,7 +1378,17 @@
       else tips.push('You swiped ' + dir + ' (' + path + ', which ' + (inOut ? 'draws' : 'fades') + ' it), but the face was ' + (inOut ? (faded ? 'open' : 'square') : (drew ? 'shut' : 'square')) + ' to the path, so it ' + (inOut ? (faded ? 'still faded' : 'flew straight') : (drew ? 'still drew' : 'flew straight')) + '.');
     }
     if (!rep.mis && Math.abs(rep.strike) > 0.6) tips.push('Off the ' + (rep.strike > 0 ? 'heel' : 'toe') + ': you came back through ' + through + '. Swipe back up through it.');
-    if (!putt && !rep.mis && rep.depth > 1.04) tips.push('Past full: a longer backswing adds little and costs control. Stop at the Full line.');
+    // Swung with the phone: where the screen faced at impact, and the way it was swinging.
+    if (rep.motion && isNum(rep.phoneFace) && Math.abs(rep.phoneFace) >= (putt ? MOTION.puttDead : MOTION.faceDead) + 2) {
+      var pf = degText(rep.phoneFace);
+      tips.push(rep.phoneFace > 0 ? 'The screen came back ' + pf + ' open: roll it back to square, as it was at address, as you come through.'
+        : 'The screen came back ' + pf + ' shut: you rolled it past square. Let it come back just to where it started.');
+    }
+    if (rep.motion && !putt && isNum(rep.phonePath) && Math.abs(rep.phonePath) >= MOTION.pathDead + 3) {
+      tips.push(rep.phonePath > 0 ? 'It came from the inside, ' + degText(rep.phonePath) + ' in-to-out: a flatter downswing than your backswing.'
+        : 'It came over the top, ' + degText(rep.phonePath) + ' out-to-in: start down on the same plane you went back on.');
+    }
+    if (!putt && !rep.mis && rep.depth > 1.04) tips.push('Past full: a longer backswing adds little and costs control. ' + stop);
     var ls = rep.slope;
     if (!putt && ls && Math.abs(ls.above) >= 3) tips.push('Ball ' + (ls.above > 0 ? 'above' : 'below') + ' your feet: the face pointed ' + degText(ls.face) + ' ' + (ls.above > 0 ? side[0] : side[1]) + ' of your aim. Aim a little ' + (ls.above > 0 ? side[1] : side[0]) + ' to allow for it.');
     if (!putt && ls && Math.abs(ls.up) >= 3) tips.push(ls.up > 0 ? 'Uphill lie: it launches higher and flies shorter. Take a little more club.' : 'Downhill lie: it comes out lower and runs. Take a little less club, and swing smoothly to catch it clean.');
@@ -1580,7 +1813,7 @@
     PUTT_SWING: PUTT_SWING, puttLength: puttLength, puttDepth: puttDepth, puttSwing: puttSwing, shapeAllowance: shapeAllowance,
     LOFT: LOFT, loftOf: loftOf, lieSlope: lieSlope, slopeShot: slopeShot, slopeWords: slopeWords,
     SHOTS: SHOTS, shotTypes: shotTypes, shotFits: shotFits, clubForShot: clubForShot, shapeSetup: shapeSetup, shotReach: shotReach, typeFlight: typeFlight, typeShot: typeShot,
-    suggestShot: suggestShot, shotVerdict: shotVerdict, chipClub: chipClub, chipShare: chipShare, chipRun: chipRun, typeLanding: typeLanding, strokeScale: strokeScale, ownStroke: ownStroke, strokeFor: strokeFor, shotSay: shotSay, plainShot: plainShot, troubleBeside: troubleBeside, worseSide: worseSide,
+    readMotion: readMotion, MOTION: MOTION, motionCue: motionCue, suggestShot: suggestShot, shotVerdict: shotVerdict, chipClub: chipClub, chipShare: chipShare, chipRun: chipRun, typeLanding: typeLanding, strokeScale: strokeScale, ownStroke: ownStroke, strokeFor: strokeFor, shotSay: shotSay, plainShot: plainShot, troubleBeside: troubleBeside, worseSide: worseSide,
     swingTips: swingTips, ownShapeText: ownShapeText, tempoWord: tempoWord, faceWord: faceWord, pathWord: pathWord, ratioText: ratioText, goalText: goalText,
     DECK: DECK, lieFactor: lieFactor, playShot: playShot, rollOut: rollOut, TRUNK: TRUNK, LEAVES: LEAVES, CUP: CUP, flightOpts: flightOpts,
     PUTT: PUTT, puttTarget: puttTarget, putt: putt, TAP_IN: TAP_IN,
