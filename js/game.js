@@ -339,11 +339,19 @@
   // The marker runs from 0 to 1 (full power) on the backswing, then back down past 0
   // (the line). Where it is on the third tap sets the timing: e = −pos / win, so early
   // (still above the line) is negative and late is positive; ±1 is the edge of the window.
+  //   back: s for the bar to fill; down: its speed coming back (a share of the bar a
+  //   second, slower after a shorter backswing). However short the shot, the bar takes at
+  //   least `lead` s to reach the power it wants (the white line) and the marker at least
+  //   `ret` s to come back to the line, so a chip is as calm to time as a drive.
   var METER = {
-    normal: { back: 1.15, down: 1.45, win: 0.12, end: -0.22 },
-    easy: { back: 1.5, down: 1.05, win: 0.17, end: -0.3 }
+    normal: { back: 1.4, down: 1.2, lead: 0.5, ret: 0.4, win: 0.12, end: -0.22 },
+    easy: { back: 1.75, down: 0.95, lead: 0.6, ret: 0.5, win: 0.17, end: -0.3 }
   };
   function timingOf(pos, easy) { var m = easy ? METER.easy : METER.normal; return -pos / m.win; }
+  // How long the bar takes to fill for a shot that wants `target` power.
+  function meterBackTime(target, easy) { var m = easy ? METER.easy : METER.normal; return Math.max(m.back, m.lead / Math.max(0.05, isNum(target) ? target : 1)); }
+  // How fast the marker comes back from `power` (shares of the bar a second).
+  function meterDownSpeed(power, easy) { var m = easy ? METER.easy : METER.normal, p = Math.max(0.03, power); return Math.min(m.down * (0.45 + 0.55 * p), p / m.ret); }
   // Timing in words. Early pulls it left and late pushes it right.
   function timingWord(e) {
     var q = Math.abs(e);
@@ -1652,8 +1660,12 @@
   // Putting
   // ---------------------------------------------------------------------------
   // The putting meter's target: where to stop the marker for a putt this long (ft).
-  var PUTT = { normal: { sweep: 1.6, win: 0.06 }, easy: { sweep: 2.2, win: 0.09 } };
+  // sweep: s for the marker to cross the meter; it takes at least `lead` s to reach this
+  // putt's line, whatever its length, so a short putt has the same easy rhythm as a long
+  // one instead of a snatch.
+  var PUTT = { normal: { sweep: 1.9, lead: 0.85, win: 0.06 }, easy: { sweep: 2.4, lead: 1, win: 0.09 } };
   function puttTarget(ft) { return clamp(0.12 + ft / 75, 0.14, 0.9); }
+  function puttSweep(target, easy) { var c = easy ? PUTT.easy : PUTT.normal; return Math.max(c.sweep, c.lead / Math.max(0.05, target)); }
   // A putt of `ft` feet with timing error e (0 on the target, ±1 at the edge of its
   // window; long is positive). A good putt dies a foot or so past the hole; the further
   // off, the further long or short, and every putt wanders off line a little, more on
@@ -1807,7 +1819,7 @@
     buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, elevOf: elevOf, heightAt: heightAt, slopeAt: slopeAt, playsLike: playsLike, landingOf: landingOf,
     groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf,
     rankShots: rankShots, clubPools: clubPools, clubList: clubList, totalOf: totalOf,
-    METER: METER, timingOf: timingOf, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
+    METER: METER, timingOf: timingOf, meterBackTime: meterBackTime, meterDownSpeed: meterDownSpeed, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
     LAW: LAW, clubLaw: clubLaw, facePathOf: facePathOf, swingProfile: swingProfile, SWIPE: SWIPE, tempoTarget: tempoTarget, powerOfDepth: powerOfDepth,
     readSwing: readSwing, SWING: SWING, strikeOf: strikeOf, swingShot: swingShot, shapeOf: shapeOf, MIS_SHANK: MIS_SHANK,
     PUTT_SWING: PUTT_SWING, puttLength: puttLength, puttDepth: puttDepth, puttSwing: puttSwing, shapeAllowance: shapeAllowance,
@@ -1816,7 +1828,7 @@
     readMotion: readMotion, MOTION: MOTION, motionCue: motionCue, suggestShot: suggestShot, shotVerdict: shotVerdict, chipClub: chipClub, chipShare: chipShare, chipRun: chipRun, typeLanding: typeLanding, strokeScale: strokeScale, ownStroke: ownStroke, strokeFor: strokeFor, shotSay: shotSay, plainShot: plainShot, troubleBeside: troubleBeside, worseSide: worseSide,
     swingTips: swingTips, ownShapeText: ownShapeText, tempoWord: tempoWord, faceWord: faceWord, pathWord: pathWord, ratioText: ratioText, goalText: goalText,
     DECK: DECK, lieFactor: lieFactor, playShot: playShot, rollOut: rollOut, TRUNK: TRUNK, LEAVES: LEAVES, CUP: CUP, flightOpts: flightOpts,
-    PUTT: PUTT, puttTarget: puttTarget, putt: putt, TAP_IN: TAP_IN,
+    PUTT: PUTT, puttTarget: puttTarget, puttSweep: puttSweep, putt: putt, TAP_IN: TAP_IN,
     suggestClub: suggestClub, SURE: SURE, aimFor: aimFor, treesInWay: treesInWay, powerFor: powerFor, headingTo: headingTo, dist: dist,
     scoreName: scoreName, toParText: toParText, MAX_OVER: MAX_OVER, newRound: newRound, totals: totals, seedOf: seedOf
   };

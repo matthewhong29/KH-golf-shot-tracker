@@ -793,6 +793,13 @@ const noMis = Object.keys(m3Pools).find((c) => !m3Pools[c].mis.length), wayM3 = 
 ok(wayM3.grade === 'mishit' && wayM3.rank > m3Pools[noMis].ranked.length * 0.6, 'a club he has never mis-hit: one of his worst solid shots');
 eq([GG.timingOf(0.06), GG.timingOf(-0.12), GG.timingOf(0), GG.timingOf(0.17, true)], [-0.5, 1, -0, -1], 'timing: early is negative, late positive, ±1 at the window’s edge');
 eq([0.05, -0.3, 0.7, -0.7, 1.3, -1.3].map(GG.timingWord), ['Perfect timing', 'Good timing', 'A little late', 'A little early', 'Way late', 'Way early'], 'timing in words');
+// The meters' pace: however short the shot, the bar takes half a second to reach the power
+// it wants and the marker 0.4 s to come back to the line; a putt's line is always at least
+// 0.85 s away. Easy is slower still.
+const r2t = (v) => Math.round(v * 100) / 100;
+eq([GG.meterBackTime(1), r2t(GG.meterBackTime(0.2) * 0.2), r2t(1 / GG.meterDownSpeed(1)), r2t(0.2 / GG.meterDownSpeed(0.2))], [1.4, 0.5, 0.83, 0.4], 'the swing meter: 1.4 s to fill, half a second to a 20% swing’s line, 0.4 s back from it');
+eq([r2t(GG.puttTarget(3) * GG.puttSweep(GG.puttTarget(3))), r2t(GG.puttTarget(10) * GG.puttSweep(GG.puttTarget(10))), r2t(GG.puttTarget(40) * GG.puttSweep(GG.puttTarget(40)))], [0.85, 0.85, 1.24], 'the putting meter: 0.85 s to a 3 ft or a 10 ft putt’s line, longer for a 40 ft one');
+ok(GG.meterBackTime(1, true) > GG.meterBackTime(1) && GG.meterDownSpeed(1, true) < GG.meterDownSpeed(1) && GG.puttSweep(0.5, true) > GG.puttSweep(0.5), 'Easy is slower');
 
 section('Game: power, lie and the driver off the turf');
 const base = { club: '7i', carry_yds: 120, total_yds: 128, ball_speed_mph: 90, launch_deg: 20, apex_ft: 70, landing_deg: 44, hang_time_s: 5, curve_ft: 10, offline_ft: 30 };

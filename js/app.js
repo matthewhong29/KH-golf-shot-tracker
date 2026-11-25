@@ -2511,6 +2511,7 @@
       const cfg = gmSwingCfg(), pool = gm.pools[gm.club];
       m.target = pool ? GM.strokeFor(pool, gmPlays(gmAimPoint()), gmLie(), gmShotType()) : 1;
       m.win = cfg.win;
+      if (m.phase === 'ready') m.backT = GM.meterBackTime(m.target, gm.round.easy);
       const z0 = gmPct('swing', -cfg.win), z1 = gmPct('swing', cfg.win);
       $('.gm-zone', el).style.left = z0 + '%';
       $('.gm-zone', el).style.width = (z1 - z0) + '%';
@@ -2521,6 +2522,7 @@
       const cfg = gmPuttCfg(), ft = GM.dist(gm.ball, gm.pin) * 3;
       m.target = GM.puttTarget(ft);
       m.win = cfg.win;
+      if (m.phase === 'ready') m.sweep = GM.puttSweep(m.target, gm.round.easy);
       const z0 = gmPct('putt', m.target - cfg.win), z1 = gmPct('putt', m.target + cfg.win);
       $('.gm-zone', el).style.left = z0 + '%';
       $('.gm-zone', el).style.width = (z1 - z0) + '%';
@@ -2562,8 +2564,10 @@
     }
   }
   // The downswing comes back a little slower after a short backswing, so a chip can
-  // still be timed.
-  function gmDownSpeed(m) { return gmSwingCfg().down * (0.45 + 0.55 * m.power); }
+  // still be timed (GolfGame.meterDownSpeed).
+  function gmDownSpeed(m) { return GM.meterDownSpeed(m.power, gm.round.easy); }
+  function gmBackT(m) { return m.backT || gmSwingCfg().back; }
+  function gmSweep(m) { return m.sweep || gmPuttCfg().sweep; }
   function gmMeterLoop() {
     const m = gm && gm.meter;
     if (!m) return;
@@ -2572,8 +2576,8 @@
     if (m.kind === 'swing') {
       const cfg = gmSwingCfg();
       if (m.phase === 'back') {
-        const pos = (now - m.t0) / 1000 / cfg.back;
-        if (pos >= 1) { Object.assign(m, { power: 1, phase: 'down', t1: m.t0 + cfg.back * 1000 }); gmMeterText(); } else gmMeterPaint(pos);
+        const pos = (now - m.t0) / 1000 / gmBackT(m);
+        if (pos >= 1) { Object.assign(m, { power: 1, phase: 'down', t1: m.t0 + gmBackT(m) * 1000 }); gmMeterText(); } else gmMeterPaint(pos);
       }
       if (m.phase === 'down') {
         const pos = m.power - (now - m.t1) / 1000 * gmDownSpeed(m);
@@ -2581,7 +2585,7 @@
         gmMeterPaint(pos);
       }
     } else if (m.phase === 'run') {
-      const pos = (now - m.t0) / 1000 / gmPuttCfg().sweep;
+      const pos = (now - m.t0) / 1000 / gmSweep(m);
       if (pos >= GM_PUTT_END) { gmMeterPaint(GM_PUTT_END); gmPuttDone(GM_PUTT_END); return; }
       gmMeterPaint(pos);
     }
@@ -2594,10 +2598,10 @@
     if (m.kind === 'swing') {
       if (!gm.pools[gm.club]) { toast('No range shots with this club yet. Play it from the range.'); return; }
       if (m.phase === 'ready') { Object.assign(m, { phase: 'back', t0: now }); gmMeterText(); m.raf = m.raf || requestAnimationFrame(gmMeterLoop); }
-      else if (m.phase === 'back') { Object.assign(m, { power: gmClamp((now - m.t0) / 1000 / gmSwingCfg().back, 0.03, 1), phase: 'down', t1: now }); gmMeterText(); }
+      else if (m.phase === 'back') { Object.assign(m, { power: gmClamp((now - m.t0) / 1000 / gmBackT(m), 0.03, 1), phase: 'down', t1: now }); gmMeterText(); }
       else if (m.phase === 'down') { const pos = m.power - (now - m.t1) / 1000 * gmDownSpeed(m); gmMeterPaint(pos); gmSwingDone(pos); }
     } else if (m.phase === 'ready') { Object.assign(m, { phase: 'run', t0: now }); gmMeterText(); m.raf = m.raf || requestAnimationFrame(gmMeterLoop); }
-    else if (m.phase === 'run') { const pos = (now - m.t0) / 1000 / gmPuttCfg().sweep; gmMeterPaint(pos); gmPuttDone(pos); }
+    else if (m.phase === 'run') { const pos = (now - m.t0) / 1000 / gmSweep(m); gmMeterPaint(pos); gmPuttDone(pos); }
   }
   function gmMeterStop() {
     const m = gm.meter;
