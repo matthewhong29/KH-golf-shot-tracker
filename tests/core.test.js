@@ -687,5 +687,168 @@ eq(C.parseCell('44 ft', 'apex_ft', 'yd'), 44, 'cell unit beats the column hint')
 eq(C.parseCell('26°', 'launch_deg'), 26, 'degree sign');
 eq(C.parseCell('6200 rpm', 'spin_rpm'), 6200, 'rpm not read as direction or metres');
 
+// ---------------------------------------------------------------------------
+section('Game: TPC Harding Park');
+const CO = require('../js/courses.js');
+const GG = require('../js/game.js');
+const HP = CO.get('harding-park');
+eq(HP.holes.map((h) => h.n), Array.from({ length: 18 }, (_, i) => i + 1), 'holes 1–18 in order');
+eq(HP.holes.map((h) => h.par), [4, 4, 3, 5, 4, 4, 4, 3, 5, 5, 3, 5, 4, 4, 4, 4, 3, 4], 'pars from the scorecard');
+eq([CO.par(HP), CO.par(HP, [1, 2, 3, 4, 5, 6, 7, 8, 9]), CO.par(HP, [10, 11, 12, 13, 14, 15, 16, 17, 18])], [72, 36, 36], 'par 72: 36 out, 36 in');
+eq(HP.holes.map((h) => h.yds.blue), [395, 430, 165, 580, 395, 440, 335, 200, 495, 550, 185, 480, 405, 440, 405, 330, 175, 440], 'Blue yardages (Offcourse)');
+eq(HP.holes.map((h) => h.yds.white), [375, 400, 155, 540, 365, 390, 325, 190, 475, 530, 155, 450, 375, 410, 375, 310, 165, 420], 'White yardages (GolfPass)');
+HP.tees.forEach((t) => eq(HP.holes.reduce((s, h) => s + h.yds[t.id], 0), t.yds, `${t.name} tees add up to ${t.yds}`));
+ok(HP.holes.every((h) => h.yds.blue >= h.yds.white), 'every Blue tee is behind the White one');
+ok(HP.sources.length >= 2 && HP.sources.every((s) => /^https:\/\//.test(s.url) && s.title), 'sources listed');
+ok(HP.holes.every((h) => h.note && h.note.length <= 140), 'every hole has a short note');
+
+section('Game: the holes on the ground');
+let badLen = 0, badTee = 0, badGreen = 0, badPin = 0, badBunker = 0;
+HP.holes.forEach((h) => HP.tees.forEach((t) => {
+  const H = GG.buildHole(HP, h.n, t.id), st = GG.toHole(H, H.start.x, H.start.z), pin = GG.pinFor(H, 99);
+  if (Math.abs(st.g - h.yds[t.id]) > 0.5 || Math.abs(st.lat) > 0.01) badLen++;
+  H.tees.forEach((tb) => { if (GG.lieAt(H, tb.x, tb.z) !== 'fairway') badTee++; });
+  if (GG.lieAt(H, H.green.x, H.green.z) !== 'green') badGreen++;
+  if (GG.lieAt(H, pin.x, pin.z) !== 'green') badPin++;
+  H.bunkers.forEach((b) => { if (GG.lieAt(H, b.x, b.z) !== 'bunker') badBunker++; });
+}));
+eq([badLen, badTee, badGreen, badPin, badBunker], [0, 0, 0, 0, 0], 'from each tee the line of play measures the scorecard yardage; tees, green, pin and bunkers lie right');
+function spotLie(n, g, lat) { const H = GG.buildHole(HP, n, 'white'), q = H.spot(g, lat); return GG.lieAt(H, q.x, q.z); }
+eq([14, 15, 16, 17, 18].map((n) => spotLie(n, n === 15 ? 300 : 120, -90)), ['water', 'water', 'water', 'water', 'water'], 'Lake Merced down the left of 14–18');
+eq([14, 16, 17].map((n) => spotLie(n, 120, 25)), ['rough', 'rough', 'rough'], '…and not on the right');
+eq(spotLie(18, 380, 0), 'water', '18: the tee shot carries the water');
+eq([spotLie(12, 250, -45), spotLie(12, 250, -30), spotLie(11, -40, 0)], ['ob', 'rough', 'ob'], 'out of bounds left of 12 and over the 11th green');
+eq(spotLie(2, 200, -60), 'penalty', '2: penalty area on the left');
+eq([spotLie(1, 200, 0), spotLie(1, 200, 25), spotLie(1, 200, -60), spotLie(1, 200, 40)], ['fairway', 'rough', 'trees', 'trees'], '1: fairway, rough, then the trees');
+eq(spotLie(7, 2, -21), 'rough', '7: the grassy hollow plays as rough');
+const H4 = GG.buildHole(HP, 4, 'blue'), H13 = GG.buildHole(HP, 13, 'blue');
+ok(H4.green.x < -60 && H13.green.x > 25, 'doglegs: 4 bends left, 13 bends right');
+eq(JSON.stringify(GG.buildHole(HP, 15, 'white').trees.slice(0, 5)), JSON.stringify(GG.buildHole(HP, 15, 'white').trees.slice(0, 5)), 'a hole is the same every time');
+ok(GG.pinFor(H4, 1).x !== GG.pinFor(H4, 2).x, 'the pin moves from round to round');
+
+section('Game: his own shots');
+const dadPools = GG.clubPools(fileData.sessions, fileData.equipment);
+const m3Data = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'brother_golf_data.json'), 'utf8'));
+const m3Pools = GG.clubPools(m3Data.sessions, m3Data.equipment);
+const allDad = C.clubData(fileData.sessions);
+eq(Object.keys(dadPools).sort(), Object.keys(allDad).filter((c) => allDad[c].solid.length).sort(), 'a pool for every club with a solid shot');
+eq(GG.rankShots(allDad['7i'], '7i', fileData.equipment).slice(0, 10).map((s) => s.id), C.bestShots(allDad['7i'], '7i', fileData.equipment, 10).map((s) => s.id), 'ranked the same way as Best 10');
+eq(dadPools['5w'].misRate, 3 / 5, '5 wood: 3 of 5 shots were mis-hits');
+ok(Object.keys(dadPools).every((c) => dadPools[c].full >= dadPools[c].carry), 'a good swing’s total is at least its carry');
+let rnd = FL.rng(5);
+const p7 = dadPools['7i'], n7 = p7.ranked.length;
+const perfect = Array.from({ length: 60 }, () => GG.pickShot(p7, 0, rnd));
+ok(perfect.every((x) => x.rank <= 1 + 2 * Math.round(n7 * 0.08) && x.grade === 'perfect'), 'on the line: one of his very best');
+const early = Array.from({ length: 60 }, () => GG.pickShot(p7, -0.6, rnd)), late = Array.from({ length: 60 }, () => GG.pickShot(p7, 0.6, rnd));
+ok(early.filter((x) => x.grade !== 'mishit').every((x) => x.shot.offline_ft < 0) && late.filter((x) => x.grade !== 'mishit').every((x) => x.shot.offline_ft > 0), 'early ones went left, late ones right');
+const middle = Array.from({ length: 200 }, () => GG.pickShot(p7, 0.37, rnd)).filter((x) => x.rank);
+const midRank = middle.reduce((s, x) => s + x.rank, 0) / middle.length / n7;
+ok(midRank > 0.35 && midRank < 0.65, `a third of the window off: from the middle of his list (${midRank.toFixed(2)})`);
+const way = GG.pickShot(p7, 1.4, rnd);
+eq([way.grade, p7.mis.indexOf(way.shot) >= 0], ['mishit', true], 'outside the window: one of his mis-hits');
+const noMis = Object.keys(m3Pools).find((c) => !m3Pools[c].mis.length), wayM3 = GG.pickShot(m3Pools[noMis], -1.4, rnd);
+ok(wayM3.grade === 'mishit' && wayM3.rank > m3Pools[noMis].ranked.length * 0.6, 'a club he has never mis-hit: one of his worst solid shots');
+eq([GG.timingOf(0.06), GG.timingOf(-0.12), GG.timingOf(0), GG.timingOf(0.17, true)], [-0.5, 1, -0, -1], 'timing: early is negative, late positive, ±1 at the window’s edge');
+eq([0.05, -0.3, 0.7, -0.7, 1.3, -1.3].map(GG.timingWord), ['Perfect timing', 'Good timing', 'A little late', 'A little early', 'Way late', 'Way early'], 'timing in words');
+
+section('Game: power, lie and the driver off the turf');
+const base = { club: '7i', carry_yds: 120, total_yds: 128, ball_speed_mph: 90, launch_deg: 20, apex_ft: 70, landing_deg: 44, hang_time_s: 5, curve_ft: 10, offline_ft: 30 };
+const half = GG.adjustShot(base, 0.5, 'fairway');
+eq([half.carry_yds, half.total_yds, half.offline_ft, half.curve_ft, half.apex_ft, Math.round(half.ball_speed_mph * 10) / 10, half.launch_deg], [60, 64, 15, 5, 35, 63.6, 20], 'half power: half as far and as wide, same launch');
+const rough = GG.adjustShot(base, 1, 'rough');
+eq([rough.carry_yds, Math.round(rough.offline_ft * 100) / 100], [108, 31.05], 'from the rough: 10% shorter, 15% wider');
+const punch = GG.adjustShot(base, 1, 'trees');
+ok(punch.carry_yds === 72 && punch.apex_ft < 30 && Math.abs(punch.total_yds - punch.carry_yds - 8 * 0.6 * 1.6) < 1e-9, 'from the trees: a low punch that runs');
+const drv = { club: 'Driver', carry_yds: 160, total_yds: 170, offline_ft: 20 };
+eq([GG.adjustShot(drv, 1, 'tee').carry_yds, Math.round(GG.adjustShot(drv, 1, 'fairway').carry_yds * 10) / 10], [160, 147.2], 'a driver off the turf goes a little shorter');
+eq(base.carry_yds, 120, 'the real shot is left as it was');
+
+section('Game: a shot on the hole');
+const H1 = GG.buildHole(HP, 1, 'white'), pin1 = GG.pinFor(H1, 3);
+const tee1 = { x: H1.start.x, z: H1.start.z, lie: 'tee' }, down1 = H1.spot(H1.yds - 200, 0);
+const straight = GG.playShot(H1, tee1, down1, { club: '7i', carry_yds: 150, total_yds: 160, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
+eq([straight.result, straight.lie, Math.round(straight.carry), Math.round(GG.dist(tee1, straight.rest)), Math.round(GG.toHole(H1, straight.rest.x, straight.rest.z).lat * 10) / 10],
+  ['ok', 'fairway', 150, 160, 0], 'straight down the fairway: lands at its carry and finishes at its total');
+eq(straight.next, { x: straight.rest.x, z: straight.rest.z, lie: 'fairway' }, 'the next shot is from where it stopped');
+const right = GG.playShot(H1, tee1, down1, { club: '7i', carry_yds: 150, total_yds: 160, offline_ft: 30, curve_ft: 20 }, { pin: pin1, rnd: FL.rng(1) });
+ok(Math.abs(GG.toHole(H1, right.rest.x, right.rest.z).lat - 10) < 0.5, 'offline 30 ft: finishes 10 yds right of the aim line');
+const rollRough = GG.playShot(H1, tee1, H1.spot(H1.yds - 200, 30), { club: '7i', carry_yds: 150, total_yds: 170, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
+ok(rollRough.lie === 'rough' && GG.dist(rollRough.land, rollRough.rest) < 11, 'landing in the rough cuts the roll');
+const H14 = GG.buildHole(HP, 14, 'white'), tee14 = { x: H14.start.x, z: H14.start.z, lie: 'tee' };
+const wet = GG.playShot(H14, tee14, H14.spot(H14.yds - 150, -110), { club: '7i', carry_yds: 150, total_yds: 160, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H14, 3), rnd: FL.rng(1) });
+ok(wet.result === 'water' && wet.penalty === 1 && !/water/.test(wet.next.lie) && GG.dist(tee14, wet.next) < GG.dist(tee14, wet.land), 'into Lake Merced: a penalty stroke, and a drop where it went in');
+const H12 = GG.buildHole(HP, 12, 'white'), tee12 = { x: H12.start.x, z: H12.start.z, lie: 'tee' };
+const ob = GG.playShot(H12, tee12, H12.spot(H12.yds - 140, -70), { club: '7i', carry_yds: 150, total_yds: 155, apex_ft: 160, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H12, 3), rnd: FL.rng(1) });
+eq([ob.result, ob.penalty, ob.next], ['ob', 1, tee12], 'out of bounds: a penalty stroke and hit again from the same spot');
+const H3 = GG.buildHole(HP, 3, 'white'), tree3 = H3.trees.find((t) => GG.dist(H3.start, t) > 40 && GG.dist(H3.start, t) < 90);
+const low = GG.playShot(H3, { x: H3.start.x, z: H3.start.z, lie: 'tee' }, tree3, { club: '7i', carry_yds: 130, total_yds: 140, apex_ft: 20, launch_deg: 8, landing_deg: 15, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H3, 3), rnd: FL.rng(1) });
+ok(low.result === 'tree' && low.tree && GG.dist(low.rest, low.tree) < low.tree.r + 4 && low.traj.hang < 4, 'a low shot into a cypress drops by the tree');
+const H2 = GG.buildHole(HP, 2, 'white'), tee2 = { x: H2.start.x, z: H2.start.z, lie: 'tee' }, bk = H2.bunkers[0], toBk = GG.headingTo(tee2, bk);
+let edge = 0;
+while (GG.lieAt(H2, bk.x - Math.sin(toBk) * edge, bk.z - Math.cos(toBk) * edge) === 'bunker') edge += 0.25;
+const landSpot = { x: bk.x - Math.sin(toBk) * (edge + 1.5), z: bk.z - Math.cos(toBk) * (edge + 1.5) }, c2 = GG.dist(tee2, landSpot);
+const intoSand = GG.playShot(H2, tee2, bk, { club: '5hy', carry_yds: c2, total_yds: c2 + 12, apex_ft: 70, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H2, 3), rnd: FL.rng(1) });
+ok(intoSand.result === 'ok' && intoSand.lie === 'bunker' && GG.dist(intoSand.land, intoSand.rest) < 5, 'a ball rolling into a bunker stays in it');
+const nearPin = { x: pin1.x - Math.sin(GG.headingTo(tee1, pin1)) * 30, z: pin1.z - Math.cos(GG.headingTo(tee1, pin1)) * 30, lie: 'fairway' };
+const chip = GG.playShot(H1, nearPin, pin1, { club: 'SW', carry_yds: 27, total_yds: 31, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
+eq([chip.result, chip.lie, chip.next], ['holed', 'holed', undefined], 'rolling over the hole slowly: in!');
+ok(GG.dist(chip.rest, pin1) < GG.CUP, '…and it stops in the cup');
+
+section('Game: putting, clubs and the score');
+rnd = FL.rng(11);
+const makes = (ft, e) => Array.from({ length: 400 }, () => GG.putt(ft, e, rnd)).filter((r) => r.holed).length / 400;
+const m3 = makes(3, 0), m10 = makes(10, 0), m30 = makes(30, 0), mShort = makes(10, -1.2);
+ok(m3 > 0.75 && m10 > 0.25 && m10 < 0.6 && m30 < 0.25 && mShort === 0, `putts: 3 ft ${Math.round(m3 * 100)}%, 10 ft ${Math.round(m10 * 100)}%, 30 ft ${Math.round(m30 * 100)}%; never up, never in`);
+ok(Array.from({ length: 100 }, () => GG.putt(20, 0.5, rnd)).every((r) => r.holed ? r.along === 20 : r.along > 0), 'a putt goes forward and a holed one ends at the hole');
+ok([2, 6, 12, 25, 50, 90].map(GG.puttTarget).every((v, i, a) => v >= 0.14 && v <= 0.9 && (!i || v >= a[i - 1])), 'a longer putt needs a longer stroke');
+eq([GG.suggestClub(dadPools, 200, 'tee'), GG.suggestClub(dadPools, 88, 'fairway'), GG.suggestClub(dadPools, 88, 'rough')], ['5hy', 'PW', '9i'], 'Dad: his 5 hybrid over the 5 wood he often mis-hits; one more club from the rough');
+eq([GG.suggestClub(m3Pools, 250, 'tee'), GG.suggestClub(m3Pools, 250, 'fairway')], ['Driver', '3w'], 'M3: driver off the tee, 3 wood off the fairway');
+const H4w = GG.buildHole(HP, 4, 'white'), aim4 = GG.aimFor(H4w, H4w.start, GG.pinFor(H4w, 1), 156);
+ok(!aim4.pin && Math.abs(GG.dist(H4w.start, aim4) - 156) < 8 && GG.lieAt(H4w, aim4.x, aim4.z) === 'fairway', 'a long hole: aim down the fairway as far as the club goes');
+const near1 = H1.spot(120, 0);
+eq(GG.aimFor(H1, near1, pin1, 140).pin, true, 'in range: aim at the pin');
+eq([GG.scoreName(1, 3), GG.scoreName(2, 5), GG.scoreName(3, 4), GG.scoreName(4, 4), GG.scoreName(5, 4), GG.scoreName(6, 4), GG.scoreName(8, 4)],
+  ['Hole in one', 'Albatross', 'Birdie', 'Par', 'Bogey', 'Double bogey', '+4'], 'score names');
+eq([GG.toParText(0), GG.toParText(5), GG.toParText(-2)], ['Even', '+5', '-2'], 'to par');
+const round = GG.newRound(HP, { tee: 'white', holes: [1, 2, 3], mode: 'meter', seed: 7 });
+eq(round.cards.map((c) => [c.n, c.par, c.yds]), [[1, 4, 375], [2, 4, 400], [3, 3, 155]], 'a round’s cards');
+Object.assign(round.cards[0], { done: true, score: 5 });
+Object.assign(round.cards[1], { done: true, score: 4 });
+eq(GG.totals(round), { played: 2, holes: 3, strokes: 9, par: 8, toPar: 1, allPar: 11 }, 'totals so far');
+
+section('Game: a whole round for each player');
+function botRound(d, pools, seed) {
+  const r = FL.rng(seed), gauss = () => { const u = 1 - r(), v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  return HP.holes.map((h) => {
+    const H = GG.buildHole(HP, h.n, 'white'), pin = GG.pinFor(H, seed);
+    let ball = { x: H.start.x, z: H.start.z, lie: 'tee' }, strokes = 0;
+    while (strokes < 2 * h.par) {
+      const dd = GG.dist(ball, pin);
+      if (ball.lie === 'green') {
+        strokes++;
+        if (dd * 3 <= GG.TAP_IN) return strokes;
+        const pr = GG.putt(dd * 3, gauss() * 0.5, r);
+        if (pr.holed) return strokes;
+        const q = FL.offsetPoint(ball.x, ball.z, GG.headingTo(ball, pin), pr.along / 3, pr.side / 3);
+        ball = { x: q.x, z: q.z, lie: 'green' };
+        continue;
+      }
+      const club = GG.suggestClub(pools, dd, ball.lie), pool = pools[club];
+      const aim = GG.aimFor(H, ball, pin, pool.full * GG.lieFactor(club, ball.lie).dist);
+      const pw = Math.max(0.05, Math.min(1, GG.powerFor(pool, GG.dist(ball, aim), ball.lie) + gauss() * 0.035));
+      const res = GG.playShot(H, ball, aim, GG.adjustShot(GG.pickShot(pool, gauss() * 0.5, r).shot, pw, ball.lie), { pin, equip: d.equipment, rnd: r });
+      strokes += 1 + res.penalty;
+      if (res.result === 'holed') return strokes;
+      ball = res.next.lie === 'fringe' ? Object.assign({}, res.next, { lie: 'green' }) : res.next;
+    }
+    return 2 * h.par;
+  });
+}
+[[fileData, dadPools, 'Dad'], [m3Data, m3Pools, 'M3']].forEach(([d, pools, name]) => {
+  const scores = botRound(d, pools, 21), total = scores.reduce((a, b) => a + b, 0);
+  ok(scores.length === 18 && scores.every((s, i) => s >= 1 && s <= 2 * HP.holes[i].par) && total > 72 && total < 130, `${name}: 18 holes played, ${total} on the White tees`);
+});
+eq(JSON.stringify(botRound(fileData, dadPools, 4)), JSON.stringify(botRound(fileData, dadPools, 4)), 'the same seed plays the same round');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

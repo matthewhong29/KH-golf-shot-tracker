@@ -72,9 +72,17 @@ Each drill in `js/tips.js` has `art`, its frames for the animation (`js/drillart
 
 Don't change `coaching_notes` or the tips in `js/tips.js` unless asked. Don't commit the photos themselves unless asked, because the repo is public.
 
+## Courses for the Game tab
+
+The Game tab plays TPC Harding Park with each player's own range shots (see README, "Game"). Rounds are saved on each phone, not in the data files, so there's nothing to commit after a round.
+
+- `js/courses.js` holds each course. Its pars and yardages come from the scorecard; each hole's shape comes from course guides and hole-by-hole write-ups.
+- Use only yardages from a real scorecard or the course's own site, and never estimate one. Leave out any set of tees whose hole-by-hole yardages can't be found. The Red and Gold tees at Harding Park are left out for that reason.
+- When Matthew sends a photo of a scorecard (say, for the forward tees), add the tees to `tees` and each hole's `yds`. `node tests/core.test.js` checks that they add up.
+
 ## Code
 
-- `index.html`: markup and styles. `js/app.js`: the UI. `js/core.js`: stats, the mis-hit and outlier rules, rounding and the paste parser; the node tests load it too. `js/tips.js`: the Tips & drills content for each player, shown under the Practice tab (the tab's internal id is still `tips`; its sections are Range, Swing and Drills). `js/drillart.js`: the drill animations. `js/review.js`: swing review markup and its checks. `js/flight.js`: the Stats tab's shot replay (each shot's flight rebuilt from its numbers, the course, and the tee box, side and green cameras); it needs nothing beyond the usual shot keys, so there's nothing extra to record.
+- `index.html`: markup and styles. `js/app.js`: the UI. `js/core.js`: stats, the mis-hit and outlier rules, rounding and the paste parser; the node tests load it too. `js/tips.js`: the Tips & drills content for each player, shown under the Practice tab (the tab's internal id is still `tips`; its sections are Range, Swing and Drills). `js/drillart.js`: the drill animations. `js/review.js`: swing review markup and its checks. `js/flight.js`: the Stats tab's shot replay (each shot's flight rebuilt from its numbers, the course, and the tee box, side and green cameras); it needs nothing beyond the usual shot keys, so there's nothing extra to record. It also draws the Game tab's holes. `js/courses.js`: the Game tab's courses. `js/game.js`: the game's engine (the holes on the ground, his real shots for each club, the swing meter's timing, penalties, putting, the score).
 - Scripts: `scripts/swing-frames.py` pulls frames from a swing video; `scripts/review-preview.js` screenshots a review's frames as the page draws them.
 - Tests: `node tests/core.test.js`. Data check: `node scripts/check-data.js`.
 - Preview: run `python3 -m http.server 8000` in the repo root and open http://localhost:8000 (add `?player=brother` for M3).

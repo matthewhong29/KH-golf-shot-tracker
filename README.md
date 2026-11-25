@@ -26,7 +26,7 @@ The player buttons at the top (Dad | M3) switch everything below them.
 
 Under them, **goals** stay pinned on every tab as a constant reminder: personal goals and goals from a coach, each labelled "From coach" or "My goal". Tap ✓ when one is achieved and it moves to a Done list; **Edit** adds, finishes or removes goals. The first three open goals show, with "Show all" for the rest. Goals added on a phone stay on that phone; to share them with every phone, ask Claude to add them to the data file (see `CLAUDE.md`), or export from Data & backup.
 
-The four tabs are:
+The five tabs are:
 
 - **Stats** for one session, or all sessions pooled:
   - Session summary: big-number tiles for shots, solid contact and on line (within 10 yds), each with the change from the previous session, and the longest carry. Then a "Needs work" box listing clubs to practise (tap one to jump to it) and highlights: thin or topped shots, average miss per club, and change since the baseline.
@@ -45,9 +45,10 @@ The four tabs are:
   - **Check a shot:** type the carry, ball speed, launch and offline from the range screen to get "Pure strike!", "Good shot", "Keep working" or "Looks thin or topped", with a line on each number.
   - **Swing**: swing reviews. Matthew sends a swing video; Claude pulls out the key frames (setup, top, impact, finish), draws on them (orange for problems, green for fixes, blue for good, white guide lines), numbers each mark with a note, and lists what's working and what to fix, linked to the drills. Swipe or tap through the frames, and hide the lines to see the plain frame. A filming guide shows where to put the phone for the two views (face-on, and down the line from behind the hands) and what to get in the picture; until the first review there's also an example drawn with the drill figure.
   - **Drills**: focus areas for that player, each with why it matters, a "from your last session" line, and drills. Each drill plays its steps as an animation (a strip of 2–4 frames you can tap; it pauses for phones set to reduce motion), then the steps, reps, and a coach's video that loads when tapped (23 of the 30 drills so far, from long-running instruction channels such as Titleist, Rick Shiels, Danny Maude, Golf Monthly and Golf Channel; the rest link to a YouTube search). It ends with a suggestion to check things with a coach. The content is in `js/tips.js`, the drawings in `js/drillart.js`.
+- **Game**: play TPC Harding Park with his own shots, timing each swing on a swing meter, or typing in the shots he hits at the range to play a hole live (see [Game](#game) below).
 - **Sessions**: list, details, coaching notes, screen averages and recorded ranges. Add shots by hand or by pasting rows, delete shots, create or delete sessions. **Data & backup** (a button on this tab) has the player's name and level, baseline session, export JSON and CSV, import JSON, and reset local changes.
 
-The look: a green KH Golf app bar with the Dad | M3 switch, white cards on a light background, big-number tiles, calendar tiles for sessions and a yardage book with distance bars in Practice. Text is Inter at 18px (nothing under 16px; chart labels 15px or more), every colour pair meets WCAG AA contrast (4.5:1), every button is at least 44px tall, and it works at phone widths down to 300px. Added to a home screen, it opens full screen with its own icon (`manifest.webmanifest`, `icons/`).
+The look: a green KH Golf app bar with the Dad | M3 switch, white cards on a light background, big-number tiles, calendar tiles for sessions and a yardage book with distance bars in Practice. Text is Inter at 18px (nothing under 16px; chart labels 15px or more), every colour pair meets WCAG AA contrast (4.5:1), every button is at least 44px tall, and it works at phone widths down to 300px. On a phone too narrow for all five tab names, the tab bar shows the icons, with the name of the tab you're on. Added to a home screen, it opens full screen with its own icon (`manifest.webmanifest`, `icons/`).
 
 ## Files
 
@@ -59,6 +60,8 @@ js/app.js                    the interface
 js/drillart.js               drill animations (SVG, no DOM; the tests load it)
 js/review.js                 swing review markup and checks (no DOM; the tests and data check load it)
 js/flight.js                 shot replay: each shot's flight from its numbers, the cameras, the course, canvas drawing (the tests load it)
+js/courses.js                the Game tab's courses: TPC Harding Park's pars, yardages and hole shapes (the tests load it)
+js/game.js                   the Game tab's engine: the holes on the ground, his shots for each club, the swing meter's timing, penalties, putting, the score (the tests load it)
 media/<player>/<review>/     frames for swing reviews (never the videos)
 scripts/swing-frames.py      pulls frames from a swing video: probe, sheet, extract (with --blur), grid
 scripts/review-preview.js    screenshots a review's frames as the page draws them
@@ -192,6 +195,22 @@ The Stats tab replays each shot from the numbers the range screen gave; nothing 
   - The line above the numbers gives their averages, e.g. "Your best 10 with the 5 hybrid average 133 yds carry, 140 total, 65 ft high, landing at 40°."
 - It pauses while it's off screen or the page is in the background. On phones set to reduce motion, Play goes straight to the result and Play all draws every shot at once.
 
+## Game
+
+The Game tab plays a real course, TPC Harding Park in San Francisco, with each player's own shots. The round is saved on the phone, for each player, after every stroke, so closing the page carries on where he left off. Finished rounds go in **Your rounds**.
+
+- **Before a round:** pick the tees (Blue, 6,845 yds, or White, 6,405), all 18, the front or back 9, or one hole, and how to play the shots:
+  - **Swing meter:** tap to start the swing, tap again to set the power (a white line marks the power for the distance he's aiming at), then tap as the marker comes back across the yellow line. Early pulls it left and late pushes it right; way off is a mis-hit. The **Easy meter** is slower, with a bigger window.
+  - **From the range:** hit the shot at the range, then type in its carry, total and offline from the screen, and it plays on the hole. A club with no range shots yet can be played this way. He can switch between the two during a round.
+- **Each shot:** the map shows the hole from above with the ball, this hole's shots so far, the aim line and an oval where most of his shots with that club finish (1.5 standard deviations each way, moved by his average miss, so if his 5 hybrid usually finishes right, its oval sits right of the aim). Tap the map to aim, or nudge the aim with ◀ ▶. Each club chip shows how far a good swing goes. The suggested club is the shortest that gets there, skipping clubs he mis-hits more than a third of the time, the driver off the turf, and woods from sand or the trees. Then the shot flies, seen from behind the ball, and the map comes back where it stopped. Once the hole is over, the map shows the whole hole with every shot.
+- **Every swing is one of his real shots** with that club (`GolfGame.pickShot` in `js/game.js`). His solid shots with the club are ranked best to worst the way Best 10 ranks them (yards short of a pure strike plus yards off line). Perfect timing hits one of his best. The further off, the further down the list it goes (|timing|^0.7 of the way, so the timing most taps get, about a third of the window off, hits one from the middle: his usual shot), leaning to shots that went left when early and right when late. Off the line there's also a chance of one of his mis-hits, which grows with how often he mis-hits that club; outside the window it's always a mis-hit. The message after each shot says which real shot it was: "It flew like your 7 iron on Nov 22 at 14:31: 118 yds carry, 9 ft right."
+- **Power and lie:** a smaller swing flies the same shape, shorter: a 70% swing goes 70% as far, and 70% as far off line. From the rough it goes 10% shorter and 15% wider; from sand, 20% shorter and 25% wider; from under the trees it's a low punch at 60% that runs out; and a driver off the turf goes 8% shorter and 25% wider.
+- **The ground:** a ball that lands in the rough rolls about half as far, and slows more as it goes. One that lands in a bunker stays there, and one that rolls into a bunker stops in it. A ball that flies into a tree (its trunk, or the leaves above its bottom third, so a low punch can run under them) drops beside it. Rolling slowly over the hole, it drops in.
+- **Penalties** follow the Rules of Golf. Lake Merced or a penalty area costs a stroke, with a drop where the ball went in; out of bounds costs a stroke, and he hits again from the same spot. The most a hole can cost is double par, a casual rule, and **Pick up** takes double par any time.
+- **Putting:** on the green, or on the fringe (where he can chip with a club instead), the putting meter's yellow line is set for the length of the putt: stop the marker on it. A well-paced putt dies a foot or so past the hole, and every putt wanders a little off line, more on longer ones. With the taps most people make, about 7 in 10 drop from 3 ft, 1 in 2 from 5 ft, 3 in 10 from 10 ft and 1 in 10 from 20 ft. Putts inside 1½ ft are tapped in.
+- **The course** (`js/courses.js`): the pars and yardages come from the scorecard (Blue from Offcourse, White from GolfPass). Each hole's shape (where it bends, its bunkers, trees, water and out of bounds) is drawn from course guides and hole-by-hole write-ups, so the holes play like the real ones but aren't surveyed maps. The forward tees aren't offered, because their hole-by-hole yardages weren't published anywhere they could be checked. `GolfGame.buildHole` lays each hole out from the green back along the line of play, so the distance from each tee is exactly the scorecard's.
+- **A simulator** could play shots too: `GolfGame.playShot(hole, from, aim, shot)` takes any shot with the usual keys (carry, total, offline, curve, apex, launch, landing, ball speed), the same way the range entry does.
+
 ## Tests
 
 ```
@@ -208,6 +227,7 @@ The tests check:
 - the tips callouts and content;
 - the player registry and data files;
 - the paste parser, against the Toptracer screenshot rows (both whitespace and tab-separated) and a Rapsodo CSV;
+- the game: the course's pars and yardages add up; from each tee the line of play measures the scorecard yardage; the lake, out of bounds, penalty area, trees, hollows and bunkers are where the course has them; timing picks his best shots on the line and leans left when early and right when late; power, lie and the driver off the turf; landing, rolling, trees, water, out of bounds and holing out; the putting odds; club suggestions and aim; and a whole round for each player;
 - the shot replay: every real shot in the data files lands at its carry, bends by its curve, peaks at its apex and finishes at its total and offline; launch and landing angles; estimates for missing numbers; the tee box, side and green cameras keep the shot in view; drawing runs in every view; and Best 10's ranking (mis-hits and low launches left out, yards short of a pure strike plus yards off line, ties to the faster ball speed).
 
 ## Saving goals to GitHub

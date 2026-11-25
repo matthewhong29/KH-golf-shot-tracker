@@ -47,6 +47,7 @@
     return {
       tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
       rp: { club: 'All', idx: 0, speed: 1, view: 'tee', best: false },
+      game: { setup: false, card: false, dir: null },
       goalsEdit: false, goalsAll: false, goalSrc: 'me', practiceClub: null, check: {}, practiceView: 'range', rvFrame: {}, rvMarks: true,
       sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
       entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
@@ -551,12 +552,23 @@
   function render() {
     artStop();
     rpStop();
+    gmStop();
     renderHeader();
     renderGoals();
     renderBanner();
     $$('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === ui.tab)));
+    fitTabs();
     $$('section.view').forEach((v) => { v.hidden = v.dataset.view !== ui.tab; });
-    ({ stats: renderStats, progress: renderProgress, tips: renderTips, sessions: renderSessions })[ui.tab]();
+    ({ stats: renderStats, progress: renderProgress, tips: renderTips, game: renderGame, sessions: renderSessions })[ui.tab]();
+  }
+  // Five tabs: when a tab's name won't fit (a narrow phone, or a wide font), only the tab
+  // you're on shows its name; the others keep their icons, and their names for screen readers.
+  function fitTabs() {
+    const nav = $('nav.tabs');
+    if (!nav) return;
+    nav.classList.remove('compact');
+    const tight = $$('.tl', nav).some((t) => t.getBoundingClientRect().width > t.parentElement.getBoundingClientRect().width - 4);
+    nav.classList.toggle('compact', tight);
   }
   function renderHeader() {
     const box = $('#players');
@@ -1884,6 +1896,798 @@
     </details>`;
   }
 
+  // ----- Game: play a real course with your own shots -----
+  // Every swing-meter shot is one of his real range shots with that club
+  // (GolfGame.pickShot): the meter's timing picks which and its power how far it goes.
+  // From the range, he types in the shot he just hit instead. The canvas shows the hole
+  // from above for aiming (tap it to aim), then the shot from behind the ball as it
+  // flies. Each stroke is saved as it's hit, so a reload carries on where he was.
+  // Rounds are saved on this phone, for each player.
+  const GM = window.GolfGame, COURSES = window.GolfCourses;
+  const GM_HOLD = 1.1;      // seconds a finished shot stays on screen before the map comes back
+  const GM_POS0 = -0.32;    // the swing meter's left end, past the line
+  const GM_PUTT_END = 1.1;  // the putting meter's right end
+  const GM_NUDGE = 3;       // yds the aim moves for each ◀ ▶ tap
+  // How far to aim a club that has no shots yet (only from the range), yds.
+  const GM_GUESS = { Driver: 200, '3w': 180, '5w': 170, '7w': 160, '3hy': 170, '4hy': 160, '5hy': 150, '6hy': 140, '3i': 165, '4i': 155, '5i': 145, '6i': 135, '7i': 125, '8i': 115, '9i': 105, PW: 95, GW: 85, SW: 72, LW: 58 };
+  const GM_CLUB_RE = /^(Driver|[2-9]w|[2-7]hy|[2-9]i|PW|GW|SW|LW)$/;
+  const GM_HOLES = { all: '18 holes', front: 'Front 9', back: 'Back 9' };
+  const GM_FROM = { rough: 'from the rough', bunker: 'from the sand', trees: 'punched out from under the trees' };
+  const GM_WHERE = { fairway: 'In the fairway', rough: 'In the rough', bunker: 'In a bunker', trees: 'Under the trees', green: 'On the green', fringe: 'On the fringe', tee: 'On the tee' };
+  let gm = null;
+  function gmClamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  function gmState() { const st = loadJSON(key('game')); return st && typeof st === 'object' ? st : {}; }
+  function gmStore(st) { if (!saveJSON(key('game'), st)) toast('Couldn’t save the round on this phone'); }
+  function gmCourse(id) { return COURSES ? COURSES.get(id) || COURSES.list[0] : null; }
+  function gmSettings(st, pools) {
+    return Object.assign({ tee: 'white', holes: 'all', one: 1, mode: Object.keys(pools).length ? 'meter' : 'live', easy: false }, st.last || {});
+  }
+  function gmTeeName(course, id) { const t = course.tees.find((x) => x.id === id); return t ? t.name : cap(id); }
+  function gmRound(st) {
+    const r = st.round;
+    return r && r.v === 1 && Array.isArray(r.cards) && r.cards.length && gmCourse(r.course) ? r : null;
+  }
+  function gmFtText(ft) { const r = Math.round(ft); return r <= 1 ? 'a foot' : r + ' ft'; }
+  function gmYds(d) { const r = Math.round(d); return r === 1 ? '1 yd' : r + ' yds'; }
+
+  function renderGame() {
+    const el = $('#view-game');
+    if (!GM || !COURSES || !FL) { el.innerHTML = '<div class="card"><p class="empty">The game didn’t load. Reload the page to try again.</p></div>'; return; }
+    const st = gmState(), pools = GM.clubPools(data.sessions, data.equipment), round = gmRound(st);
+    if (!round || ui.game.setup) { el.innerHTML = gmSetupHtml(st, pools, round); return; }
+    if (round.cards.every((c) => c.done)) { el.innerHTML = gmOverHtml(round); return; }
+    el.innerHTML = gmPlayHtml(round);
+    gmMount(st, round, pools);
+  }
+
+  // ----- Before a round: the course, tees, holes and how shots are played -----
+  function gmChip(k, v, label, cur) {
+    return `<button type="button" class="chip" data-action="gm-set" data-k="${k}" data-v="${esc(v)}" aria-pressed="${String(v) === String(cur)}">${label}</button>`;
+  }
+  function gmSetupHtml(st, pools, round) {
+    const course = gmCourse(), set = gmSettings(st, pools), clubs = GM.clubList(pools).map((p) => p.club);
+    const live = set.mode === 'live' || !clubs.length;
+    const t = round ? GM.totals(round) : null, next = round ? round.cards.find((c) => !c.done) : null;
+    const going = round && next ? `<div class="card">
+        <div class="card-head"><span class="head-ico">${icon('flag')}</span><h3 class="card-title">Round in progress</h3></div>
+        <p class="note">${esc(gmCourse(round.course).name)}, ${esc(gmTeeName(course, round.tee))} tees: hole ${next.n} is next${t.played ? `, ${GM.toParText(t.toPar)} after ${plural(t.played, 'hole')}` : ''}.</p>
+        <div class="row-actions"><button class="btn" data-action="gm-continue">Carry on</button></div></div>` : '';
+    return `${going}
+      <h2>${round && next ? 'Or start a new round' : 'Play a round'}</h2>
+      <div class="card gm-setup">
+        <div class="card-head"><span class="head-ico">${icon('flag')}</span><h3 class="card-title">${esc(course.name)}</h3></div>
+        <p class="note">${esc(course.place)} · par ${COURSES.par(course)}. ${esc(course.blurb)}</p>
+        <ul class="gm-how">
+          <li>Every swing flies like one of your real range shots with that club.</li>
+          <li>Tap the meter to start your swing, tap again to set the power, then tap as the marker crosses the yellow line. Early pulls it left, late pushes it right, and way off is a mis-hit.</li>
+          <li>Tap the map to aim. The oval shows where most of your shots with that club finish.</li>
+          <li>At the range? Choose <strong>From the range</strong> and type in each shot from the screen to play the hole live.</li>
+        </ul>
+        <div class="field"><span class="label" id="gmTeeL">Tees</span><div class="chips" role="group" aria-labelledby="gmTeeL">${course.tees.map((x) => gmChip('tee', x.id, `${esc(x.name)} · ${x.yds.toLocaleString('en-US')} yds`, set.tee)).join('')}</div></div>
+        <div class="field"><span class="label" id="gmHolesL">Holes</span><div class="chips" role="group" aria-labelledby="gmHolesL">${[['all', 'All 18'], ['front', 'Front 9'], ['back', 'Back 9'], ['one', 'One hole']].map(([v, l]) => gmChip('holes', v, l, set.holes)).join('')}</div>
+          ${set.holes === 'one' ? `<div class="chips gm-holes" role="group" aria-label="Which hole">${course.holes.map((h) => gmChip('one', h.n, String(h.n), set.one)).join('')}</div>
+          <p class="hint">Hole ${+set.one}: par ${course.holes[+set.one - 1].par}, ${course.holes[+set.one - 1].yds[set.tee] || '–'} yds. ${esc(course.holes[+set.one - 1].note)}</p>` : ''}</div>
+        <div class="field"><span class="label" id="gmModeL">Shots</span><div class="chips" role="group" aria-labelledby="gmModeL">${clubs.length ? gmChip('mode', 'meter', 'Swing meter', live ? 'live' : 'meter') : ''}${gmChip('mode', 'live', 'From the range', live ? 'live' : 'meter')}</div>
+          <p class="hint">${live ? 'After each shot at the range, type in its carry and offline from the screen, and it plays on the hole. You can switch between the two during a round.'
+            : `Your clubs: ${esc(clubs.join(', '))}. Each plays your real shots with it. A club with no range shots yet can still be played from the range.`}</p></div>
+        ${live ? '' : `<label class="gm-check"><input type="checkbox" data-change="gm-easy"${set.easy ? ' checked' : ''}> Easy meter: slower, with a bigger window</label>`}
+        <div class="row-actions"><button class="btn block" data-action="gm-start">${icon('flag')}<span>Tee off</span></button></div>
+        <p class="gm-src">Pars and yardages come from the course scorecard. The holes are drawn from course guides, so they’re close to the real ones but not exact. The most a hole can cost is double par.</p>
+      </div>
+      ${gmHistoryHtml(st, course)}`;
+  }
+  function gmHistoryHtml(st, course) {
+    const hist = (st.history || []).filter((r) => r && C.isNum(r.strokes));
+    if (!hist.length) return '';
+    const full = hist.filter((r) => r.holes === 18), best = full.length ? full.reduce((a, b) => (b.strokes < a.strokes ? b : a)) : null;
+    return `<h2>Your rounds</h2><div class="card"><ul class="plain gm-rounds">${hist.slice(0, 8).map((r) => `<li><span>${esc(C.fmtDate(r.date, { short: true }))} · ${esc(r.label || plural(r.holes, 'hole'))} · ${esc(gmTeeName(course, r.tee))}${r.mode === 'live' ? ' · from the range' : ''}</span>
+      <span class="sc">${r.strokes} (${GM.toParText(r.toPar)})</span></li>`).join('')}</ul>
+      ${best ? `<p class="hint">Best 18 holes: ${best.strokes} (${GM.toParText(best.toPar)}) on ${esc(C.fmtDate(best.date, { short: true }))}.</p>` : ''}</div>`;
+  }
+
+  // ----- During a round -----
+  function gmPlayHtml(round) {
+    const course = gmCourse(round.course), card = round.cards[round.idx], def = course.holes.find((h) => h.n === card.n), t = GM.totals(round);
+    return `<div class="gm-top">
+        <div class="gm-title"><h2>Hole ${card.n} <span class="gm-par">· par ${card.par} · ${card.yds} yds</span></h2>
+          <span class="gm-total">${t.played ? `${GM.toParText(t.toPar)} after ${plural(t.played, 'hole')}` : `${esc(gmTeeName(course, round.tee))} tees`}</span></div>
+        <p class="gm-note">${esc(def ? def.note : '')}</p>
+      </div>
+      <div class="card game" id="game">
+        <div class="gm-stage"><canvas class="gm-canvas" role="img" aria-label="The hole from above"></canvas>
+          <button type="button" class="gm-skip" data-action="gm-skip" hidden>Skip ▸▸</button></div>
+        <p class="gm-status" aria-live="polite"></p>
+        <div class="gm-msg" aria-live="polite" hidden></div>
+        <div class="gm-controls"></div>
+        <div class="row-actions gm-actions">
+          <button type="button" class="btn small ghost" data-action="gm-card" aria-expanded="${!!ui.game.card}">Scorecard</button>
+          <button type="button" class="btn small ghost" data-action="gm-pickup">Pick up</button>
+          <button type="button" class="btn small ghost" data-action="gm-quit">End round</button>
+        </div>
+        <div class="gm-scorecard"${ui.game.card ? '' : ' hidden'}>${ui.game.card ? gmScorecardHtml(round) : ''}</div>
+      </div>`;
+  }
+  function gmScorecardHtml(round) {
+    const t = GM.totals(round);
+    return `<div class="gm-sc">${round.cards.map((c, i) => {
+      const cur = i === round.idx && !c.done;
+      const n = `<span class="n">${c.n} · par ${c.par}</span>`;
+      if (!c.done && !cur) return `<div class="h">${n}<span class="p">${c.yds} yds</span></div>`;
+      return `<div class="h${cur ? ' cur' : ''}${c.done && c.score < c.par ? ' under' : ''}">${n}
+        <span class="s">${c.done ? c.score : c.strokes || '–'}</span>
+        <span class="p">${c.done ? esc(c.picked ? 'Picked up' : GM.scoreName(c.score, c.par)) : 'Playing'}</span></div>`;
+    }).join('')}</div>
+      <p class="gm-sc-sum"><span>${t.played} of ${plural(t.holes, 'hole')}</span><span>${plural(t.strokes, 'stroke')}</span><span>${GM.toParText(t.toPar)}</span></p>`;
+  }
+  function gmOverHtml(round) {
+    const course = gmCourse(round.course), t = GM.totals(round);
+    return `<h2>Round over</h2>
+      <div class="card"><div class="gm-done"><span class="big">${t.strokes}</span>
+        <span class="s">${GM.toParText(t.toPar)} · ${esc(round.label || plural(t.holes, 'hole'))} at ${esc(course.name)}, ${esc(gmTeeName(course, round.tee))} tees</span></div>
+        ${gmScorecardHtml(round)}
+        <div class="row-actions"><button class="btn block" data-action="gm-new">${icon('flag')}<span>Play again</span></button></div></div>`;
+  }
+
+  function gmMount(st, round, pools) {
+    gmStop();
+    const box = $('#game'), canvas = $('.gm-canvas', box), ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+    if (!ctx) { $('.gm-controls', box).innerHTML = '<p class="empty">This phone can’t draw the hole.</p>'; return; }
+    const course = gmCourse(round.course), card = round.cards[round.idx];
+    const H = GM.buildHole(course, card.n, round.tee), pin = GM.pinFor(H, round.seed);
+    if (!round.mode || (round.mode === 'meter' && !Object.keys(pools).length)) round.mode = 'live';
+    gm = { st, round, card, course, H, pin, pools, box, canvas, ctx, phase: 'aim', aim: null, club: null, busy: false, raf: 0, meter: null, meterEl: null, bgs: new Map() };
+    if (!card.done && !round.ball) round.ball = { x: H.start.x, z: H.start.z, lie: 'tee' };
+    gm.ball = round.ball || { x: pin.x, z: pin.z, lie: 'green' };
+    gmSize();
+    canvas.addEventListener('click', gmCanvasTap);
+    if (card.done) { gm.phase = 'holed'; gm.ballHidden = true; gmView(); gmControls(); gmDraw(); return; }
+    gmNewSpot();
+  }
+  function gmStop() {
+    if (!gm) return;
+    if (gm.raf) cancelAnimationFrame(gm.raf);
+    if (gm.meter && gm.meter.raf) cancelAnimationFrame(gm.meter.raf);
+    gm = null;
+  }
+  function gmSize() {
+    const w = Math.max(240, Math.floor(gm.canvas.parentElement.getBoundingClientRect().width));
+    const h = Math.round(Math.min(520, Math.max(280, w)));
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    gm.canvas.width = Math.round(w * dpr);
+    gm.canvas.height = Math.round(h * dpr);
+    gm.canvas.style.height = h + 'px';
+    gm.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    Object.assign(gm, { w, h, dpr, viewKey: null });
+    gm.bgs.clear();
+  }
+  function gmLie() { return gm.ball.lie || 'fairway'; }
+  function gmPutting() { return gm.club === 'Putter'; }
+  // The clubs he can pick: with the swing meter, the ones he has range shots with;
+  // from the range, everything in his bag too.
+  function gmClubs() {
+    const withShots = GM.clubList(gm.pools).map((p) => p.club);
+    if (gm.round.mode !== 'live') return withShots;
+    const all = new Set(withShots);
+    Object.keys(data.clubs || {}).forEach((c) => all.add(c));
+    const bag = data.equipment && data.equipment.bag;
+    if (bag && typeof bag === 'object' && !Array.isArray(bag)) Object.keys(bag).forEach((c) => all.add(c));
+    return C.sortClubs(Array.from(all).filter((c) => GM_CLUB_RE.test(c)));
+  }
+  function gmReach(club) {
+    const p = gm.pools[club], f = GM.lieFactor(club, gmLie()).dist;
+    return (p ? p.full : GM_GUESS[club] || 120) * f;
+  }
+  function gmSuggest() {
+    const list = gmClubs(), d = GM.dist(gm.ball, gm.pin);
+    const withShots = {};
+    list.forEach((c) => { if (gm.pools[c]) withShots[c] = gm.pools[c]; });
+    const c = GM.suggestClub(withShots, d, gmLie());
+    if (c) return c;
+    // From the range with no shots yet: the shortest club that gets there by the usual distances.
+    const byGuess = list.slice().sort((a, b) => (GM_GUESS[a] || 0) - (GM_GUESS[b] || 0));
+    return byGuess.find((x) => (GM_GUESS[x] || 0) * (GM.LIE[gmLie()] || GM.LIE.fairway).dist >= d - 3) || byGuess[byGuess.length - 1] || null;
+  }
+  function gmAimPoint() {
+    if (gm.aim) return gm.aim;
+    return GM.aimFor(gm.H, gm.ball, gm.pin, gmReach(gm.club));
+  }
+  // A new spot for the ball (a new hole, or after a shot): pick the club and the view.
+  function gmNewSpot() {
+    gm.aim = null;
+    gm.ballHidden = false;
+    gm.rollPos = null;
+    const lie = gmLie(), ft = GM.dist(gm.ball, gm.pin) * 3;
+    gm.club = lie === 'green' || (lie === 'fringe' && ft < 90) ? 'Putter' : gmSuggest();
+    gm.phase = gmPutting() ? 'putt' : 'aim';
+    gmView();
+    gmControls();
+    gmDraw();
+  }
+  // The map's camera: the hole from the ball to the green, straight down, green at the
+  // top; on the green (or putting from the fringe), close in on the ball and the hole;
+  // and once the hole is over, all of it, with every shot.
+  function gmView() {
+    const H = gm.H, pin = gm.pin, whole = gm.phase === 'holed', b = whole ? H.start : gm.ball;
+    const close = !whole && (gm.phase === 'putt' || gm.phase === 'roll');
+    const vk = (whole ? 'hole:' : close ? 'putt:' : 'map:') + b.x.toFixed(2) + ',' + b.z.toFixed(2);
+    if (gm.viewKey === vk && gm.mapBg) return;
+    gm.viewKey = vk;
+    let cam;
+    if (close) {
+      const hd = GM.dist(b, pin) > 0.3 ? GM.headingTo(b, pin) : H.green.rot, d = GM.dist(b, pin), pad = Math.max(5, d * 0.3);
+      const pts = [b, pin];
+      [[-pad, -pad], [pad, -pad], [-pad, d + pad], [pad, d + pad]].forEach(([s, a]) => pts.push(FL.offsetPoint(b.x, b.z, hd, a, s)));
+      cam = FL.fitTop(pts, gm.w, gm.h, hd, 0.06);
+    } else {
+      const green = { x: H.green.x, z: H.green.z };
+      const hd = GM.dist(b, green) > 3 ? GM.headingTo(b, green) : H.green.rot, s0 = GM.toHole(H, b.x, b.z).s;
+      const pts = [b, pin, green, FL.offsetPoint(b.x, b.z, hd, -10, 0)];
+      H.path.forEach((q) => { if (q.s >= s0 - 8 && q.s <= H.L + 24) pts.push(FL.offsetPoint(q.x, q.z, q.h, 0, -30), FL.offsetPoint(q.x, q.z, q.h, 0, 30)); });
+      cam = FL.fitTop(pts, gm.w, gm.h, hd, 0.03);
+    }
+    gm.mapCam = cam;
+    gm.bgs.clear();
+    gm.mapBg = gmBg(cam, {});
+  }
+  // The hole drawn once for a camera, so a frame only adds what moves.
+  function gmBg(cam, opts) {
+    let bg = gm.bgs.get(cam);
+    if (!bg) {
+      bg = document.createElement('canvas');
+      bg.width = gm.canvas.width;
+      bg.height = gm.canvas.height;
+      const b = bg.getContext('2d');
+      b.setTransform(gm.dpr, 0, 0, gm.dpr, 0, 0);
+      FL.drawHole(b, cam, gm.H, gm.pin, opts);
+      gm.bgs.set(cam, bg);
+    }
+    return bg;
+  }
+
+  // ----- The map: the ball, this hole's shots so far, the aim and where shots finish -----
+  function gmPathOnMap(ctx, cam, pts, color, width, dash) {
+    const scr = pts.map((p) => FL.project(cam, p[0], 0, p[1])).filter(Boolean);
+    if (scr.length < 2) return;
+    ctx.setLineDash(dash || []);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    scr.forEach((s, i) => { if (i) ctx.lineTo(s.x, s.y); else ctx.moveTo(s.x, s.y); });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  function gmDot(ctx, cam, x, z, r, fill, edge) {
+    const q = FL.project(cam, x, 0, z);
+    if (!q) return null;
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, r, 0, 2 * Math.PI);
+    ctx.fill();
+    if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = 2; ctx.stroke(); }
+    return q;
+  }
+  function gmFlag(ctx, cam, pin) {
+    const q = FL.project(cam, pin.x, 0, pin.z);
+    if (!q) return;
+    ctx.fillStyle = '#111a15';
+    ctx.beginPath(); ctx.arc(q.x, q.y, 3.5, 0, 2 * Math.PI); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.lineTo(q.x, q.y - 24); ctx.stroke();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.lineTo(q.x, q.y - 24); ctx.stroke();
+    ctx.fillStyle = '#e8463a';
+    ctx.beginPath(); ctx.moveTo(q.x, q.y - 24); ctx.lineTo(q.x + 14, q.y - 19.5); ctx.lineTo(q.x, q.y - 15); ctx.closePath(); ctx.fill();
+  }
+  // Where most of his shots with the club finish: an oval around the aim (1.5 standard
+  // deviations each way, about two of every three solid shots), moved by his average
+  // miss, and smaller for a smaller swing.
+  function gmZone(ctx, cam, aim, hd) {
+    const pool = gm.pools[gm.club];
+    if (!pool) return;
+    const lie = gmLie(), f = GM.lieFactor(gm.club, lie), p = GM.powerFor(pool, GM.dist(gm.ball, aim), lie), k = p * f.dist, sp = pool.spread;
+    const c = FL.offsetPoint(aim.x, aim.z, hd, 0, sp.off * k * f.spray);
+    const rx = Math.max(2, 1.5 * sp.offSd * k * f.spray), rz = Math.max(2, 1.5 * sp.lenSd * k), pts = [];
+    for (let i = 0; i < 40; i++) {
+      const a = 2 * Math.PI * i / 40, q = FL.offsetPoint(c.x, c.z, hd, rz * Math.sin(a), rx * Math.cos(a)), s = FL.project(cam, q.x, 0, q.z);
+      if (s) pts.push(s);
+    }
+    if (pts.length < 3) return;
+    ctx.beginPath();
+    pts.forEach((s, i) => { if (i) ctx.lineTo(s.x, s.y); else ctx.moveTo(s.x, s.y); });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fill();
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  function gmDraw() {
+    if (!gm) return;
+    const ctx = gm.ctx, cam = gm.mapCam, b = gm.rollPos || gm.ball;
+    ctx.clearRect(0, 0, gm.w, gm.h);
+    ctx.drawImage(gm.mapBg, 0, 0, gm.w, gm.h);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    gm.card.shots.forEach((s) => {
+      const pts = s.track && s.track.length > 1 ? s.track : s.from && s.to ? [s.from, s.to] : null;
+      if (!pts) return;
+      gmPathOnMap(ctx, cam, pts, 'rgba(0,0,0,0.35)', 4);
+      gmPathOnMap(ctx, cam, pts, 'rgba(255,255,255,0.85)', 2);
+      gmDot(ctx, cam, pts[0][0], pts[0][1], 3, 'rgba(255,255,255,0.9)');
+    });
+    if (gm.phase === 'aim') {
+      const aim = gmAimPoint(), hd = GM.headingTo(b, aim), d = GM.dist(b, aim);
+      gmZone(ctx, cam, aim, hd);
+      gmPathOnMap(ctx, cam, [[b.x, b.z], [aim.x, aim.z]], 'rgba(255,255,255,0.95)', 2, [7, 6]);
+      const q = FL.project(cam, aim.x, 0, aim.z);
+      if (q) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(q.x, q.y, 9, 0, 2 * Math.PI); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(q.x - 14, q.y); ctx.lineTo(q.x - 5, q.y); ctx.moveTo(q.x + 5, q.y); ctx.lineTo(q.x + 14, q.y);
+        ctx.moveTo(q.x, q.y - 14); ctx.lineTo(q.x, q.y - 5); ctx.moveTo(q.x, q.y + 5); ctx.lineTo(q.x, q.y + 14); ctx.stroke();
+        FL.pill(ctx, cam, q.x, q.y - 12, gmYds(d));
+      }
+    }
+    if (gm.phase === 'putt' && GM.dist(b, gm.pin) > 0.2) {
+      gmPathOnMap(ctx, cam, [[b.x, b.z], [gm.pin.x, gm.pin.z]], 'rgba(255,255,255,0.95)', 2, [7, 6]);
+      const m = FL.offsetPoint(b.x, b.z, GM.headingTo(b, gm.pin), GM.dist(b, gm.pin) / 2, 0), q = FL.project(cam, m.x, 0, m.z);
+      if (q) FL.pill(ctx, cam, q.x + 40, q.y + 14, gmFtText(GM.dist(b, gm.pin) * 3));
+    }
+    gmFlag(ctx, cam, gm.pin);
+    if (!gm.ballHidden) gmDot(ctx, cam, b.x, b.z, 5.5, '#ffffff', 'rgba(0,0,0,0.6)');
+    gmLabel();
+  }
+  function gmLabel() {
+    const b = gm.ball, d = GM.dist(b, gm.pin), where = (GM_WHERE[b.lie] || GM.LIE_WORDS[b.lie] || '').toLowerCase();
+    let s = `Hole ${gm.card.n} from above. The ball is ${where || 'in play'}, ${gmPutting() ? gmFtText(d * 3) + ' from the hole' : gmYds(d) + ' from the pin'}.`;
+    if (gm.phase === 'aim') s += ` Aiming ${gmYds(GM.dist(b, gmAimPoint()))} with the ${C.clubName(gm.club, data.clubs).toLowerCase()}.`;
+    gm.canvas.setAttribute('aria-label', s);
+    gm.canvas.classList.toggle('aim', gm.phase === 'aim');
+  }
+  function gmStatusText() {
+    const card = gm.card, b = gm.ball, d = GM.dist(b, gm.pin);
+    if (card.done) return `Hole ${card.n}: ${card.picked ? 'picked up' : plural(card.score, 'stroke')}`;
+    const where = GM_WHERE[b.lie] || GM.LIE_WORDS[b.lie] || '';
+    const far = gmPutting() || b.lie === 'green' ? `${gmFtText(d * 3)} from the hole` : `${gmYds(d)} to the pin`;
+    return [`Shot ${card.strokes + 1}`, where, far, card.penalties ? plural(card.penalties, 'penalty stroke') : ''].filter(Boolean).join(' · ');
+  }
+
+  // ----- Controls under the map -----
+  function gmClubChips() {
+    const clubs = gmClubs().slice();
+    if (gmLie() === 'fringe' || gmLie() === 'green') clubs.unshift('Putter');
+    return `<div class="chips gm-clubs" role="group" aria-label="Club">${clubs.map((c) => {
+      const p = gm.pools[c];
+      return `<button type="button" class="chip" data-action="gm-club" data-club="${esc(c)}" aria-pressed="${c === gm.club}">${esc(c)}${p ? `<span class="cd">${Math.round(p.full)}</span>` : ''}</button>`;
+    }).join('')}</div>`;
+  }
+  function gmMeterHtml(kind) {
+    return `<div class="gm-meter" id="gmMeter" role="button" tabindex="0" data-kind="${kind}">
+      <div class="gm-track" aria-hidden="true"><span class="gm-zone"></span><span class="gm-line"></span><span class="gm-target"></span><span class="gm-fill"></span><span class="gm-needle"></span></div>
+      <div class="gm-ticks" aria-hidden="true">${kind === 'putt' ? '<span class="l">Short</span><span class="r">Long</span>'
+        : `<span class="c" style="left:${gmPct('swing', 0)}%">Line</span><span class="r">Full swing</span>`}</div>
+      <p class="gm-meter-text"></p>
+    </div>`;
+  }
+  function gmLiveHtml() {
+    const lie = gmLie(), f = GM.LIE[lie], dir = ui.game.dir;
+    const lieNote = f && f.dist < 1 ? ` From the ${lie === 'trees' ? 'trees it’s a low punch, about 40%' : lie === 'bunker' ? 'sand it goes about 20%' : 'rough it goes about 10%'} shorter than on the range.` : '';
+    return `<div class="gm-live">
+      <p class="hint">Hit your ${esc(C.clubName(gm.club, data.clubs).toLowerCase())} at the range, then type in what the screen shows.${lieNote}</p>
+      <div class="grid2">
+        <div class="field"><label for="gmCarry">Carry (yds)</label><input id="gmCarry" type="number" inputmode="decimal" min="1"></div>
+        <div class="field"><label for="gmTotal">Total (yds)</label><input id="gmTotal" type="number" inputmode="decimal" placeholder="if shown"></div>
+      </div>
+      <div class="field"><label for="gmOff">Offline (ft)</label><input id="gmOff" type="number" inputmode="decimal" placeholder="0 if straight"></div>
+      <div class="seg" role="group" aria-label="Offline direction">
+        <button type="button" data-action="gm-dir" data-dir="L" aria-pressed="${dir === 'L'}">◀ Left</button>
+        <button type="button" data-action="gm-dir" data-dir="R" aria-pressed="${dir === 'R'}">Right ▶</button>
+      </div>
+      <button type="button" class="btn block" data-action="gm-live">Play this shot</button>
+    </div>`;
+  }
+  function gmControls() {
+    const box = $('.gm-controls', gm.box);
+    if (!box) return;
+    $('.gm-status', gm.box).textContent = gmStatusText();
+    gm.meter = null;
+    gm.meterEl = null;
+    if (gm.phase === 'holed') {
+      const card = gm.card, r = gm.round, t = GM.totals(r), nxt = r.cards[r.idx + 1];
+      const name = card.picked ? 'Picked up' : GM.scoreName(card.score, card.par);
+      box.innerHTML = `<div class="gm-done"><span class="big">${esc(name)}</span>
+        <span class="s">${card.picked ? `Double par: ${card.score}` : plural(card.score, 'stroke')} on hole ${card.n} · ${GM.toParText(t.toPar)} after ${plural(t.played, 'hole')}</span>
+        <button type="button" class="btn block" data-action="gm-next">${nxt ? `Next: hole ${nxt.n}` : 'See your round'}</button></div>`;
+      $('[data-action="gm-pickup"]', gm.box).disabled = true;
+      return;
+    }
+    $('[data-action="gm-pickup"]', gm.box).disabled = false;
+    const modes = `<div class="seg gm-modes" role="group" aria-label="How to play the shot">${[['meter', 'Swing meter'], ['live', 'From the range']].map(([v, l]) =>
+      `<button type="button" data-action="gm-mode" data-v="${v}" aria-pressed="${gm.round.mode === v}"${v === 'meter' && !Object.keys(gm.pools).length ? ' disabled' : ''}>${l}</button>`).join('')}</div>`;
+    if (gm.phase === 'putt') {
+      const ft = GM.dist(gm.ball, gm.pin) * 3;
+      const chips = gmLie() === 'fringe' ? `<div class="gm-label"><span>Club</span><span class="sg">Putt it, or chip with a club</span></div>${gmClubChips()}` : '';
+      box.innerHTML = chips + (ft <= GM.TAP_IN
+        ? `<div class="gm-label"><span>Putter · ${gmFtText(ft)}</span></div><button type="button" class="btn block" data-action="gm-tapin">Tap it in</button>`
+        : `<div class="gm-label"><span>Putter · ${gmFtText(ft)}</span><span class="sg">Stop on the yellow line</span></div>${gmMeterHtml('putt')}`);
+      gmMeterSetup('putt');
+      return;
+    }
+    const sugg = gmSuggest();
+    box.innerHTML = `${gm.round.mode === 'live' ? gmLiveHtml() : gmMeterHtml('swing')}
+      <div class="gm-label"><span>Club</span>${sugg ? `<span class="sg">Suggested: ${esc(C.clubName(sugg, data.clubs).toLowerCase())}</span>` : ''}</div>
+      ${gmClubChips()}
+      <div class="gm-aimrow">
+        <button type="button" class="btn small ghost" data-action="gm-nudge" data-d="-1" aria-label="Aim a little left">◀</button>
+        <p class="gm-aimtext" aria-live="polite"></p>
+        <button type="button" class="btn small ghost" data-action="gm-nudge" data-d="1" aria-label="Aim a little right">▶</button>
+      </div>
+      ${modes}`;
+    gmAimText();
+    if (gm.round.mode !== 'live') gmMeterSetup('swing');
+  }
+  function gmAimText() {
+    const el = $('.gm-aimtext', gm.box);
+    if (!el) return;
+    const aim = gmAimPoint(), d = GM.dist(gm.ball, aim), pool = gm.pools[gm.club], atPin = GM.dist(aim, gm.pin) < 1.5;
+    let sub = '';
+    if (gm.round.mode === 'live') sub = pool ? `A good ${C.clubName(gm.club, data.clubs).toLowerCase()} goes about ${Math.round(pool.full)}` : 'Tap the map to aim';
+    else if (pool) {
+      const p = GM.powerFor(pool, d, gmLie()), full = gmReach(gm.club);
+      sub = d > full + 2 ? `Out of reach: a full swing goes about ${Math.round(full)}` : p >= 0.97 ? 'A full swing' : `About a ${Math.round(p * 100)}% swing`;
+    }
+    el.innerHTML = `Aiming ${gmYds(d)}${atPin ? ' at the pin' : ''}<span class="s">${esc(sub)}</span>`;
+    if (gm.meter && gm.meter.kind === 'swing' && gm.meter.phase === 'ready') gmMeterSetup('swing');
+  }
+  function gmMsg(title, line, sub, kind) {
+    const el = $('.gm-msg', gm.box);
+    if (!el) return;
+    el.className = 'gm-msg' + (kind ? ' ' + kind : '');
+    el.innerHTML = `<span class="t">${esc(title)}</span>${line ? `<span>${esc(line)}</span>` : ''}${sub ? `<span class="s">${esc(sub)}</span>` : ''}`;
+    el.hidden = false;
+  }
+
+  // ----- The meters -----
+  function gmSwingCfg() { return gm.round.easy ? GM.METER.easy : GM.METER.normal; }
+  function gmPuttCfg() { return gm.round.easy ? GM.PUTT.easy : GM.PUTT.normal; }
+  function gmPct(kind, pos) { return kind === 'putt' ? gmClamp(pos / GM_PUTT_END, 0, 1) * 100 : gmClamp((pos - GM_POS0) / (1 - GM_POS0), 0, 1) * 100; }
+  function gmMeterSetup(kind) {
+    const el = $('#gmMeter', gm.box);
+    if (!el) return;
+    const old = gm.meter && gm.meter.kind === kind && gm.meter.phase !== 'ready' ? gm.meter : null;
+    const m = old || { kind, phase: 'ready', t0: 0, t1: 0, power: 0, raf: 0 };
+    if (kind === 'swing') {
+      const cfg = gmSwingCfg(), pool = gm.pools[gm.club];
+      m.target = pool ? GM.powerFor(pool, GM.dist(gm.ball, gmAimPoint()), gmLie()) : 1;
+      m.win = cfg.win;
+      const z0 = gmPct('swing', -cfg.win), z1 = gmPct('swing', cfg.win);
+      $('.gm-zone', el).style.left = z0 + '%';
+      $('.gm-zone', el).style.width = (z1 - z0) + '%';
+      $('.gm-line', el).style.left = gmPct('swing', 0) + '%';
+      $('.gm-target', el).style.left = gmPct('swing', m.target) + '%';
+      $('.gm-target', el).hidden = m.target >= 0.97;
+    } else {
+      const cfg = gmPuttCfg(), ft = GM.dist(gm.ball, gm.pin) * 3;
+      m.target = GM.puttTarget(ft);
+      m.win = cfg.win;
+      const z0 = gmPct('putt', m.target - cfg.win), z1 = gmPct('putt', m.target + cfg.win);
+      $('.gm-zone', el).style.left = z0 + '%';
+      $('.gm-zone', el).style.width = (z1 - z0) + '%';
+      $('.gm-line', el).style.left = gmPct('putt', m.target) + '%';
+      $('.gm-target', el).hidden = true;
+    }
+    gm.meter = m;
+    gm.meterEl = el;
+    if (!el.dataset.bound) {
+      el.dataset.bound = '1';
+      el.addEventListener('pointerdown', (e) => { if (e.button > 0) return; e.preventDefault(); gmTap(e.timeStamp); });
+      el.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); gmTap(); } });
+    }
+    gmMeterPaint(m.phase === 'ready' ? 0 : m.power);
+    gmMeterText();
+  }
+  function gmMeterText(word) {
+    const m = gm.meter, el = gm.meterEl;
+    if (!m || !el) return;
+    if (word) m.word = word;
+    const txt = (m.phase === 'done' && m.word) || (m.kind === 'putt' ? (m.phase === 'run' ? 'Tap on the yellow line!' : 'Tap to start the putt')
+      : m.phase === 'back' ? 'Tap to set the power' + (m.target < 0.97 ? ' (the white line)' : '') : m.phase === 'down' ? 'Tap on the yellow line!' : 'Tap to start your swing');
+    $('.gm-meter-text', el).textContent = txt;
+    el.setAttribute('aria-label', `${m.kind === 'putt' ? 'Putting' : 'Swing'} meter. ${txt}`);
+    el.classList.toggle('off', !!gm.busy || m.phase === 'done');
+  }
+  function gmMeterPaint(pos) {
+    const m = gm.meter, el = gm.meterEl;
+    if (!m || !el) return;
+    $('.gm-needle', el).style.left = gmPct(m.kind, pos) + '%';
+    const fill = $('.gm-fill', el);
+    if (m.kind === 'swing') {
+      const a = gmPct('swing', 0), top = m.phase === 'down' || m.phase === 'done' ? m.power : Math.max(0, pos);
+      fill.style.left = a + '%';
+      fill.style.width = Math.max(0, gmPct('swing', top) - a) + '%';
+    } else {
+      fill.style.left = '0%';
+      fill.style.width = gmPct('putt', Math.max(0, pos)) + '%';
+    }
+  }
+  // The downswing comes back a little slower after a short backswing, so a chip can
+  // still be timed.
+  function gmDownSpeed(m) { return gmSwingCfg().down * (0.45 + 0.55 * m.power); }
+  function gmMeterLoop() {
+    const m = gm && gm.meter;
+    if (!m) return;
+    m.raf = 0;
+    const now = performance.now();
+    if (m.kind === 'swing') {
+      const cfg = gmSwingCfg();
+      if (m.phase === 'back') {
+        const pos = (now - m.t0) / 1000 / cfg.back;
+        if (pos >= 1) { Object.assign(m, { power: 1, phase: 'down', t1: m.t0 + cfg.back * 1000 }); gmMeterText(); } else gmMeterPaint(pos);
+      }
+      if (m.phase === 'down') {
+        const pos = m.power - (now - m.t1) / 1000 * gmDownSpeed(m);
+        if (pos <= cfg.end) { gmMeterPaint(cfg.end); gmSwingDone(cfg.end); return; }
+        gmMeterPaint(pos);
+      }
+    } else if (m.phase === 'run') {
+      const pos = (now - m.t0) / 1000 / gmPuttCfg().sweep;
+      if (pos >= GM_PUTT_END) { gmMeterPaint(GM_PUTT_END); gmPuttDone(GM_PUTT_END); return; }
+      gmMeterPaint(pos);
+    }
+    if (m.phase === 'back' || m.phase === 'down' || m.phase === 'run') m.raf = requestAnimationFrame(gmMeterLoop);
+  }
+  // A tap on the meter, timed by the tap itself rather than the last frame drawn.
+  function gmTap(ts) {
+    if (!gm || gm.busy || !gm.meter) return;
+    const m = gm.meter, pn = performance.now(), now = typeof ts === 'number' && ts > pn - 1000 && ts <= pn + 5 ? ts : pn;
+    if (m.kind === 'swing') {
+      if (!gm.pools[gm.club]) { toast('No range shots with this club yet. Play it from the range.'); return; }
+      if (m.phase === 'ready') { Object.assign(m, { phase: 'back', t0: now }); gmMeterText(); m.raf = m.raf || requestAnimationFrame(gmMeterLoop); }
+      else if (m.phase === 'back') { Object.assign(m, { power: gmClamp((now - m.t0) / 1000 / gmSwingCfg().back, 0.03, 1), phase: 'down', t1: now }); gmMeterText(); }
+      else if (m.phase === 'down') { const pos = m.power - (now - m.t1) / 1000 * gmDownSpeed(m); gmMeterPaint(pos); gmSwingDone(pos); }
+    } else if (m.phase === 'ready') { Object.assign(m, { phase: 'run', t0: now }); gmMeterText(); m.raf = m.raf || requestAnimationFrame(gmMeterLoop); }
+    else if (m.phase === 'run') { const pos = (now - m.t0) / 1000 / gmPuttCfg().sweep; gmMeterPaint(pos); gmPuttDone(pos); }
+  }
+  function gmMeterStop() {
+    const m = gm.meter;
+    if (m && m.raf) cancelAnimationFrame(m.raf);
+    if (m) Object.assign(m, { raf: 0, phase: 'done' });
+  }
+  // A swing (or a putt) that's under way stops if the page goes to the background.
+  function gmMeterReset() {
+    if (!gm || !gm.meter || gm.busy) return;
+    if (gm.meter.raf) cancelAnimationFrame(gm.meter.raf);
+    gm.meter = null;
+    gmMeterSetup(gm.phase === 'putt' ? 'putt' : 'swing');
+  }
+  function gmRnd() { return FL.rng((Math.random() * 4294967296) >>> 0); }
+
+  // ----- Hitting a shot -----
+  function gmSwingDone(pos) {
+    gmMeterStop();
+    const m = gm.meter, e = GM.timingOf(pos, gm.round.easy), pool = gm.pools[gm.club];
+    gmMeterText(GM.timingWord(e));
+    const rnd = gmRnd(), pick = GM.pickShot(pool, e, rnd);
+    gmPlay(GM.adjustShot(pick.shot, m.power, gmLie()), { kind: 'swing', e, power: m.power, pick, rnd, lie: gmLie() });
+  }
+  function gmLiveShot() {
+    const carry = numOrNull('gmCarry'), total = numOrNull('gmTotal'), off = numOrNull('gmOff');
+    if (!(carry > 0)) { toast('Type the carry from the range screen'); const f = $('#gmCarry'); if (f) f.focus(); return; }
+    if (off && !ui.game.dir) { toast('Tap Left or Right for the offline number'); return; }
+    if (total != null && !(total > 0)) { toast('The total should be a number of yards'); return; }
+    const shot = { club: gm.club, carry_yds: carry, total_yds: total, offline_ft: off ? (ui.game.dir === 'L' ? -Math.abs(off) : Math.abs(off)) : 0, curve_ft: null,
+      ball_speed_mph: null, launch_deg: null, apex_ft: null, landing_deg: null, hang_time_s: null };
+    ui.game.dir = null;
+    gmPlay(GM.adjustShot(shot, 1, gmLie()), { kind: 'live', rnd: gmRnd(), lie: gmLie() });
+  }
+  function r1(v) { return Math.round(v * 10) / 10; }
+  // Every stroke is saved before it's shown, with the hole's result if it finished it.
+  function gmCommit(stroke, next, holed) {
+    const r = gm.round, card = gm.card;
+    card.shots.push(stroke);
+    card.strokes += 1 + (stroke.penalty || 0);
+    card.penalties += stroke.penalty || 0;
+    if (holed) Object.assign(card, { done: true, score: card.strokes });
+    else if (card.strokes >= GM.MAX_OVER * card.par) Object.assign(card, { done: true, picked: true, score: GM.MAX_OVER * card.par });
+    r.ball = card.done ? null : next;
+    if (card.done && r.cards.every((c) => c.done)) gmFinish(r);
+    gmStore(gm.st);
+  }
+  function gmPlay(shot, info) {
+    const from = gm.ball, aim = gmAimPoint();
+    const res = GM.playShot(gm.H, from, aim, shot, { pin: gm.pin, equip: data.equipment, rnd: info.rnd });
+    if (!res) { toast('That shot needs a carry'); gmMeterReset(); return; }
+    const pick = info.pick, real = pick && pick.shot;
+    gmCommit({
+      kind: info.kind, club: shot.club, from: [r1(from.x), r1(from.z)], to: [r1(res.rest.x), r1(res.rest.z)], lie0: from.lie, lie: res.lie, result: res.result,
+      penalty: res.penalty, carry: r1(res.carry), total: r1(res.total), e: C.isNum(info.e) ? r1(info.e * 100) / 100 : null, power: C.isNum(info.power) ? r1(info.power * 100) / 100 : null,
+      grade: pick ? pick.grade : null, real: real && real.id ? real.id : null, track: res.track
+    }, res.next, res.result === 'holed');
+    gm.busy = true;
+    gmMeterText();
+    gmFly(res, () => {
+      if (!gm) return;
+      gm.busy = false;
+      gmAfterShot(res, info, shot);
+    });
+  }
+  // The shot from behind the ball as it flies, then back to the map.
+  function gmFly(res, after) {
+    if (REDUCED) { after(); return; }
+    const tr = res.traj, o = tr.origin, aim = gmAimPoint();
+    const pts = [o, tr.apexPoint, tr.land, tr.rest, { x: aim.x, y: 0, z: aim.z }].concat(tr.samples.filter((s, i) => i % 6 === 4));
+    const cam = FL.fitBehind(pts, gm.w, gm.h, o.x, o.z, res.heading);
+    const bg = gmBg(cam, { near: 12 });
+    const skip = $('.gm-skip', gm.box);
+    if (skip) skip.hidden = false;
+    gm.phase = 'flight';
+    gm.canvas.setAttribute('aria-label', 'The shot from behind the ball');
+    gm.canvas.classList.remove('aim');
+    const fl = gm.fl = { cam, bg, tr, t: 0, last: 0, after, done: false };
+    const end = () => {
+      if (!gm || fl.done) return;
+      fl.done = true;
+      if (gm.raf) cancelAnimationFrame(gm.raf);
+      gm.raf = 0;
+      if (skip) skip.hidden = true;
+      gm.bgs.delete(cam);
+      gm.fl = null;
+      after();
+    };
+    fl.end = end;
+    const tick = (ts) => {
+      if (!gm || gm.fl !== fl) return;
+      const dt = fl.last ? Math.min(0.05, (ts - fl.last) / 1000) : 0;
+      fl.last = ts;
+      fl.t += dt;
+      gm.ctx.clearRect(0, 0, gm.w, gm.h);
+      FL.drawFrame(gm.ctx, { cam, view: 'game', bg, past: [], cur: tr, t: Math.min(fl.t, tr.duration), hud: true });
+      if (fl.t >= tr.duration + GM_HOLD) { end(); return; }
+      gm.raf = requestAnimationFrame(tick);
+    };
+    gm.raf = requestAnimationFrame(tick);
+  }
+  function gmSessionOf(shot) { return data.sessions.find((s) => C.sessionShots(s).indexOf(shot) >= 0) || null; }
+  function gmAfterShot(res, info, shot) {
+    const card = gm.card, name = C.clubName(shot.club, data.clubs);
+    const flown = `${Math.round(res.carry)} carry${Math.abs(res.total - res.carry) >= 1 ? `, ${Math.round(res.total)} total` : ''}`;
+    const title = (info.kind === 'swing' ? GM.timingWord(info.e) + ' · ' : 'From the range · ') + `${name} · ${flown}`;
+    const nb = res.next, d = nb ? GM.dist(nb, gm.pin) : 0;
+    const where = nb ? `${GM_WHERE[nb.lie] || GM.LIE_WORDS[nb.lie]}, ${nb.lie === 'green' ? gmFtText(d * 3) + ' from the hole' : gmYds(d) + ' to the pin'}.` : '';
+    let line = where, kind = '';
+    if (res.result === 'holed') { line = card.strokes === 1 ? 'Hole in one!' : 'In the hole!'; kind = 'great'; }
+    else if (res.result === 'water') { line = `In the water. One penalty stroke: drop where it went in. ${where}`; kind = 'bad'; }
+    else if (res.result === 'penalty') { line = `In the penalty area. One penalty stroke: drop where it went in. ${where}`; kind = 'bad'; }
+    else if (res.result === 'ob') { line = 'Out of bounds. One penalty stroke: hit again from the same spot.'; kind = 'bad'; }
+    else if (res.result === 'tree') line = `Hit a tree! ${where}`;
+    else if (info.pick && info.pick.grade === 'mishit') kind = 'bad';
+    let sub = '';
+    const real = info.pick && info.pick.shot, sess = real ? gmSessionOf(real) : null;
+    if (real) {
+      const side = C.isNum(real.offline_ft) && Math.round(Math.abs(real.offline_ft)) ? `, ${Math.round(Math.abs(real.offline_ft))} ft ${real.offline_ft < 0 ? 'left' : 'right'}` : '';
+      const how = [Math.round(info.power * 100) < 100 ? `at ${Math.round(info.power * 100)}% power` : '', GM_FROM[info.lie] || ''].filter(Boolean).join(', ');
+      const wasMis = (gm.pools[shot.club] || { mis: [] }).mis.indexOf(real) >= 0;
+      sub = `${wasMis ? 'A mis-hit, like' : 'It flew like'} your ${name.toLowerCase()}${sess ? ` on ${C.fmtDate(sess.date, { short: true })}` : ''}${real.time ? ` at ${real.time}` : ''}: ${C.fmtRaw(real.carry_yds)} yds carry${side}${how ? `. This one was ${how}` : ''}.`;
+    } else if (GM_FROM[info.lie]) sub = `Played ${GM_FROM[info.lie]}.`;
+    if (card.done && card.picked) line = `${line ? line + ' ' : ''}That’s double par, so you pick up.`;
+    gmMsg(title, line, sub, kind);
+    if (card.done) { gm.phase = 'holed'; gm.ballHidden = res.result === 'holed'; if (res.next) gm.ball = res.next; gmView(); gmControls(); gmDraw(); return; }
+    gm.ball = res.next;
+    gmNewSpot();
+  }
+
+  // ----- Putting -----
+  function gmPuttDone(pos) {
+    gmMeterStop();
+    const ft = GM.dist(gm.ball, gm.pin) * 3, m = gm.meter, e = (pos - m.target) / m.win;
+    gmMeterText(Math.abs(e) < 0.25 ? 'Nice pace' : e < 0 ? (e < -1 ? 'Way short' : 'A little short') : (e > 1 ? 'Way long' : 'A little long'));
+    gmPutt(ft, GM.putt(ft, e, gmRnd(), gmLie()));
+  }
+  function gmPutt(ft, res) {
+    const b = gm.ball, hd = GM.headingTo(b, gm.pin), H = gm.H;
+    let end = res.holed ? { x: gm.pin.x, z: gm.pin.z } : FL.offsetPoint(b.x, b.z, hd, res.along / 3, res.side / 3);
+    // A putt stays on the green or the fringe: one that runs off stops at the edge.
+    for (let k = 0; k < 30 && !res.holed && !/^(green|fringe)$/.test(GM.lieAt(H, end.x, end.z)); k++) end = { x: end.x + (b.x - end.x) * 0.08, z: end.z + (b.z - end.z) * 0.08 };
+    const lie = res.holed ? 'holed' : GM.lieAt(H, end.x, end.z), left = res.holed ? 0 : GM.dist(end, gm.pin) * 3;
+    gmCommit({ kind: 'putt', club: 'Putter', from: [r1(b.x), r1(b.z)], to: [r1(end.x), r1(end.z)], lie0: b.lie, lie, result: res.holed ? 'holed' : 'ok', penalty: 0, ft: r1(ft) },
+      res.holed ? null : { x: end.x, z: end.z, lie: /^(green|fringe)$/.test(lie) ? lie : 'fringe' }, res.holed);
+    const card = gm.card;
+    const msg = () => {
+      if (res.holed) gmMsg(ft >= 20 ? 'What a putt!' : 'In the hole!', ft <= GM.TAP_IN ? 'Tapped in.' : `${gmFtText(ft)} putt.`, '', 'great');
+      else gmMsg(`${gmFtText(ft)} putt`, `${res.along < ft ? 'Short' : 'Past the hole'}: ${gmFtText(left)} left.${card.done ? ' That’s double par, so you pick up.' : ''}`, '');
+      gm.ball = res.holed ? { x: gm.pin.x, z: gm.pin.z, lie: 'green' } : { x: end.x, z: end.z, lie: /^(green|fringe)$/.test(lie) ? lie : 'fringe' };
+      if (card.done) { gm.phase = 'holed'; gm.ballHidden = res.holed; gmView(); gmControls(); gmDraw(); return; }
+      gmNewSpot();
+    };
+    gmRoll(b, end, res.holed, msg);
+  }
+  // The putt rolling on the map, slowing to a stop (or dropping in).
+  function gmRoll(from, to, holed, after) {
+    gm.busy = true;
+    gmMeterText();
+    if (REDUCED) { gm.busy = false; after(); return; }
+    const len = GM.dist(from, to) * 3, T = gmClamp(0.6 + len / 22, 0.7, 2.6);
+    gm.phase = 'roll';
+    let t0 = 0;
+    const tick = (ts) => {
+      if (!gm) return;
+      if (!t0) t0 = ts;
+      const u = Math.min(1, (ts - t0) / 1000 / T), f = 1 - (1 - u) * (1 - u);
+      gm.rollPos = { x: from.x + (to.x - from.x) * f, z: from.z + (to.z - from.z) * f };
+      gm.ballHidden = holed && u >= 1;
+      gmDraw();
+      if (u < 1) { gm.raf = requestAnimationFrame(tick); return; }
+      gm.raf = 0;
+      setTimeout(() => { if (!gm) return; gm.busy = false; gm.rollPos = null; after(); }, holed ? 500 : 250);
+    };
+    gm.raf = requestAnimationFrame(tick);
+  }
+
+  // ----- The round -----
+  function gmFinish(r) {
+    if (r.finished) return;
+    r.finished = true;
+    const t = GM.totals(r);
+    gm.st.history = [{ date: todayISO(), course: r.course, tee: r.tee, holes: t.holes, label: r.label || '', strokes: t.strokes, par: t.par, toPar: t.toPar, mode: r.mode, scores: r.cards.map((c) => c.score) }]
+      .concat(gm.st.history || []).slice(0, 20);
+  }
+  function gmCanvasTap(e) {
+    if (!gm) return;
+    if (gm.phase === 'flight' && gm.fl) { gm.fl.end(); return; }
+    if (gm.phase !== 'aim' || gm.busy || (gm.meter && gm.meter.phase !== 'ready')) return;
+    const r = gm.canvas.getBoundingClientRect(), p = FL.unproject(gm.mapCam, e.clientX - r.left, e.clientY - r.top);
+    if (!p) return;
+    gm.aim = { x: p.x, z: p.z };
+    gmAimText();
+    gmDraw();
+  }
+  function gmStartRound() {
+    const st = gmState(), pools = GM.clubPools(data.sessions, data.equipment), set = gmSettings(st, pools), course = gmCourse();
+    const old = gmRound(st);
+    if (old && !old.finished && old.cards.some((c) => !c.done)) {
+      if (!window.confirm('Start a new round? The one you’re playing ends.')) return;
+      if (old.cards.some((c) => c.done)) {
+        const t = GM.totals(old);
+        st.history = [{ date: todayISO(), course: old.course, tee: old.tee, holes: t.played, label: `${t.played} of ${old.label || plural(t.holes, 'hole')}`, strokes: t.strokes, par: t.par, toPar: t.toPar, mode: old.mode, scores: old.cards.filter((c) => c.done).map((c) => c.score) }]
+          .concat(st.history || []).slice(0, 20);
+      }
+    }
+    const all = course.holes.map((h) => h.n);
+    const holes = set.holes === 'front' ? all.filter((n) => n <= 9) : set.holes === 'back' ? all.filter((n) => n >= 10) : set.holes === 'one' ? [+set.one] : all;
+    const mode = Object.keys(pools).length ? set.mode : 'live';
+    st.round = GM.newRound(course, { tee: set.tee, holes, mode, easy: set.easy, date: todayISO() });
+    st.round.label = set.holes === 'one' ? `Hole ${+set.one}` : GM_HOLES[set.holes] || '';
+    gmStore(st);
+    Object.assign(ui.game, { setup: false, card: false, dir: null });
+    renderGame();
+    window.scrollTo(0, 0);
+  }
+  function gmEndRound() {
+    const st = gm ? gm.st : gmState(), r = gmRound(st);
+    if (!r) return;
+    const t = GM.totals(r);
+    if (!window.confirm(t.played ? `End this round? Your ${plural(t.played, 'hole')} so far go in Your rounds.` : 'End this round?')) return;
+    if (t.played && !r.finished) {
+      st.history = [{ date: todayISO(), course: r.course, tee: r.tee, holes: t.played, label: `${t.played} of ${r.label || plural(t.holes, 'hole')}`, strokes: t.strokes, par: t.par, toPar: t.toPar, mode: r.mode, scores: r.cards.filter((c) => c.done).map((c) => c.score) }]
+        .concat(st.history || []).slice(0, 20);
+    }
+    st.round = null;
+    gmStore(st);
+    gmStop();
+    Object.assign(ui.game, { setup: false, card: false });
+    renderGame();
+    window.scrollTo(0, 0);
+  }
+  function gmResize() {
+    if (!gm || gm.busy || gm.phase === 'flight') return;
+    gmSize();
+    gmView();
+    gmDraw();
+  }
+
   // ----- Sessions -----
   function renderSessions() {
     const el = $('#view-sessions');
@@ -2373,6 +3177,79 @@
       rpDraw();
       rpLabel();
     },
+    // ----- Game -----
+    'gm-set'(b) {
+      const st = gmState(), k = b.dataset.k, v = k === 'one' ? Number(b.dataset.v) : b.dataset.v;
+      st.last = Object.assign(gmSettings(st, GM.clubPools(data.sessions, data.equipment)), { [k]: v });
+      gmStore(st);
+      renderGame();
+    },
+    'gm-start'() { gmStartRound(); },
+    'gm-continue'() { ui.game.setup = false; renderGame(); window.scrollTo(0, 0); },
+    'gm-new'() { ui.game.setup = true; gmStop(); renderGame(); window.scrollTo(0, 0); },
+    'gm-quit'() { gmEndRound(); },
+    'gm-card'(b) {
+      ui.game.card = !ui.game.card;
+      const box = $('.gm-scorecard'), r = gmRound(gm ? gm.st : gmState());
+      if (box && r) { box.innerHTML = ui.game.card ? gmScorecardHtml(r) : ''; box.hidden = !ui.game.card; }
+      b.setAttribute('aria-expanded', String(ui.game.card));
+    },
+    'gm-club'(b) {
+      if (!gm || gm.busy || (gm.meter && gm.meter.phase !== 'ready')) return;
+      gm.club = b.dataset.club;
+      gm.aim = null;
+      gm.phase = gm.club === 'Putter' ? 'putt' : 'aim';
+      gmView();
+      gmControls();
+      gmDraw();
+    },
+    'gm-mode'(b) {
+      if (!gm || gm.busy || b.dataset.v === gm.round.mode || (gm.meter && gm.meter.phase !== 'ready')) return;
+      gm.round.mode = b.dataset.v;
+      gmStore(gm.st);
+      if (gm.club !== 'Putter' && gmClubs().indexOf(gm.club) < 0) { gm.club = gmSuggest(); gm.aim = null; }
+      gmControls();
+      gmDraw();
+    },
+    'gm-nudge'(b) {
+      if (!gm || gm.phase !== 'aim' || gm.busy || (gm.meter && gm.meter.phase !== 'ready')) return;
+      const a = gmAimPoint(), hd = GM.headingTo(gm.ball, a);
+      gm.aim = FL.offsetPoint(a.x, a.z, hd, 0, GM_NUDGE * Number(b.dataset.d));
+      gmAimText();
+      gmDraw();
+    },
+    'gm-dir'(b) {
+      ui.game.dir = ui.game.dir === b.dataset.dir ? null : b.dataset.dir;
+      $$('[data-action="gm-dir"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.dir === ui.game.dir)));
+    },
+    'gm-live'() { if (gm && !gm.busy && gm.phase === 'aim') gmLiveShot(); },
+    'gm-tapin'() { if (gm && !gm.busy && gm.phase === 'putt') gmPutt(GM.dist(gm.ball, gm.pin) * 3, { holed: true, along: 0, side: 0 }); },
+    'gm-skip'() { if (gm && gm.fl) gm.fl.end(); },
+    'gm-next'() {
+      if (!gm) return;
+      const r = gm.round;
+      if (r.idx < r.cards.length - 1) r.idx++;
+      gmStore(gm.st);
+      ui.game.card = false;
+      renderGame();
+      const top = $('.gm-top') || $('#view-game');
+      if (top) top.scrollIntoView({ block: 'start' });
+    },
+    'gm-pickup'() {
+      if (!gm || gm.busy || gm.card.done) return;
+      if (!window.confirm(`Pick up on this hole? It counts as double par (${GM.MAX_OVER * gm.card.par}).`)) return;
+      if (gm.meter && gm.meter.raf) cancelAnimationFrame(gm.meter.raf);
+      const r = gm.round, card = gm.card;
+      Object.assign(card, { done: true, picked: true, score: GM.MAX_OVER * card.par });
+      r.ball = null;
+      if (r.cards.every((c) => c.done)) gmFinish(r);
+      gmStore(gm.st);
+      gm.phase = 'holed';
+      gmMsg('Picked up', `Double par: ${card.score} on hole ${card.n}.`, '', '');
+      gmView();
+      gmControls();
+      gmDraw();
+    },
     'focus-club'(b) {
       ui.statClub = b.dataset.club; renderStats();
       const sec = $('#clubSection'); if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2550,6 +3427,7 @@
   };
   const changes = {
     scope(el) { ui.scope = el.value; renderStats(); },
+    'gm-easy'(el) { const st = gmState(); st.last = Object.assign(gmSettings(st, GM.clubPools(data.sessions, data.equipment)), { easy: el.checked }); gmStore(st); },
     'prog-metric'(el) { ui.progMetric = el.value; renderProgress(); },
     'ns-device'(el) { $('#nsOtherWrap').hidden = el.value !== 'other'; },
     'entry-other-club'(el) {
@@ -2644,6 +3522,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target && e.target.id === 'goalText') { e.preventDefault(); addGoal(); }
     if (e.key === 'Enter' && e.target && /^ck(Carry|Ball|Launch|Off)$/.test(e.target.id)) { e.preventDefault(); runCheck(); }
+    if (e.key === 'Enter' && e.target && /^gm(Carry|Total|Off)$/.test(e.target.id)) { e.preventDefault(); actions['gm-live'](); }
   });
   document.addEventListener('change', (e) => {
     const el = e.target.closest ? e.target.closest('[data-change]') : null;
@@ -2680,8 +3559,10 @@
     if (i >= 0 && i < r.frames.length) actions['rv-frame']({ dataset: { id, i: String(i) } });
   }, { passive: true });
 
-  // A replay pauses while the page is in the background, and picks up when it's back.
+  // A replay pauses while the page is in the background, and picks up when it's back;
+  // a swing on the game's meter starts over.
   document.addEventListener('visibilitychange', () => {
+    if (document.hidden && gm) gmMeterReset();
     if (!rp) return;
     if (document.hidden && rp.playing) rpPause(true);
     else if (!document.hidden && rp.autoPaused) rpResume();
@@ -2695,7 +3576,8 @@
       if (window.innerWidth === lastW) return;
       lastW = window.innerWidth;
       hideTip();
-      if (ui.tab === 'stats') renderStats(); else if (ui.tab === 'progress') renderProgress();
+      fitTabs();
+      if (ui.tab === 'stats') renderStats(); else if (ui.tab === 'progress') renderProgress(); else if (ui.tab === 'game') gmResize();
     }, 150);
   });
 
@@ -2742,6 +3624,7 @@
       .catch(() => { /* keep the cached or built-in list */ });
   }
 
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitTabs).catch(() => {});
   loadPlayerState();
   setURL();
   try { localStorage.setItem(LS + '.lastPlayer', playerId); } catch (e) { /* ignore */ }

@@ -570,7 +570,7 @@
   function hudLines(tr, t, c, view) {
     if (!(t > 0)) return [];
     var p = tr.at(t);
-    if (p.phase === 'flight') return [Math.round(p.z) + ' yds · ' + Math.round(p.y * 3) + ' ft high'];
+    if (p.phase === 'flight') return [Math.round(tr.along ? tr.along(t) : p.z) + ' yds · ' + Math.round(p.y * 3) + ' ft high'];
     if (p.phase === 'roll') return [Math.round(tr.carry) + ' carry · rolling'];
     var out = [Math.round(tr.carry) + ' carry · ' + Math.round(tr.total) + ' total'];
     if (view === 'tee') { var d = toPin(tr, c); out.push(d < 1 ? 'Next to the pin' : yds(d) + ' to the pin'); }
@@ -607,10 +607,170 @@
     if (o.view === 'side') drawApex(ctx, cam, tr, t, hud);
   }
 
+  // ---------------------------------------------------------------------------
+  // Real holes (the Game tab): any shape of hole, as js/game.js builds it
+  // ---------------------------------------------------------------------------
+  // A heading is the direction a shot or camera faces on the ground: 0 is +z, and it
+  // turns right as it grows (the same as a camera's yaw). Sideways is to the right.
+  function fwd(heading) { return { x: Math.sin(heading), z: Math.cos(heading) }; }
+  // From a spot and heading to the ground: `along` yds ahead and `side` yds to the right.
+  function offsetPoint(x, z, heading, along, side) {
+    var sh = Math.sin(heading), ch = Math.cos(heading);
+    return { x: x + along * sh + side * ch, z: z + along * ch - side * sh };
+  }
+  // A shot's flight moved onto a hole: it starts at (x, z) and flies along `heading`.
+  // The same shape as trajectory()'s result, with every point in hole coordinates.
+  function place(tr, x0, z0, heading) {
+    function w(p) { var q = offsetPoint(x0, z0, heading, p.z, p.x); return { x: q.x, y: p.y, z: q.z }; }
+    var out = {};
+    for (var k in tr) if (Object.prototype.hasOwnProperty.call(tr, k)) out[k] = tr[k];
+    out.samples = tr.samples.map(function (s) { var q = w(s); q.t = s.t; return q; });
+    out.at = function (t) { var p = tr.at(t), q = w(p); q.phase = p.phase; return q; };
+    out.land = w(tr.land);
+    out.rest = w(tr.rest);
+    out.apexPoint = w(tr.apexPoint);
+    out.origin = { x: x0, y: 0, z: z0 };
+    out.heading = heading;
+    out.local = tr;
+    return out;
+  }
+  // The spot on the ground under a point on the screen, or null above the horizon.
+  function unproject(cam, sx, sy) {
+    var X = (sx - cam.w / 2) / cam.F, Y = -(sy - cam.h / 2) / cam.F;
+    var ry = Y * cam.cp + cam.sp, Z1 = -Y * cam.sp + cam.cp;
+    var rx = X * cam.cy + Z1 * cam.sy, rz = -X * cam.sy + Z1 * cam.cy;
+    if (!(ry < -1e-9)) return null;
+    var t = -cam.y / ry;
+    return { x: cam.x + rx * t, z: cam.z + rz * t };
+  }
+  // Straight down from above, turned so `heading` points up the screen, high enough that
+  // every point fits inside the margin (a share of the width and height on each side).
+  function fitTop(points, w, h, heading, margin) {
+    var sh = Math.sin(heading), ch = Math.cos(heading), u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    points.forEach(function (p) {
+      var u = p.x * ch - p.z * sh, v = p.x * sh + p.z * ch;
+      u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+    });
+    var m = margin == null ? 0.08 : margin, vf = 40 * DEG, t = Math.tan(vf / 2);
+    var halfU = (u1 - u0) / 2 / (1 - 2 * m), halfV = (v1 - v0) / 2 / (1 - 2 * m);
+    var hgt = Math.max(halfV / t, halfU / (t * w / h), 12);
+    var c = offsetPoint(0, 0, heading, (v0 + v1) / 2, (u0 + u1) / 2);
+    return camera(c.x, hgt, c.z, -90 * DEG, vf, w, h, heading);
+  }
+  // From behind the ball at (x0, z0), facing `heading`, framed like the tee box view.
+  function fitBehind(points, w, h, x0, z0, heading) {
+    var sh = Math.sin(heading), ch = Math.cos(heading);
+    var local = points.map(function (p) {
+      var dx = p.x - x0, dz = p.z - z0;
+      return { x: dx * ch - dz * sh, y: p.y || 0, z: dx * sh + dz * ch };
+    });
+    var c = fitTee(local, w, h), q = offsetPoint(x0, z0, heading, c.z, c.x);
+    return camera(q.x, c.y, q.z, c.pitch, c.vfov, w, h, heading + c.yaw);
+  }
+
+  var HCOL = {
+    water: '#4b97cf', waterEdge: '#d9ecf5', penalty: '#7d9450', redStake: '#d6332a', ob: '#719c5d', whiteStake: '#ffffff',
+    treeGround: '#3e783b', hollow: '#4a883d', cup: '#111a15', markers: { 100: '#d6332a', 150: '#ffffff', 200: '#2f6fd6' }
+  };
+  function post(ctx, cam, x, z, color, top) {
+    var b = project(cam, x, 0, z), t = project(cam, x, top || 1.1, z);
+    if (!b || !t || b.x < -10 || b.x > cam.w + 10 || b.y < -10 || b.y > cam.h + 10) return;
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 4.5;
+    ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(t.x, t.y - 0.01); ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(t.x, t.y - 0.01); ctx.stroke();
+    if (Math.abs(b.y - t.y) < 3) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(b.x, b.y, 2.6, 0, 2 * Math.PI); ctx.fill(); }
+  }
+  // A flag on a pin at (x, z), at least 22 px tall so it can be seen from far away.
+  function flagAt(ctx, cam, x, z) {
+    var base = project(cam, x, 0, z);
+    if (!base) return;
+    var hgt = Math.max(2.4, 22 / base.s), top = project(cam, x, hgt, z);
+    if (!top) return;
+    var len = Math.max(6, Math.hypot(base.x - top.x, base.y - top.y));
+    ctx.fillStyle = HCOL.cup;
+    ctx.beginPath();
+    ctx.ellipse(base.x, base.y, Math.max(2.5, 0.06 * base.s), Math.max(1.4, 0.06 * base.s * Math.max(0.3, -cam.sp)), 0, 0, 2 * Math.PI);
+    ctx.fill();
+    if (len < 8) return; // straight down from above: the cup is enough, the map draws its own flag
+    ctx.strokeStyle = COL.pole;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+    ctx.fillStyle = COL.flag;
+    ctx.beginPath();
+    ctx.moveTo(top.x, top.y);
+    ctx.lineTo(top.x + len * 0.55, top.y + len * 0.16);
+    ctx.lineTo(top.x, top.y + len * 0.32);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // Everything on a hole that doesn't move. H is a hole from GolfGame.buildHole; pin is
+  // { x, z }. opts.near: leave out trees closer to the camera than this (yds), so a view
+  // from behind the ball isn't blocked by the tree it's under.
+  function drawHole(ctx, cam, H, pin, opts) {
+    opts = opts || {};
+    var w = cam.w, h = cam.h, hy = horizonY(cam), g0 = Math.max(0, hy);
+    if (g0 < h) {
+      var gr = ctx.createLinearGradient(0, g0, 0, h);
+      gr.addColorStop(0, hy > 0 ? COL.roughFar : COL.rough);
+      gr.addColorStop(0.35, COL.rough);
+      ctx.fillStyle = gr;
+      ctx.fillRect(0, g0, w, h - g0);
+    }
+    if (hy > 0) drawSky(ctx, cam, H, hy);
+    H.treeZones.forEach(function (p) { fillGround(ctx, cam, p, HCOL.treeGround); });
+    H.ob.forEach(function (o) { fillGround(ctx, cam, o.poly, HCOL.ob); });
+    H.water.forEach(function (o) {
+      if (!groundPath(ctx, cam, o.poly)) return;
+      ctx.fillStyle = o.kind === 'penalty' ? HCOL.penalty : HCOL.water;
+      ctx.fill();
+      if (o.kind !== 'penalty') { ctx.strokeStyle = HCOL.waterEdge; ctx.lineWidth = 1.5; ctx.stroke(); }
+    });
+    H.tees.forEach(function (t) { fillGround(ctx, cam, t.poly, COL.tee); });
+    if (H.fairway) {
+      fillGround(ctx, cam, H.fairway, COL.fairway);
+      H.stripes.forEach(function (p) { fillGround(ctx, cam, p, COL.stripe); });
+    }
+    H.hollows.forEach(function (b) { fillGround(ctx, cam, b.poly, HCOL.hollow); });
+    fillGround(ctx, cam, H.green.fringePoly, COL.fringe);
+    fillGround(ctx, cam, H.green.poly, COL.green);
+    H.bunkers.forEach(function (b) {
+      if (!groundPath(ctx, cam, b.poly)) return;
+      ctx.fillStyle = COL.sand;
+      ctx.fill();
+      ctx.strokeStyle = COL.sandEdge;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    });
+    H.markers.forEach(function (m) {
+      var q = project(cam, m.x, 0, m.z);
+      if (!q) return;
+      ctx.fillStyle = HCOL.markers[m.d] || '#fff';
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(q.x, q.y, Math.max(3.5, 0.9 * q.s), Math.max(1.6, 0.9 * q.s * Math.max(0.3, -cam.sp)), 0, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    });
+    H.water.forEach(function (o) { if (o.kind === 'penalty') o.stakes.forEach(function (s) { post(ctx, cam, s[0], s[1], HCOL.redStake); }); });
+    H.ob.forEach(function (o) { o.stakes.forEach(function (s) { post(ctx, cam, s[0], s[1], HCOL.whiteStake); }); });
+    var near = opts.near || 0;
+    var things = H.trees.map(function (t) { return { t: t, q: project(cam, t.x, 0, t.z) }; })
+      .filter(function (o) { return o.q && o.q.z >= near && o.q.x > -80 && o.q.x < w + 80 && o.q.y > -80; });
+    if (pin) { var fq = project(cam, pin.x, 0, pin.z); if (fq) things.push({ flag: true, q: fq }); }
+    things.sort(function (a, b) { return b.q.z - a.q.z; });
+    things.forEach(function (o) { if (o.flag) flagAt(ctx, cam, pin.x, pin.z); else drawTree(ctx, cam, o.t, o.q); });
+  }
+
   return {
     trajectory: trajectory, keyPoints: keyPoints, solveK: solveK,
     camera: camera, project: project, inside: inside, horizonY: horizonY, fitTee: fitTee, fitSide: fitSide, fitGreen: fitGreen, VIEWS: VIEWS,
     course: course, rng: rng, FAIRWAY_HALF: FAIRWAY_HALF,
-    drawCourse: drawCourse, drawShot: drawShot, drawFrame: drawFrame, COL: COL
+    drawCourse: drawCourse, drawShot: drawShot, drawFrame: drawFrame, COL: COL,
+    fwd: fwd, offsetPoint: offsetPoint, place: place, unproject: unproject, fitTop: fitTop, fitBehind: fitBehind,
+    drawHole: drawHole, flagAt: flagAt, pill: pill, HCOL: HCOL, G_YDS: G_YDS
   };
 });
