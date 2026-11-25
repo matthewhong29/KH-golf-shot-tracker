@@ -1003,7 +1003,17 @@ const H4w = GG.buildHole(HP, 4, 'white'), aim4 = GG.aimFor(H4w, H4w.start, GG.pi
 ok(!aim4.pin && Math.abs(GG.dist(H4w.start, aim4) - 156) < 10 && GG.lieAt(H4w, aim4.x, aim4.z) === 'fairway', 'a long hole: aim down the fairway as far as the club goes');
 const wetCarry = (H, a) => { let w = 0; for (let k = 1; k < 20; k++) { if (GG.lieAt(H, H.start.x + (a.x - H.start.x) * k / 20, H.start.z + (a.z - H.start.z) * k / 20) === 'water') w = k / 20; } return w * GG.dist(H.start, a); };
 const aimDad18 = GG.aimFor(H18w, H18w.start, GG.pinFor(H18w, 1), 156), aimM318 = GG.aimFor(H18w, H18w.start, GG.pinFor(H18w, 1), 185);
-ok(wetCarry(H18w, aimDad18) === 0 && wetCarry(H18w, aimM318) > 80 && !/water|ob/.test(GG.lieAt(H18w, aimM318.x, aimM318.z)), '18: with 156 yds he plays round the inlet; with 185 he carries it');
+ok(wetCarry(H18w, aimDad18) > 60 && wetCarry(H18w, aimDad18) < 156 - 30 && !/water|ob/.test(GG.lieAt(H18w, aimDad18.x, aimDad18.z)) && wetCarry(H18w, aimM318) > 80 && GG.lieAt(H18w, aimM318.x, aimM318.z) === 'fairway',
+  '18: from the White tee the drive carries the inlet, as the course guides say: with 156 yds he clears it with room to spare, and 185 reaches the fairway');
+// The lines of play follow the middle of their fairways (16 and 18 were re-routed), and the
+// 13th's passes left of its fairway bunker, which the 2020 PGA Championship guides put down the right.
+const fwShare = (n) => { const H = GG.buildHole(HP, n, 'blue'), t = GG.toHole(H, H.start.x, H.start.z); let k = 0, all = 0; for (let s = t.s + 60; s < H.L - 30; s += 5) { const q = H.at(s); all++; if (GG.lieAt(H, q.x, q.z) === 'fairway') k++; } return k / all; };
+ok([16, 18].every((n) => fwShare(n) > 0.6) && [1, 2, 4, 5, 6, 9, 10, 12, 13, 14, 15].every((n) => fwShare(n) > 0.7), `the line of play stays in the fairway: 16 ${Math.round(fwShare(16) * 100)}%, 18 ${Math.round(fwShare(18) * 100)}% (the rest of the 18th is the carry over the inlet)`);
+{
+  const H13 = GG.buildHole(HP, 13, 'blue'), b13 = H13.ground.bunkers.map((b) => GG.toHole(H13, GG.centroidOf(b.poly).x, GG.centroidOf(b.poly).z)).filter((q) => q.g > 150 && q.g < 280 && Math.abs(q.lat) < 30);
+  ok(b13.length === 1 && b13[0].lat > 5, `13: the fairway bunker in the landing area sits right of the line (${b13.length ? Math.round(b13[0].lat) : '?'} yds)`);
+}
+eq([HP.map.holes['18'].tees.blue.box, HP.map.holes['18'].tees.white.box], [36, 37], '18: Blue and White on their own tee boxes (the back box, at 466 yds, is the championship tee)');
 const near1 = H1.spot(120, 0);
 eq(GG.aimFor(H1, near1, pin1, 140).pin, true, 'in range: aim at the pin');
 eq([GG.scoreName(1, 3), GG.scoreName(2, 5), GG.scoreName(3, 4), GG.scoreName(4, 4), GG.scoreName(5, 4), GG.scoreName(6, 4), GG.scoreName(8, 4)],

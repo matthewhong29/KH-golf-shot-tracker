@@ -33,12 +33,12 @@
       { n: 10, par: 5, yds: { blue: 550, white: 530 }, note: 'Fairway bunkers down the right, and three bunkers around the green.' },
       { n: 11, par: 3, yds: { blue: 185, white: 155 }, note: 'A par 3 with out of bounds just past the green.' },
       { n: 12, par: 5, yds: { blue: 480, white: 450 }, note: 'Bends right to left, with out of bounds all down the left. Bunkers and cypress guard the green.' },
-      { n: 13, par: 4, yds: { blue: 405, white: 375 }, note: 'A fairway bunker on the left, and out of bounds beyond the trees down the left.' },
-      { n: 14, par: 4, yds: { blue: 440, white: 410 }, note: 'Straight and uphill, with Lake Merced off to the left.' },
+      { n: 13, par: 4, yds: { blue: 405, white: 375 }, note: 'A fairway bunker on the right of the landing area, and out of bounds beyond the trees down the left.' },
+      { n: 14, par: 4, yds: { blue: 440, white: 410 }, note: 'Straight: down to the landing area, then uphill to the green, with Lake Merced off to the left.' },
       { n: 15, par: 4, yds: { blue: 405, white: 375 }, note: 'A dogleg left past a bunker to aim at on the right, with the lake to the left.' },
       { n: 16, par: 4, yds: { blue: 330, white: 310 }, note: 'A short par 4 that bends right along Lake Merced, with bunkers short left of the green.' },
       { n: 17, par: 3, yds: { blue: 175, white: 165 }, note: 'A par 3 along the lake, which runs down the left, with bunkers on both sides of the green.' },
-      { n: 18, par: 4, yds: { blue: 440, white: 420 }, note: 'A dogleg left around Lake Merced. The tee shot carries the water, bunkers wait on the right, and the green sits up high.' }
+      { n: 18, par: 4, yds: { blue: 440, white: 420 }, note: 'A long, gentle dogleg left around Lake Merced. The tee shot carries the water, bunkers wait on the right, and the green sits above the fairway.' }
     ],
     // Blue yardages from Offcourse's scorecard, White from GolfPass's; the notes from the
     // course guides and hole-by-hole write-ups; the map from OpenStreetMap.

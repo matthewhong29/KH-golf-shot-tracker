@@ -114,6 +114,81 @@ t18 = [35, 36, 37, 38, 39]   # the 18th's tee boxes, back to front
 back18 = tuple(round(v, 1) for v in tcent[t18[0]])
 holes[18] = {'line': [back18, corner, tuple(round(v, 1) for v in gcent[g18])], 'green': g18, 'built': True}
 
+def line_at(pts, s):
+    """The point s yds along the line, and the heading there (taken over 16 yds)."""
+    def pt(s):
+        s = max(0, min(plen(pts), s)); acc = 0
+        for i in range(len(pts) - 1):
+            a, b = pts[i], pts[i + 1]; L = dist(a, b)
+            if acc + L >= s or i == len(pts) - 2:
+                u = (s - acc) / L if L else 0
+                return (a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u)
+            acc += L
+    p0, p1 = pt(s - 8), pt(s + 8)
+    return pt(s), math.atan2(p1[0] - p0[0], p1[1] - p0[1])
+def on_line(p, pts):
+    """(s, lat): how far along the line p is, and how far right (+) or left of it."""
+    best = None; acc = 0
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]; L = dist(a, b)
+        dx, dz = (b[0] - a[0]) / L, (b[1] - a[1]) / L
+        t = max(0, min(L, (p[0] - a[0]) * dx + (p[1] - a[1]) * dz))
+        q = (a[0] + dx * t, a[1] + dz * t); dd = dist(p, q)
+        lat = (p[0] - a[0]) * dz - (p[1] - a[1]) * dx
+        if best is None or dd < best[0]: best = (dd, acc + t, lat)
+        acc += L
+    return best[1], best[2]
+# Lines of play that stray off their mapped fairway: OSM's line for the 16th runs down the
+# right edge of its fairway and out into the rough, and the 18th's (built above) hugs the
+# lake once round the corner, where the 2020 PGA Championship guides call the hole "a long,
+# gentle dogleg left" whose drive "carries the lake" and "heads up the right side". Each is
+# re-routed down the middle of its fairway: from points 20 yds apart along the old line,
+# where a cross-section meets the fairway, the point of it farthest from the fairway's
+# edges, smoothed; the tee end and the green stay, and so does a carry over water before it.
+FOLLOW_FW = {16: 11, 18: 9}
+def widest(p, hd, fw, reach=70):
+    rx, rz = math.cos(hd), -math.sin(hd)
+    best = None
+    for lat in range(-reach, reach + 1):
+        q = (p[0] + rx * lat, p[1] + rz * lat)
+        if not inpoly(q, fw): continue
+        d = min(segd(q, fw[i], fw[(i + 1) % len(fw)]) for i in range(len(fw)))
+        if best is None or d > best[0]: best = (d, q)
+    return best
+for n, fi in FOLLOW_FW.items():
+    pts = holes[n]['line']; fw = fairways[fi]; L = plen(pts)
+    mids = []
+    for s_ in range(0, int(L), 20):
+        p, hd = line_at(pts, s_)
+        b = widest(p, hd, fw)
+        if b and b[0] >= 5: mids.append(b[1])
+    sm = [mids[0]] + [tuple(np.mean(mids[max(0, k - 1):k + 2], axis=0)) for k in range(1, len(mids) - 1)] + [mids[-1]]
+    route = [pts[0]]
+    for q in sm:
+        if dist(q, route[-1]) >= 30: route.append(q)
+    if dist(route[-1], pts[-1]) < 25: route.pop()
+    route.append(pts[-1])
+    holes[n]['line'] = [tuple(round(float(v), 1) for v in q) for q in route]
+# Hole 13: OSM's line runs straight from the tee over the fairway bunker in the landing area,
+# so the fairway built along it would have the bunker in its middle. The 2020 PGA
+# Championship guides put that bunker down the right, with the drive turning left to right
+# past it, so the line passes 6 yds left of the bunker; the fairway built along it then has
+# the bunker on its right edge.
+pts13 = holes[13]['line']
+for b in bunkers:
+    sv = [on_line(v, pts13) for v in b]
+    lats = [l for _, l in sv]; s_mid = float(np.mean([x for x, _ in sv]))
+    if not (min(lats) < 0 < max(lats) and 100 <= s_mid <= plen(pts13) - 100): continue
+    p, hd = line_at(pts13, s_mid)
+    rx, rz = math.cos(hd), -math.sin(hd); off = min(lats) - 6
+    way = (round(p[0] + rx * off, 1), round(p[1] + rz * off, 1))
+    acc = 0
+    for i in range(len(pts13) - 1):
+        acc += dist(pts13[i], pts13[i + 1])
+        if acc >= s_mid: pts13 = pts13[:i + 1] + [way] + pts13[i + 1:]; break
+    holes[13]['line'] = pts13
+    break
+
 # Each set of tees on the real tee box whose distance to the green, along the line of play,
 # comes closest to the scorecard's; used only when it's within 12 yds of it.
 def along(p, pts):
@@ -128,12 +203,16 @@ def along(p, pts):
         s += L
     return plen(pts) - best[1], best[0]
 report = []
+# How far to the side of the line of play a tee box may sit: 14 yds, but the 18th's forward
+# tees stand on the peninsula well to the side of the back tee's line (the White tee box is
+# about 32 yds off it).
+TEE_OFF = {18: 40}
 for n in range(1, 19):
     h = holes[n]; pts = h['line']; h['tees'] = {}
     cand = []
     for k, c in enumerate(tcent):
         g, off = along(c, pts)
-        if off < 14 and g > plen(pts) - 140: cand.append((k, g, off))
+        if off < TEE_OFF.get(n, 14) and g > plen(pts) - 140: cand.append((k, g, off))
     for tee in ['blue', 'white']:
         want = YDS[tee][n - 1]
         # Closest to the card; between boxes within 2 yds of each other on that, the one
@@ -214,30 +293,6 @@ for gx in np.arange(min(xs), max(xs), STEP):
 # more than 18 yds either side of the line, so no tree (all at least 30 yds from every
 # line) stands in one. Marked in fairwaysBuilt.
 BUILD_FW = {2: 30, 4: 32, 5: 26, 7: 30, 9: 34, 13: 30, 15: 28}
-def line_at(pts, s):
-    """The point s yds along the line, and the heading there (taken over 16 yds)."""
-    def pt(s):
-        s = max(0, min(plen(pts), s)); acc = 0
-        for i in range(len(pts) - 1):
-            a, b = pts[i], pts[i + 1]; L = dist(a, b)
-            if acc + L >= s or i == len(pts) - 2:
-                u = (s - acc) / L if L else 0
-                return (a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u)
-            acc += L
-    p0, p1 = pt(s - 8), pt(s + 8)
-    return pt(s), math.atan2(p1[0] - p0[0], p1[1] - p0[1])
-def on_line(p, pts):
-    """(s, lat): how far along the line p is, and how far right (+) or left of it."""
-    best = None; acc = 0
-    for i in range(len(pts) - 1):
-        a, b = pts[i], pts[i + 1]; L = dist(a, b)
-        dx, dz = (b[0] - a[0]) / L, (b[1] - a[1]) / L
-        t = max(0, min(L, (p[0] - a[0]) * dx + (p[1] - a[1]) * dz))
-        q = (a[0] + dx * t, a[1] + dz * t); dd = dist(p, q)
-        lat = (p[0] - a[0]) * dz - (p[1] - a[1]) * dx
-        if best is None or dd < best[0]: best = (dd, acc + t, lat)
-        acc += L
-    return best[1], best[2]
 def grown(poly, by):
     c = centroid(poly)
     return [(x + (x - c[0]) / max(1e-9, dist((x, z), c)) * by, z + (z - c[1]) / max(1e-9, dist((x, z), c)) * by) for x, z in poly]
@@ -307,8 +362,11 @@ js = """// GolfCourseMaps: real courses, as mapped in OpenStreetMap, for the Gam
 // Open Database License: https://www.openstreetmap.org/copyright
 //
 // Built by hand from OSM where it has a gap (each one is marked in the data):
-// - Hole 18 has no line of play in OSM: it runs from its back tee box, across the inlet
-//   of Lake Merced to the corner of its fairway, then up the fairway to its green.
+// - Hole 18 has no line of play in OSM: it runs from its back tee box (the championship
+//   tee, 466 yds), across the inlet of Lake Merced, then up the middle of its fairway to
+//   its green: a long, gentle dogleg left. Its Blue and White tees stand on the boxes beside.
+// - OSM's line of play for the 16th runs down the right edge of its fairway, so it follows
+//   the middle of the fairway instead.
 // - The 9th green isn't mapped: the game puts a 26 by 30 yd green at the end of its line.
 // - Lake Merced lies beyond the boundary from the south tip round the west end to the
 //   18th green (lakeFrom → lakeTo, boundary vertices); its far side is drawn 450 yds out.
@@ -316,8 +374,9 @@ js = """// GolfCourseMaps: real courses, as mapped in OpenStreetMap, for the Gam
 // - The trees are placed in the ground between the holes (OSM doesn't map them one by one).
 // - Holes 2, 4, 5, 7, 9, 13 and 15 have no fairway in OSM: each has one built along its
 //   line of play, as wide as the course's mapped ones (fairwaysBuilt lists them).
-// - Hole 13's fairway bunker: OSM has it left of the line of play; the 2020 PGA
-//   Championship guides say down the right. The map follows OSM.
+// - Hole 13: OSM's straight line runs over the fairway bunker in the landing area; the
+//   2020 PGA Championship guides put that bunker down the right, so the line passes 6 yds
+//   left of it and the fairway built along it has the bunker on its right edge.
 // - Each set of tees stands on the real tee box closest to its scorecard yardage.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
