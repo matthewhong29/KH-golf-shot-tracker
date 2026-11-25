@@ -30,7 +30,7 @@ The four tabs are:
 
 - **Stats** for one session, or all sessions pooled:
   - Session summary: big-number tiles for shots, solid contact and on line (within 10 yds), each with the change from the previous session, and the longest carry. Then a "Needs work" box listing clubs to practise (tap one to jump to it) and highlights: thin or topped shots, average miss per club, and change since the baseline.
-  - **Shot replay:** watch each shot fly on a course, drawn from its numbers (see "Shot replay" below). Pick a club or all of them and a camera: **Tee box**, **Side** or **Green**. Step through the shots, **Play all** to run the session in order, and change the speed (1×, 2×, 4×). Under the picture: the carry, total, distance to the pin and peak height.
+  - **Shot replay:** watch each shot fly on a course, drawn from its numbers (see "Shot replay" below). Pick a club or all of them and a camera: **Tee box**, **Side** or **Green**. Step through the shots, **Play all** to run the session in order, and change the speed (1×, 2×, 4×). **Best 10** shows each club's best shots flying together, a picture of his ideal flight, with their average carry, total, height and landing angle. Under the picture: the carry, total, distance to the pin and peak height.
   - Club by club, one club at a time: tiles for its average carry, pure-strike carry, solid contact and average miss, its "Needs work" notes, **Goals** for the range (a focus, a distance zone around its pure-strike carry, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
   - A carry gapping chart.
   - Dispersion: offline vs. carry. All clubs show as one panel each on the same scale, or pick one club.
@@ -187,6 +187,9 @@ The Stats tab replays each shot from the numbers the range screen gave; nothing 
   - **Green:** above the green. The ball drops in, lands and rolls, then a dashed line shows the distance to the pin and where it landed. A shot that finished well away from the green gets its own framing, so it's always in view.
   - A corner readout counts the distance and height while the ball flies.
   - Each club keeps the same cameras from shot to shot, so in **Play all** each new shot flies over the faded tracers of the ones before it, like the pattern on a range screen. From the green, that shows where the shots finished around the pin.
+- **Best 10** (`GolfCore.bestShots`) picks each club's 10 best shots in the session (or all sessions): solid shots, no outliers, launched at a normal height as for pure strikes. They're ranked by how close each came to an ideal shot: the yards it landed short of the pure-strike carry (nothing for flying past it, since that's a great strike) plus the yards it finished off line. A weak shot that rolls out straight doesn't make the list; a long, straight one does. On a tie, the faster ball speed goes first. A club with fewer solid shots shows them all ("best 4 of 4").
+  - It opens on all of them at once, the best one highlighted and the rest as faint tracers, with the cameras framed on just those shots. Step through them, or Play and Play all to watch them fly; the others stay on screen.
+  - The line above the numbers gives their averages, e.g. "Your best 10 with the 5 hybrid average 133 yds carry, 140 total, 65 ft high, landing at 40°."
 - It pauses while it's off screen or the page is in the background. On phones set to reduce motion, Play goes straight to the result and Play all draws every shot at once.
 
 ## Tests
@@ -205,7 +208,7 @@ The tests check:
 - the tips callouts and content;
 - the player registry and data files;
 - the paste parser, against the Toptracer screenshot rows (both whitespace and tab-separated) and a Rapsodo CSV;
-- the shot replay: every real shot in the data files lands at its carry, bends by its curve, peaks at its apex and finishes at its total and offline; launch and landing angles; estimates for missing numbers; the tee box, side and green cameras keep the shot in view; and drawing runs in every view.
+- the shot replay: every real shot in the data files lands at its carry, bends by its curve, peaks at its apex and finishes at its total and offline; launch and landing angles; estimates for missing numbers; the tee box, side and green cameras keep the shot in view; drawing runs in every view; and Best 10's ranking (mis-hits and low launches left out, yards short of a pure strike plus yards off line, ties to the faster ball speed).
 
 ## Saving goals to GitHub
 

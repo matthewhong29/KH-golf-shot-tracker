@@ -499,6 +499,29 @@ try {
 } catch (e) { drewAll = false; console.error(e); }
 ok(drewAll && drawCalls > 500, 'draws the course, tracer, ball and labels in every view');
 
+section('Best 10 for the shot replay');
+// Ball speed rises with carry, so the longest normal shots are the pure strikes.
+const bsShot = (id, carry, off, launch) => ({ id, club: '7i', carry_yds: carry, total_yds: carry + 4, ball_speed_mph: 80 + (carry - 100) / 2, launch_deg: launch || 20, offline_ft: off });
+const bsEntry = C.clubData([{ id: 'bs', date: '2026-12-03', shots: [
+  bsShot('a', 120, 0), bsShot('b', 118, 6), bsShot('c', 125, 30), bsShot('d', 110, 0), bsShot('e', 121, -3), bsShot('f', 119, 3),
+  bsShot('g', 122, -60), bsShot('h', 117, 9), bsShot('low', 126, 0, 14), bsShot('j', 116, 0), bsShot('mis', 40, 0, 4), bsShot('l', 123, 15),
+  bsShot('m', 115, 3), bsShot('n', 119, -12)] }])['7i'];
+const bsRef = C.strikeReference(bsEntry, '7i', null);
+const bsBest = C.bestShots(bsEntry, '7i', null, 10);
+const bsScore = (s) => Math.max(0, bsRef.carry - s.carry_yds) + Math.abs(s.offline_ft) / 3;
+eq(bsBest.length, 10, 'up to 10');
+ok(!bsBest.some((s) => s.id === 'mis' || s.id === 'low'), 'no mis-hits, and nothing launched below the normal height (15° for a 7 iron, though 14° is no mis-hit)');
+ok(bsBest.every((s, i, a) => !i || bsScore(a[i - 1]) <= bsScore(s)), 'ranked by yards short of the pure-strike carry plus yards off line');
+const bsAll = C.bestShots(bsEntry, '7i', null, 20);
+eq([bsRef.carry, bsAll.length], [123, 12], 'pure-strike carry 123 (the three fastest normal shots); 12 shots to rank');
+ok(bsAll.findIndex((s) => s.id === 'c') < bsAll.findIndex((s) => s.id === 'd'), 'a long shot 10 yds right beats a straight one 13 yds short of a pure strike');
+eq(bsBest.slice(0, 2).map((s) => s.id), ['e', 'a'], 'equal scores (3): the faster ball speed first');
+eq([C.bestShots(bsEntry, '7i', null, 3).length, C.bestShots(null, '7i', null).length], [3, 0], 'n caps the list; no shots, no list');
+eq(C.pinFor(bsEntry, '7i', null), Math.round(bsRef.metrics.total_yds.avg), 'the pin is where a pure strike finishes, carry plus roll');
+const dadNov22 = C.clubData([fileData.sessions.find((s) => s.id === '2026-11-22-toptracer')]);
+eq(C.bestShots(dadNov22['5hy'], '5hy', fileData.equipment, 10).slice(0, 2).map((s) => [s.id, s.carry_yds]), [['2026-11-22-toptracer-080', 146], ['2026-11-22-toptracer-067', 152]],
+  'Dad Nov 22: the best hybrids are his longest straight ones (146 yds 6 right, 152 yds 7 left)');
+
 section('Swing reviews');
 const SR = require('../js/review.js');
 const rf = { src: 'media/dad/r1/1-top.jpg', w: 720, h: 1280, label: 'Top', marks: [

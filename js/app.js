@@ -46,7 +46,7 @@
   function freshUI() {
     return {
       tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
-      rp: { club: 'All', idx: 0, speed: 1, view: 'tee' },
+      rp: { club: 'All', idx: 0, speed: 1, view: 'tee', best: false },
       goalsEdit: false, goalsAll: false, goalSrc: 'me', practiceClub: null, check: {}, practiceView: 'range', rvFrame: {}, rvMarks: true,
       sessionsView: 'list', sessionId: null, newSession: false, addMode: null, editNotes: false,
       entry: { club: null, other: false, dir: { curve_ft: null, offline_ft: null } },
@@ -1009,7 +1009,9 @@
   // tee box (the golfer's view, the default), from the side (the whole arc), or above
   // the green (where it landed and how close it finished). Switching mid-shot cuts to
   // the new camera without restarting. "Play all" runs the shots in order and keeps
-  // the earlier tracers of the same club, like a range session's pattern.
+  // the earlier tracers of the same club, like a range session's pattern. "Best 10"
+  // shows each club's best shots flying together (C.bestShots), a picture of his ideal
+  // flight, with their average numbers.
   const FL = window.GolfFlight;
   const RP_NEXT = 1.2, RP_SPEEDS = [1, 2, 4];
   const RP_VIEWS = [['tee', 'Tee box'], ['side', 'Side'], ['green', 'Green']];
@@ -1051,8 +1053,10 @@
         <div class="rp-ctrl">
           <button type="button" class="btn small rp-play" data-action="rp-play"></button>
           <button type="button" class="btn small ghost rp-all" data-action="rp-all" aria-pressed="false">Play all</button>
+          <button type="button" class="btn small ghost rp-best" data-action="rp-best" aria-pressed="false">Best 10</button>
           <button type="button" class="btn small ghost rp-speed" data-action="rp-speed"></button>
         </div>
+        <p class="rp-avg"></p>
         <div class="kpis four rp-nums"></div>
         <p class="rp-line"></p>
         <p class="hint rp-hint"></p>
@@ -1094,7 +1098,22 @@
     rp.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     Object.assign(rp, { w, h, dpr, clubs: {}, bgs: new Map() });
   }
-  function rpFilter() { rp.list = ui.rp.club === 'All' ? rp.items : rp.items.filter((i) => i.shot.club === ui.rp.club); }
+  // The shots to step through: every shot (with the chosen club), or with Best 10 each
+  // club's best shots, best first, each marked with its place.
+  function rpFilter() {
+    if (!ui.rp.best) { rp.list = ui.rp.club === 'All' ? rp.items : rp.items.filter((i) => i.shot.club === ui.rp.club); return; }
+    const clubs = ui.rp.club === 'All' ? C.sortClubs(Array.from(new Set(rp.items.map((i) => i.shot.club)))) : [ui.rp.club];
+    rp.list = [];
+    clubs.forEach((c) => {
+      const best = C.bestShots(rp.entries[c], c, data.equipment, 10);
+      best.forEach((shot, k) => {
+        const it = rp.items.find((x) => x.shot === shot);
+        if (it) rp.list.push(Object.assign(it, { rank: k + 1, of: best.length }));
+      });
+    });
+  }
+  // With Best 10, the club's other best shots stay on screen as faint tracers.
+  function rpBestPast() { return rp.list.filter((i) => i !== rp.item && i.shot.club === rp.item.shot.club).map(rpTraj).filter(Boolean); }
   function rpTraj(item) {
     if (item.traj === undefined) {
       const club = item.shot.club, win = C.launchWindow(club, data.equipment);
@@ -1102,23 +1121,17 @@
     }
     return item.traj;
   }
-  // Where a pure strike with the club finishes (its carry plus roll); without one, the
-  // middle of his shots with it.
-  function rpPin(club) {
-    const e = rp.entries[club], ref = e ? C.strikeReference(e, club, data.equipment) : null;
-    let v = ref ? (ref.metrics.total_yds && C.isNum(ref.metrics.total_yds.avg) ? ref.metrics.total_yds.avg : ref.carry) : null;
-    if (!C.isNum(v)) v = C.median(rp.items.filter((i) => i.shot.club === club).map((i) => (C.isNum(i.shot.total_yds) ? i.shot.total_yds : i.shot.carry_yds)));
-    return Math.max(25, Math.round(C.isNum(v) ? v : 100));
-  }
   // The green and the ground around it, for framing the view above the green.
   function rpGreenPts(pin) { return [{ x: -20, y: 0, z: pin - 22 }, { x: 20, y: 0, z: pin - 22 }, { x: -20, y: 0, z: pin + 22 }, { x: 20, y: 0, z: pin + 22 }]; }
   // The course and a camera for each view, once per club, framed to fit every shot with
-  // that club so the view holds still from shot to shot. Above the green, it frames the
-  // shots that finished near the green; a shot that finished farther away gets its own.
+  // that club (with Best 10, just its best shots, so they show bigger) so the view holds
+  // still from shot to shot. Above the green, it frames the shots that finished near the
+  // green; a shot that finished farther away gets its own.
   function rpClub(club) {
-    if (rp.clubs[club]) return rp.clubs[club];
-    const pin = rpPin(club), trs = [];
-    rp.items.forEach((i) => { if (i.shot.club === club) { const t = rpTraj(i); if (t) trs.push(t); } });
+    const key = club + (ui.rp.best ? ' best' : '');
+    if (rp.clubs[key]) return rp.clubs[key];
+    const pin = C.pinFor(rp.entries[club], club, data.equipment), trs = [];
+    (ui.rp.best ? rp.list : rp.items).forEach((i) => { if (i.shot.club === club) { const t = rpTraj(i); if (t) trs.push(t); } });
     const pts = [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: pin + 15 }, { x: -13, y: 0, z: pin }, { x: 13, y: 0, z: pin }, { x: 0, y: 2.4, z: pin }];
     trs.forEach((t) => FL.keyPoints(t).forEach((p) => pts.push(p)));
     const near = rpGreenPts(pin);
@@ -1126,7 +1139,7 @@
     let seed = pin * 131;
     for (let k = 0; k < club.length; k++) seed = (seed * 31 + club.charCodeAt(k)) >>> 0;
     const course = FL.course(pin, Math.max(...pts.map((p) => p.z)), seed);
-    return (rp.clubs[club] = { club, pin, course, tee: FL.fitTee(pts, rp.w, rp.h), side: FL.fitSide(pts, rp.w, rp.h), green: FL.fitGreen(near, rp.w, rp.h) });
+    return (rp.clubs[key] = { club, pin, course, tee: FL.fitTee(pts, rp.w, rp.h), side: FL.fitSide(pts, rp.w, rp.h), green: FL.fitGreen(near, rp.w, rp.h) });
   }
   // The camera for the chosen view and this shot.
   function rpCam() {
@@ -1162,6 +1175,8 @@
     if (rp.shotGreen) rp.bgs.delete(rp.shotGreen);
     rp.c = rpClub(rp.item.shot.club);
     Object.assign(rp, { shotGreen: null, t: 0, phase: 'idle', playing: false, autoPaused: false });
+    // Best 10 opens on the finished picture: all the best flights, this one highlighted.
+    if (ui.rp.best) Object.assign(rp, { past: rpBestPast(), t: play ? 0 : rp.cur.duration, phase: play ? 'idle' : 'done' });
     rpInfo();
     if (play) rpPlay();
     else { rpDraw(); rpControls(); }
@@ -1252,6 +1267,7 @@
     big.hidden = rp.playing || rp.phase === 'done';
     big.setAttribute('aria-label', started ? 'Resume the shot' : 'Play this shot');
     $('.rp-all', rp.card).setAttribute('aria-pressed', String(rp.all));
+    $('.rp-best', rp.card).setAttribute('aria-pressed', String(!!ui.rp.best));
     const sp = $('.rp-speed', rp.card);
     sp.textContent = ui.rp.speed + '× speed';
     const nav = $$('.rp-nav', rp.card);
@@ -1268,7 +1284,8 @@
     const it = rp.item, s = it.shot, tr = rp.cur, pin = rp.c.pin, name = C.clubName(s.club, data.clubs);
     const many = new Set(rp.items.map((i) => i.session.id)).size > 1;
     const tag = it.kind === 'mis' ? 'Likely mis-hit' : it.kind === 'out' ? 'Outlier' : '';
-    $('.rp-what', rp.card).innerHTML = `<span class="t">${esc(name)} · shot ${rp.idx + 1} of ${rp.list.length}</span>
+    const best = ui.rp.best && it.rank;
+    $('.rp-what', rp.card).innerHTML = `<span class="t">${esc(name)} · ${best ? `best ${it.rank} of ${it.of}` : `shot ${rp.idx + 1} of ${rp.list.length}`}</span>
       <span class="s">${esc([many ? C.fmtDate(it.session.date, { short: true }) : '', s.time, tag].filter(Boolean).join(' · '))}</span>`;
     const dz = tr.rest.z - pin, dx = tr.rest.x, d = Math.hypot(dx, dz);
     const onGreen = (dx / 11) * (dx / 11) + (dz / 13) * (dz / 13) <= 1;
@@ -1284,16 +1301,29 @@
     $('.rp-line', rp.card).textContent = bend && side ? `${cap(bend)} in the air and ${side} of the target line.`
       : bend ? `${cap(bend)} in the air.` : side ? `${cap(side)} of the target line.`
         : C.isNum(s.curve_ft) || C.isNum(s.offline_ft) ? 'Straight down the target line.' : '';
+    $('.rp-avg', rp.card).textContent = best ? rpBestAverage(s.club, name, it.of) : '';
     const words = { launch: 'launch angle', apex: 'peak height', landing: 'landing angle', hang: 'time in the air', total: 'roll', curve: 'curve', offline: 'direction' };
     const est = tr.estimated.filter((k) => words[k]).map((k) => words[k]);
-    $('.rp-hint', rp.card).textContent = `The pin is where a pure strike with your ${name.toLowerCase()} finishes: ${pin} yds, carry plus roll. ` +
+    const ref = best ? C.strikeReference(rp.entries[s.club], s.club, data.equipment) : null;
+    $('.rp-hint', rp.card).textContent = (best ? `Best ${it.of}: the solid shots that came closest to an ideal one, carrying at least as far as a pure strike${ref ? ` (${ref.carry} yds)` : ''} and finishing on line. ` : '') +
+      `The pin is where a pure strike with your ${name.toLowerCase()} finishes: ${pin} yds, carry plus roll. ` +
       (est.length ? `Not on the screen, so estimated: ${est.join(', ')}.` : 'Everything is drawn from the screen’s numbers.');
     rpLabel();
   }
+  // "Your best 10 with the 5 hybrid average 133 yds carry, 140 total, 65 ft high, landing at 40°."
+  function rpBestAverage(club, name, n) {
+    const shots = rp.list.filter((i) => i.shot.club === club).map((i) => i.shot);
+    const avg = (k) => { const st = C.summarize(shots, k); return st.n ? Math.round(st.avg) : null; };
+    const carry = avg('carry_yds'), total = avg('total_yds'), apex = avg('apex_ft'), land = avg('landing_deg');
+    const parts = [carry != null ? `${carry} yds carry` : '', total != null ? `${total} total` : '', apex != null ? `${apex} ft high` : '', land != null ? `landing at ${land}°` : ''].filter(Boolean);
+    if (!parts.length) return '';
+    return n === 1 ? `Your best shot with the ${name.toLowerCase()}: ${parts.join(', ')}.` : `Your best ${n} with the ${name.toLowerCase()} average ${parts.join(', ')}.`;
+  }
   // What the picture shows, for screen readers.
   function rpLabel() {
-    const s = rp.item.shot, tr = rp.cur, pin = rp.c.pin, d = Math.hypot(tr.rest.x, tr.rest.z - pin);
-    rp.canvas.setAttribute('aria-label', `Replay ${RP_VIEW_WORDS[ui.rp.view]} of shot ${rp.idx + 1} of ${rp.list.length}, ${C.clubName(s.club, data.clubs)}: ${C.fmtRaw(s.carry_yds)} yards carry, finished ${Math.round(d)} yards from the pin.`);
+    const it = rp.item, s = it.shot, tr = rp.cur, pin = rp.c.pin, d = Math.hypot(tr.rest.x, tr.rest.z - pin);
+    const which = ui.rp.best && it.rank ? `best shot ${it.rank} of ${it.of}, shown with the others` : `shot ${rp.idx + 1} of ${rp.list.length}`;
+    rp.canvas.setAttribute('aria-label', `Replay ${RP_VIEW_WORDS[ui.rp.view]} of ${which}, ${C.clubName(s.club, data.clubs)}: ${C.fmtRaw(s.carry_yds)} yards carry, finished ${Math.round(d)} yards from the pin.`);
   }
 
   function renderStats() {
@@ -2313,6 +2343,17 @@
       Object.assign(rp, { all: false, past: [] });
       $$('[data-action="rp-club"]', rp.card).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.club === ui.rp.club)));
       rpFilter();
+      if (!rp.list.length && ui.rp.best) { ui.rp.best = false; rpFilter(); toast('No solid shots with that club to pick the best from'); }
+      rpShow(0, false);
+    },
+    // Best 10 on or off: each club's best shots flying together, or every shot again.
+    'rp-best'() {
+      if (!rp) return;
+      ui.rp.best = !ui.rp.best;
+      Object.assign(rp, { all: false, past: [] });
+      rp.bgs.clear();
+      rpFilter();
+      if (!rp.list.length) { ui.rp.best = false; rpFilter(); toast('No solid shots with that club to pick the best from'); }
       rpShow(0, false);
     },
     'rp-all'() {

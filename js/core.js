@@ -422,6 +422,36 @@
     return { club: club, n: b.shots.length, solid: entry.solid.length, by: b.by, carry: roundHalfEven(m.carry_yds.avg, 0), metrics: m };
   }
 
+  // The shot replay's pin for a club: where a pure strike finishes (its carry plus
+  // roll), in whole yards; without pure strikes, the middle of his shots with it.
+  function pinFor(entry, club, equip) {
+    var ref = entry ? strikeReference(entry, club, equip) : null, v = null;
+    if (ref) v = ref.metrics.total_yds && isNum(ref.metrics.total_yds.avg) ? ref.metrics.total_yds.avg : ref.carry;
+    if (!isNum(v) && entry) v = median(entry.shots.map(function (s) { return isNum(s.total_yds) ? s.total_yds : s.carry_yds; }));
+    return Math.max(25, Math.round(isNum(v) ? v : 100));
+  }
+  // His best shots with a club, to picture an ideal flight: solid shots (no mis-hits or
+  // outliers) launched at a normal height, as for pure strikes, ranked by how close each
+  // came to an ideal shot: carrying at least as far as his pure strike, and on line. The
+  // score is the yards it landed short of the pure-strike carry (nothing for flying past
+  // it, since that's a great strike) plus the yards it finished off line (offline; a
+  // missing offline counts as on line). So a weak shot that rolls out straight doesn't
+  // make the list, and a long, straight one does. Lowest score first; on a tie, the
+  // faster ball speed first. Up to n (10) of them.
+  function bestShots(entry, club, equip, n) {
+    if (!entry || !entry.solid) return [];
+    var win = launchWindow(club, equip), floor = win ? win[0] - 4 : -Infinity;
+    var ref = strikeReference(entry, club, equip);
+    var aim = ref ? ref.carry : median(entry.solid.map(function (s) { return s.carry_yds; }));
+    if (!isNum(aim)) return [];
+    return entry.solid
+      .filter(function (s) { return isNum(s.carry_yds) && !(isNum(s.launch_deg) && s.launch_deg < floor); })
+      .map(function (s) { return { s: s, d: Math.max(0, aim - s.carry_yds) + (isNum(s.offline_ft) ? Math.abs(s.offline_ft) / 3 : 0) }; })
+      .sort(function (a, b) { return a.d - b.d || (b.s.ball_speed_mph || 0) - (a.s.ball_speed_mph || 0); })
+      .slice(0, n || 10)
+      .map(function (x) { return x.s; });
+  }
+
   // Smallest carry window (± yds) worth aiming at for each kind of club.
   function minCarryWindow(club) {
     var c = String(club);
@@ -1278,7 +1308,7 @@
     solidCount: solidCount, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
     mergeGoals: mergeGoals, applyGoals: applyGoals,
-    bestStrikes: bestStrikes, strikeReference: strikeReference, checkShot: checkShot,
+    bestStrikes: bestStrikes, strikeReference: strikeReference, pinFor: pinFor, bestShots: bestShots, checkShot: checkShot,
     launchWindow: launchWindow, clubLoft: clubLoft, clubSpec: clubSpec, clubKind: clubKind, LAUNCH_PER_LOFT: LAUNCH_PER_LOFT,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats, trend: trend, TREND: TREND,
