@@ -37,7 +37,8 @@
   var CELL = 20;         // trees are filed in squares this many yds across, to find the ones near a spot fast
   var STAKES = { ob: 25, lake: 35 }; // yds between stakes along the boundary: white for out of bounds, red by the lake
   var BOX = { w: 8, d: 6 };          // a tee box drawn where a set of tees has no mapped one (yds)
-  var STAND_IN = { w: 26, d: 30 };   // a green the map hasn't got (the 9th) is one this size
+  var STAND_IN = { w: 26, d: 30 };   // a green the map hasn't got stands in at this size
+  var PATH_W = 2.6;                  // a cart path's width (yds): 8 ft
 
   function inPoly(poly, x, z) {
     var inside = false;
@@ -61,12 +62,105 @@
     }
     return Math.abs(a) < 1e-9 ? { x: poly[0][0], z: poly[0][1] } : { x: cx / (3 * a), z: cz / (3 * a) };
   }
-  // The same shape, every point moved `by` yds further from its middle.
-  function grow(poly, c, by) {
-    return poly.map(function (p) {
-      var dx = p[0] - c.x, dz = p[1] - c.z, d = Math.hypot(dx, dz) || 1;
-      return [p[0] + dx / d * by, p[1] + dz / d * by];
+  // The same shape with its edge moved `by` yds outwards all round (each point along the
+  // bisector of its two sides, a sharp point no further than 2.5 times `by`).
+  function grow(poly, by) {
+    var n = poly.length, a = 0;
+    for (var i = 0; i < n; i++) { var p = poly[i], q = poly[(i + 1) % n]; a += p[0] * q[1] - q[0] * p[1]; }
+    var out = a > 0 ? 1 : -1;   // outwards is to the right of each side when the points run anticlockwise
+    function nrm(p, q) { var dx = q[0] - p[0], dz = q[1] - p[1], d = Math.hypot(dx, dz) || 1; return [out * dz / d, -out * dx / d]; }
+    return poly.map(function (p, i) {
+      var n1 = nrm(poly[(i - 1 + n) % n], p), n2 = nrm(p, poly[(i + 1) % n]), mx = n1[0] + n2[0], mz = n1[1] + n2[1], m = Math.hypot(mx, mz);
+      if (m < 1e-9) return [p[0] + n1[0] * by, p[1] + n1[1] * by];
+      mx /= m; mz /= m;
+      var k = by / Math.max(0.4, mx * n1[0] + mz * n1[1]);
+      return [p[0] + mx * k, p[1] + mz * k];
     });
+  }
+  // An outline with its corners rounded off (Chaikin's corner cutting, `times` over): each
+  // side keeps its middle, and a share `cut` of it at each end (`most` yds at most) gives
+  // way to a cut across the corner. OSM's outlines are polygons with a point every few yds;
+  // the real greens, bunkers and fairways' edges are curves.
+  function rounded(poly, times, cut, most) {
+    var p = poly;
+    for (var k = 0; k < times; k++) {
+      var q = [];
+      for (var i = 0; i < p.length; i++) {
+        var a = p[i], b = p[(i + 1) % p.length], u = Math.min(cut, most / (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1));
+        q.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u], [b[0] + (a[0] - b[0]) * u, b[1] + (a[1] - b[1]) * u]);
+      }
+      p = q;
+    }
+    return p;
+  }
+  var ROUND = { green: [2, 0.25, 4], bunker: [2, 0.25, 3], fairway: [1, 0.25, 3], tee: [1, 0.2, 1] };
+  function roundedAs(kind) { var r = ROUND[kind]; return function (p) { return rounded(p, r[0], r[1], r[2]); }; }
+  // A line on the ground as points every few yds, each with s (yds along it) and h (its
+  // heading there), and how far a shape reaches either side of it (span).
+  function spineOf(pts, poly) {
+    var sp = [], acc = 0;
+    pts.forEach(function (p, i) {
+      if (i) acc += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
+      var a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      sp.push({ x: p[0], z: p[1], s: acc, h: Math.atan2(b[0] - a[0], b[1] - a[1]) });
+    });
+    var span = 0;
+    poly.forEach(function (q) {
+      var best = Infinity;
+      for (var i = 0; i < sp.length - 1; i++) {
+        var a = sp[i], b = sp[i + 1], dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz || 1;
+        var u = clamp(((q[0] - a.x) * dx + (q[1] - a.z) * dz) / l2, 0, 1);
+        best = Math.min(best, Math.hypot(q[0] - a.x - dx * u, q[1] - a.z - dz * u));
+      }
+      span = Math.max(span, best);
+    });
+    return { pts: sp, s0: 0, s1: acc, span: span + 3 };
+  }
+  // A fairway's long axis through its middle, for a map without spines.
+  function axisOf(poly) {
+    var mx = 0, mz = 0, xx = 0, zz = 0, xz = 0;
+    poly.forEach(function (p) { mx += p[0] / poly.length; mz += p[1] / poly.length; });
+    poly.forEach(function (p) { var dx = p[0] - mx, dz = p[1] - mz; xx += dx * dx; zz += dz * dz; xz += dx * dz; });
+    var t = 0.5 * Math.atan2(2 * xz, xx - zz), ux = Math.cos(t), uz = Math.sin(t), lo = Infinity, hi = -Infinity;
+    poly.forEach(function (p) { var v = (p[0] - mx) * ux + (p[1] - mz) * uz; lo = Math.min(lo, v); hi = Math.max(hi, v); });
+    return [[mx + ux * (lo - 10), mz + uz * (lo - 10)], [mx + ux * (hi + 10), mz + uz * (hi + 10)]];
+  }
+  // Cart paths as strips of ground PATH_W yds wide, each split where it turns sharply so it
+  // never folds over itself, the pieces' ends squared off half a width past their last point
+  // so they join.
+  function stripsOf(paths, half) {
+    var out = [];
+    function strip(pts) {
+      if (pts.length < 2) return;
+      var L = [], R = [], n = pts.length;
+      function dir(p, q) { var dx = q[0] - p[0], dz = q[1] - p[1], d = Math.hypot(dx, dz) || 1; return [dx / d, dz / d]; }
+      for (var i = 0; i < n; i++) {
+        var d1 = i > 0 ? dir(pts[i - 1], pts[i]) : null, d2 = i < n - 1 ? dir(pts[i], pts[i + 1]) : null;
+        var d = d1 && d2 ? [d1[0] + d2[0], d1[1] + d2[1]] : (d1 || d2), m = Math.hypot(d[0], d[1]) || 1;
+        d = [d[0] / m, d[1] / m];
+        var k = d1 && d2 ? half / Math.max(0.5, d[0] * d1[0] + d[1] * d1[1]) : half, p = pts[i];
+        var ext = i === 0 ? -half : i === n - 1 ? half : 0;   // squared-off ends
+        var x = p[0] + d[0] * ext, z = p[1] + d[1] * ext;
+        L.push([x - d[1] * k, z + d[0] * k]);
+        R.push([x + d[1] * k, z - d[0] * k]);
+      }
+      var poly = L.concat(R.reverse());
+      out.push({ poly: poly, bb: bboxOf(poly) });
+    }
+    paths.forEach(function (pl) {
+      var piece = [pl[0]];
+      for (var i = 1; i < pl.length; i++) {
+        if (Math.hypot(pl[i][0] - piece[piece.length - 1][0], pl[i][1] - piece[piece.length - 1][1]) < 0.05) continue;
+        piece.push(pl[i]);
+        var c = pl[i + 1], b = pl[i], a = piece[piece.length - 2];
+        if (c) {
+          var t1 = Math.atan2(b[0] - a[0], b[1] - a[1]), t2 = Math.atan2(c[0] - b[0], c[1] - b[1]), turn = Math.abs(((t2 - t1 + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
+          if (turn > 70 * Math.PI / 180) { strip(piece); piece = [b]; }
+        }
+      }
+      strip(piece);
+    });
+    return out;
   }
   function ellipsePoly(c, rx, rz, rot, n) {
     var out = [];
@@ -86,11 +180,13 @@
     if (GROUNDS[course.id]) return GROUNDS[course.id];
     var m = course.map, rnd = FL.rng(seedOf(course.id));
     function item(poly) { return { poly: poly, bb: bboxOf(poly) }; }
+    // The greens, bunkers, fairways and tee boxes with their corners rounded (see rounded).
     var G = {
       boundary: m.boundary, bb: bboxOf(m.boundary), lake: m.lake,
-      greens: m.greens.map(item), bunkers: m.bunkers.map(item), tees: m.tees.map(item), ranges: m.ranges.map(item), woods: m.woods.map(item),
-      fairways: m.fairways.map(function (p, i) { var o = item(p); o.axis = m.fairwayAxis[i]; return o; }),
-      paths: m.paths, grid: {}, obStakes: [], lakeStakes: [],
+      greens: m.greens.map(roundedAs('green')).map(item), bunkers: m.bunkers.map(roundedAs('bunker')).map(item), tees: m.tees.map(roundedAs('tee')).map(item),
+      ranges: m.ranges.map(item), woods: m.woods.map(item),
+      fairways: m.fairways.map(roundedAs('fairway')).map(function (p, i) { var o = item(p); o.spine = spineOf(m.fairwaySpine ? m.fairwaySpine[i] : axisOf(p), p); return o; }),
+      paths: m.paths, pathStrips: stripsOf(m.paths, PATH_W / 2), grid: {}, obStakes: [], lakeStakes: [],
       trees: m.trees.map(function (t) { return { x: t[0], z: t[1], h: t[2], r: t[3], tone: t[4] }; })
     };
     G.trees.forEach(function (t) {
@@ -201,21 +297,23 @@
 
     var H = { course: course.id, n: def.n, par: def.par, tee: tee.id, yds: def.yds[tee.id], note: def.note || '', L: L,
       path: path, at: at, spot: spot, ground: G, markers: [], clouds: G.clouds, hills: G.hills };
-    // The green: the mapped one at the end of the line (or, for the 9th, one that stands in).
+    // The green: the one at the end of the line (or, where the map has none, one that stands in).
     var end = line[line.length - 1], rot = headingTo(line[line.length - 2], end);
-    var gpoly = hm.green != null ? course.map.greens[hm.green] : ellipsePoly(end, STAND_IN.w / 2, STAND_IN.d / 2, rot, 40);
+    var gpoly = hm.green != null ? G.greens[hm.green].poly : ellipsePoly(end, STAND_IN.w / 2, STAND_IN.d / 2, rot, 40);
     var gc = centroidOf(gpoly), rx = 0, rz = 0;
     gpoly.forEach(function (q) {
       var dx = q[0] - gc.x, dz = q[1] - gc.z;
       rx = Math.max(rx, Math.abs(dx * Math.cos(rot) - dz * Math.sin(rot)));
       rz = Math.max(rz, Math.abs(dx * Math.sin(rot) + dz * Math.cos(rot)));
     });
-    H.green = { x: gc.x, z: gc.z, rot: rot, rx: rx, rz: rz, poly: gpoly, bb: bboxOf(grow(gpoly, gc, FRINGE)), fringePoly: grow(gpoly, gc, FRINGE), index: hm.green, standIn: hm.green == null };
+    var fringe = grow(gpoly, FRINGE);
+    H.green = { x: gc.x, z: gc.z, rot: rot, rx: rx, rz: rz, poly: gpoly, bb: bboxOf(fringe), fringePoly: fringe, index: hm.green, standIn: hm.green == null,
+      built: (course.map.greensBuilt || []).indexOf(hm.green) >= 0 };
     // Where this set of tees stands: on its tee box, or on the line at its yardage.
     var tm = hm.tees && hm.tees[tee.id], at0;
     if (tm && tm.box != null) {
       at0 = { x: tm.at[0], z: tm.at[1] };
-      H.teeBox = course.map.tees[tm.box];
+      H.teeBox = G.tees[tm.box].poly;
     } else {
       at0 = at(L - (tm ? tm.g : H.yds));
       var hd0 = at(L - (tm ? tm.g : H.yds)).h;
@@ -1863,7 +1961,7 @@
 
   return {
     buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, elevOf: elevOf, heightAt: heightAt, slopeAt: slopeAt, playsLike: playsLike, landingOf: landingOf,
-    groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf,
+    groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf, grow: grow, rounded: rounded, PATH_W: PATH_W,
     rankShots: rankShots, clubPools: clubPools, chartPools: chartPools, playPools: playPools, clubList: clubList, totalOf: totalOf,
     METER: METER, timingOf: timingOf, meterBackTime: meterBackTime, meterDownSpeed: meterDownSpeed, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
     LAW: LAW, clubLaw: clubLaw, facePathOf: facePathOf, swingProfile: swingProfile, SWIPE: SWIPE, tempoTarget: tempoTarget, powerOfDepth: powerOfDepth,

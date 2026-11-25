@@ -308,9 +308,13 @@
   }
   // Trace a shape lying on the ground (points are [x, z]); false when it's all behind the camera.
   function groundPath(ctx, cam, pts) {
+    ctx.beginPath();
+    return addGround(ctx, cam, pts);
+  }
+  // The same, added to the path being built (so shapes that overlap fill once).
+  function addGround(ctx, cam, pts) {
     var v = clipNear(pts.map(function (p) { return toCam(cam, p[0], 0, p[1]); }));
     if (v.length < 3) return false;
-    ctx.beginPath();
     for (var i = 0; i < v.length; i++) { var s = screenOf(cam, v[i]); if (i) ctx.lineTo(s.x, s.y); else ctx.moveTo(s.x, s.y); }
     ctx.closePath();
     return true;
@@ -707,16 +711,26 @@
     water: '#4b97cf', waterEdge: '#d9ecf5', redStake: '#d6332a', ob: '#7f9a6c', whiteStake: '#ffffff', range: '#6c9f58',
     path: 'rgba(226,223,208,0.9)', cup: '#111a15', markers: { 100: '#d6332a', 150: '#ffffff', 200: '#2f6fd6' }
   };
+  // A stake 1.1 yds tall, about as thick as a real one near by (at least 0.8 px). From high
+  // above (the map) it's a dot; seen from low down, one too far off to stand 3 px tall isn't
+  // drawn, so the boundary isn't a row of dots along the horizon.
   function post(ctx, cam, x, z, color, top) {
     var b = project(cam, x, 0, z), t = project(cam, x, top || 1.1, z);
     if (!b || !t || b.x < -10 || b.x > cam.w + 10 || b.y < -10 || b.y > cam.h + 10) return;
-    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-    ctx.lineWidth = 4.5;
-    ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(t.x, t.y - 0.01); ctx.stroke();
+    if (Math.abs(b.y - t.y) < 3) {
+      if (cam.pitch > -60 * DEG) return;
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(b.x, b.y, 2.6, 0, 2 * Math.PI); ctx.fill();
+      return;
+    }
+    var w = clamp(0.1 * b.s, 0.8, 2.5);
+    if (w > 1.2) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+      ctx.lineWidth = w + 2;
+      ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(t.x, t.y - 0.01); ctx.stroke();
+    }
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = w;
     ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(t.x, t.y - 0.01); ctx.stroke();
-    if (Math.abs(b.y - t.y) < 3) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(b.x, b.y, 2.6, 0, 2 * Math.PI); ctx.fill(); }
   }
   // A flag on a pin at (x, z), at least 22 px tall so it can be seen from far away.
   function flagAt(ctx, cam, x, z) {
@@ -741,40 +755,43 @@
     ctx.closePath();
     ctx.fill();
   }
-  // Mowing stripes across a fairway, clipped to it (its outline must be the current path).
-  // o.axis is the fairway's long direction, as a heading.
+  // Mowing stripes across a fairway, clipped to it (its outline must be the current path):
+  // bands 14 yds deep every 28 yds, square to its spine (o.spine, from GolfGame: its hole's
+  // line of play, corners rounded), so on a dogleg they turn with the hole.
   function stripes(ctx, cam, o) {
-    var sa = Math.sin(o.axis), ca = Math.cos(o.axis), s0 = Infinity, s1 = -Infinity, t0 = Infinity, t1 = -Infinity;
-    o.poly.forEach(function (p) {
-      var s = p[0] * sa + p[1] * ca, t = p[0] * ca - p[1] * sa;
-      s0 = Math.min(s0, s); s1 = Math.max(s1, s); t0 = Math.min(t0, t); t1 = Math.max(t1, t);
-    });
+    var sp = o.spine;
+    if (!sp || sp.pts.length < 2) return;
     ctx.save();
     ctx.clip();
     ctx.fillStyle = COL.stripe;
-    for (var s = s0 + 8; s < s1; s += 28) {
-      var q = [[s, t0 - 2], [s + 14, t0 - 2], [s + 14, t1 + 2], [s, t1 + 2]].map(function (st) { return [st[0] * sa + st[1] * ca, st[0] * ca - st[1] * sa]; });
-      if (groundPath(ctx, cam, q)) ctx.fill();
+    for (var s = sp.s0 + 8; s < sp.s1; s += 28) {
+      var l = [], r = [];
+      [s, s + 7, s + 14].forEach(function (t) {
+        var c = spineAt(sp, Math.min(t, sp.s1)), ch = Math.cos(c.h), sh = Math.sin(c.h);
+        l.push([c.x - ch * sp.span, c.z + sh * sp.span]);
+        r.unshift([c.x + ch * sp.span, c.z - sh * sp.span]);
+      });
+      if (groundPath(ctx, cam, l.concat(r))) ctx.fill();
     }
     ctx.restore();
   }
-  // Cart paths: thin pale lines on the ground.
-  function cartPaths(ctx, cam, list) {
-    var top = cam.pitch < -60 * DEG;
-    ctx.strokeStyle = HCOL.path;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = top ? clamp(1.8 * cam.F / Math.max(1, cam.y), 1, 6) : 1.5;
-    list.forEach(function (pl) {
-      var on = false;
-      ctx.beginPath();
-      for (var i = 0; i < pl.length; i++) {
-        var q = project(cam, pl[i][0], 0, pl[i][1]);
-        if (!q) { on = false; continue; }
-        if (on) ctx.lineTo(q.x, q.y); else { ctx.moveTo(q.x, q.y); on = true; }
-      }
-      ctx.stroke();
-    });
+  // The point s yds along a spine, and its heading there.
+  function spineAt(sp, s) {
+    var p = sp.pts, i = 0;
+    while (i < p.length - 2 && p[i + 1].s < s) i++;
+    var a = p[i], b = p[i + 1], u = clamp((s - a.s) / ((b.s - a.s) || 1), 0, 1), dh = b.h - a.h;
+    if (dh > Math.PI) dh -= 2 * Math.PI; else if (dh < -Math.PI) dh += 2 * Math.PI;
+    return { x: a.x + (b.x - a.x) * u, z: a.z + (b.z - a.z) * u, h: a.h + dh * u };
+  }
+  // Cart paths: strips of pale ground 8 ft wide (H.ground.pathStrips, from GolfGame), filled
+  // together so where two meet isn't paler.
+  function cartPaths(ctx, cam, G) {
+    var any = false;
+    ctx.beginPath();
+    (G.pathStrips || []).forEach(function (o) { if (addGround(ctx, cam, o.poly)) any = true; });
+    if (!any) return;
+    ctx.fillStyle = HCOL.path;
+    ctx.fill();
   }
   // The lie of the land on the map from above (H.ground.elev, from GolfGame): each slope
   // shaded as if lit from the north-west, darker facing away and lighter facing the light,
@@ -785,15 +802,15 @@
     var e = G.elev, cv = e && typeof document !== 'undefined' ? document.createElement('canvas') : null, c = cv && cv.getContext ? cv.getContext('2d') : null;
     if (!c) return (G.shade = null);
     cv.width = e.nx; cv.height = e.nz;
-    var img = c.createImageData(e.nx, e.nz), d = img.data, LX = -0.5, LY = 0.7071, LZ = 0.5, EX = 3;
+    var img = c.createImageData(e.nx, e.nz), d = img.data, LX = -0.5, LY = 0.7071, LZ = 0.5, EX = 2.4;
     for (var j = 0; j < e.nz; j++) {
       for (var i = 0; i < e.nx; i++) {
         var a = e.h[j * e.nx + Math.max(0, i - 1)], b = e.h[j * e.nx + Math.min(e.nx - 1, i + 1)];
         var u = e.h[Math.max(0, j - 1) * e.nx + i], v = e.h[Math.min(e.nz - 1, j + 1) * e.nx + i];
         var gx = EX * (b - a) / 3 / (2 * e.step), gz = EX * (v - u) / 3 / (2 * e.step), n = Math.sqrt(gx * gx + 1 + gz * gz);
         var lit = (-gx * LX + LY - gz * LZ) / n - LY, k = 4 * (j * e.nx + i);
-        if (lit < 0) { d[k] = 0; d[k + 1] = 20; d[k + 2] = 0; d[k + 3] = Math.min(150, -lit * 900); }
-        else { d[k] = 255; d[k + 1] = 255; d[k + 2] = 230; d[k + 3] = Math.min(90, lit * 700); }
+        if (lit < 0) { d[k] = 0; d[k + 1] = 20; d[k + 2] = 0; d[k + 3] = Math.min(125, -lit * 800); }
+        else { d[k] = 255; d[k + 1] = 255; d[k + 2] = 230; d[k + 3] = Math.min(75, lit * 600); }
       }
     }
     c.putImageData(img, 0, 0);
@@ -813,7 +830,11 @@
     if (!sh) return;
     var p0 = project(cam, e.x0, 0, e.z0), px = project(cam, e.x0 + e.step, 0, e.z0), pz = project(cam, e.x0, 0, e.z0 + e.step);
     if (!p0 || !px || !pz) return;
+    // The heights are 6 yds apart, too coarse to show close up: it fades as the map zooms in
+    // past 4 px a yard (a third as strong by 11).
+    var k = Math.hypot(px.x - p0.x, px.y - p0.y) / e.step;
     ctx.save();
+    ctx.globalAlpha = clamp((14 - k) / 10, 0.3, 1);
     ctx.transform(px.x - p0.x, px.y - p0.y, pz.x - p0.x, pz.y - p0.y, p0.x, p0.y);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(sh, -0.5, -0.5);
@@ -866,15 +887,20 @@
       ctx.lineWidth = 1.5;
       ctx.stroke();
     });
-    cartPaths(ctx, cam, G.paths);
+    cartPaths(ctx, cam, G);
+    // The yardage markers: discs a yard across (no bigger than 9 px, near by; one too far off
+    // to be a pixel across isn't drawn), and on the map at least 3.5 px.
+    var top = cam.pitch < -60 * DEG;
     H.markers.forEach(function (m) {
       var q = project(cam, m.x, 0, m.z);
       if (!q) return;
+      var rx = top ? Math.max(3.5, 0.5 * q.s) : Math.min(9, 0.5 * q.s);
+      if (rx < 1) return;
       ctx.fillStyle = HCOL.markers[m.d] || '#fff';
       ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = Math.min(1.5, rx * 0.4);
       ctx.beginPath();
-      ctx.ellipse(q.x, q.y, Math.max(3.5, 0.9 * q.s), Math.max(1.6, 0.9 * q.s * Math.max(0.3, -cam.sp)), 0, 0, 2 * Math.PI);
+      ctx.ellipse(q.x, q.y, rx, Math.max(top ? 1.6 : 0.6, rx * Math.max(0.3, -cam.sp)), 0, 0, 2 * Math.PI);
       ctx.fill();
       ctx.stroke();
     });

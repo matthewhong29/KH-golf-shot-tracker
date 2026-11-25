@@ -842,7 +842,59 @@ eq([offCard, badTee, badGreen, badPin], [[], 0, 0, 0], 'every tee is within 12 y
 const usedGreens = new Set();
 let sharedGreens = 0;
 HP.holes.forEach((h) => { const gi = MAP.holes[h.n].green; if (gi != null) { if (usedGreens.has(gi)) sharedGreens++; usedGreens.add(gi); } });
-eq([sharedGreens, MAP.holes[9].green, !!MAP.holes[18].built, GG.buildHole(HP, 9, 'white').green.standIn], [0, null, true, true], 'each hole has its own green; the 9th green (not mapped) stands in, and the 18th’s line (not mapped) is built');
+const H9w = GG.buildHole(HP, 9, 'white');
+eq([sharedGreens, MAP.greensBuilt, MAP.holes[9].green, H9w.green.built, H9w.green.standIn, !!MAP.holes[18].built], [0, [MAP.greens.length - 1], MAP.greens.length - 1, true, false, true], 'each hole has its own green; the 9th green (not mapped) is built, and the 18th’s line (not mapped) too');
+// The 9th green: as big as the mapped ones, round the end of its line, clear of the sand,
+// with a bunker down its left side and one short right (NBC's "front bunkers at the green").
+const areaOf = (poly) => Math.abs(poly.reduce((a, p, i) => { const q = poly[(i + 1) % poly.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0) / 2);
+const mappedAreas = HP.holes.filter((h) => h.n !== 9).map((h) => areaOf(MAP.greens[MAP.holes[h.n].green]));
+const segDist = (p, a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (dx * dx + dz * dz || 1))); return Math.hypot(p[0] - a[0] - dx * u, p[1] - a[1] - dz * u); };
+const polyGap = (P, Q) => Math.min(...P.map((p) => Math.min(...Q.map((a, i) => segDist(p, a, Q[(i + 1) % Q.length])))));
+const g9 = H9w.green, near9 = H9w.ground.bunkers.map((b) => b.poly).filter((b) => polyGap(g9.poly, b) < 25).map((b) => ({ gap: polyGap(g9.poly, b), at: GG.toHole(H9w, GG.centroidOf(b).x, GG.centroidOf(b).z) }));
+ok(areaOf(g9.poly) >= Math.min(...mappedAreas) && areaOf(g9.poly) <= Math.max(...mappedAreas) && GG.dist(g9, H9w.at(H9w.L)) < 3, `9: the green built is as big as the mapped ones (${Math.round(areaOf(g9.poly))} sq yds) and stands at the end of the line`);
+ok(near9.every((b) => b.gap >= 3.4) && near9.some((b) => b.at.lat < -12 && Math.abs(b.at.g) < 15) && near9.some((b) => b.at.lat > 3 && b.at.g > 25), '9: clear of the sand, with a bunker down its left and one short right');
+// No spikes: no point on a fairway or tee box doubles back sharper than 35° beside a side
+// shorter than 8 yds, and none on a green at all.
+const spikes = [];
+[['fairway', MAP.fairways, false], ['tee', MAP.tees, false], ['green', MAP.greens, true]].forEach(([kind, list, all]) => list.forEach((poly, i) => poly.forEach((b, k) => {
+  const a = poly[(k - 1 + poly.length) % poly.length], c = poly[(k + 1) % poly.length], v1 = [a[0] - b[0], a[1] - b[1]], v2 = [c[0] - b[0], c[1] - b[1]];
+  const n1 = Math.hypot(...v1), n2 = Math.hypot(...v2), ang = Math.acos(Math.max(-1, Math.min(1, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))) * 180 / Math.PI;
+  if (ang < 35 && (all || Math.min(n1, n2) < 8)) spikes.push(`${kind} ${i} point ${k}`);
+})));
+eq(spikes, [], 'no spikes in the outlines');
+// The fairways built where OSM has none: each starts about 130 yds off the back tee and
+// runs on under the front of its green, and its stripes follow the hole round a dogleg.
+const builtRun = MAP.fairwaysBuilt.map((fi) => {
+  const n = [2, 4, 5, 7, 9, 13, 15].find((h) => { const H = GG.buildHole(HP, h, 'blue'); return GG.inPoly(MAP.fairways[fi], H.at(220).x, H.at(220).z); });
+  const H = GG.buildHole(HP, n, 'blue');
+  let first = null, last = null;
+  for (let s = 0; s <= H.L; s += 2) { const q = H.at(s); if (GG.inPoly(MAP.fairways[fi], q.x, q.z)) { if (first == null) first = s; last = s; } }
+  let front = H.L;
+  while (GG.lieAt(H, H.at(front - 1).x, H.at(front - 1).z) === 'green') front--;
+  return { n, first, under: last > front };
+});
+eq(builtRun.map((b) => b.n), [2, 4, 5, 7, 9, 13, 15], 'one fairway built for each of the seven holes OSM has none for');
+ok(builtRun.every((b) => b.first >= 126 && b.first <= 136 && b.under), `they run from about 130 yds out (${builtRun.map((b) => b.first).join(', ')}) to under the front of the green`);
+const spine4 = GG.buildHole(HP, 4, 'blue').ground.fairways[MAP.fairwaysBuilt[1]].spine;
+const turn4 = (spine4.pts[spine4.pts.length - 6].h - spine4.pts[5].h) * 180 / Math.PI;
+ok(turn4 < -25 && spine4.span > 15 && spine4.span < 30, `4: the stripes turn left with the dogleg (${Math.round(turn4)}°)`);
+const H6w = GG.buildHole(HP, 6, 'white'), sp6 = H6w.ground.fairways.find((o) => GG.inPoly(o.poly, H6w.at(250).x, H6w.at(250).z)).spine;
+const off6 = [250, 300, 350, 400].map((d) => { const q = H6w.at(d); return Math.min(...sp6.pts.map((p) => Math.hypot(p.x - q.x, p.z - q.z))); });
+ok(off6.every((d) => d < 6), '6: a mapped fairway’s stripes run along its hole’s line of play too');
+// OSM's outlines are polygons; the greens and bunkers are drawn as curves (corners rounded
+// off, no turn sharper than 50°) the same size, give or take a few percent.
+const turnMax = (poly) => Math.max(...poly.map((b, k) => { const a = poly[(k - 1 + poly.length) % poly.length], c = poly[(k + 1) % poly.length]; let d = Math.atan2(c[0] - b[0], c[1] - b[1]) - Math.atan2(b[0] - a[0], b[1] - a[1]); while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return Math.abs(d) * 180 / Math.PI; }));
+const G6 = H6w.ground, shrink = G6.greens.map((o, i) => areaOf(o.poly) / areaOf(MAP.greens[i]));
+ok(G6.greens.concat(G6.bunkers).every((o) => turnMax(o.poly) < 50) && shrink.every((r) => r > 0.94 && r <= 1.001), `greens and bunkers are curves, their size kept (greens ${Math.round(Math.min(...shrink) * 100)}–${Math.round(Math.max(...shrink) * 100)}% of OSM's)`);
+// The 4th: "a large cypress at the corner of the dogleg", left (PGA, Arccos).
+const H4b = GG.buildHole(HP, 4, 'blue'), corner4 = MAP.holes[4].line[1];
+const big4 = H4b.ground.trees.filter((t) => t.h >= 25 && t.r >= 8 && Math.hypot(t.x - corner4[0], t.z - corner4[1]) < 40).map((t) => GG.toHole(H4b, t.x, t.z));
+ok(big4.length === 1 && big4[0].lat < -25 && big4[0].lat > -35, `4: a large cypress inside the dogleg, ${big4.length ? Math.round(-big4[0].lat) : '?'} yds left of the line where it turns`);
+// The fringe is the same width all round, and a cart path 8 ft wide.
+const fr = H6w.green.fringePoly.map((p) => polyGap([p], H6w.green.poly));
+ok(Math.min(...fr) > GG.FRINGE - 0.3 && Math.max(...fr) < GG.FRINGE * 2.6, `the fringe round the green is ${GG.FRINGE} yds wide all round (${Math.min(...fr).toFixed(1)}–${Math.max(...fr).toFixed(1)} at its points)`);
+const strip0 = H6w.ground.pathStrips[0].poly, sw = Math.hypot(strip0[1][0] - strip0[strip0.length - 2][0], strip0[1][1] - strip0[strip0.length - 2][1]);
+ok(H6w.ground.pathStrips.length >= MAP.paths.length && Math.abs(sw - GG.PATH_W) < 0.4, `cart paths are strips of ground ${GG.PATH_W} yds wide`);
 let lakeEdges = 0, obEdges = 0, wrongSide = 0;
 const H1w = GG.buildHole(HP, 1, 'white'), t1w = GG.toHole(H1w, H1w.start.x, H1w.start.z);
 MAP.boundary.forEach((a, i) => {
