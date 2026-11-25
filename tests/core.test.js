@@ -420,7 +420,9 @@ eq(bro.rounds_reset, '2026-11-25', 'M3’s rounds before Nov 26 (Matthew’s tes
   // May 1 and 2, every row of the Toptracer Range app's game tables (offline was in yards there)
   const may1 = m2.sessions.find((s) => s.id === '2026-05-01-toptracer'), may2 = m2.sessions.find((s) => s.id === '2026-05-02-toptracer');
   const byClub = (s) => s.shots.reduce((o, x) => Object.assign(o, { [x.club]: (o[x.club] || 0) + 1 }), {});
-  eq([byClub(may1), byClub(may2)], [{ PW: 8, '7i': 14, '9i': 23 }, { Driver: 30, '7i': 19 }], 'M2 in May: 8 pitching wedges, 14 7 irons and 23 9 irons on the 1st; 30 drivers and 19 7 irons on the 2nd');
+  const may3 = m2.sessions.find((s) => s.id === '2026-05-03-toptracer');
+  eq([byClub(may1), byClub(may2), byClub(may3)], [{ PW: 8, '7i': 14, '9i': 23 }, { Driver: 30, '7i': 19, '3w': 19, '5hy': 33 }, { PW: 13, '9i': 25 }],
+    'M2 in May: 8 pitching wedges, 14 7 irons and 23 9 irons on the 1st; 30 drivers, 19 7 irons, 19 3 woods and 33 5 hybrids on the 2nd; 13 wedges and 25 9 irons on the 3rd');
   eq([may2.shots[13].offline_ft, may2.shots[20].offline_ft, may2.shots[20].curve_ft, may2.shots[5].curve_ft, may1.shots[0].total_yds], [252, -15, 45, null, 68],
     'offline in yards became feet (R 84 yd is 252 ft, L 5 yd is -15); a bare “1 ft” curve with no side is null; “Distance trend” is the total');
   const nine = C.clubData([m2.sessions.find((s) => s.id === '2026-08-d-9i-12-shots')])['9i'];
