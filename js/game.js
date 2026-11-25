@@ -401,7 +401,7 @@
     return { dist: f.dist * DECK.dist, spray: f.spray * DECK.spray, low: f.low, roll: f.roll };
   }
   function adjustShot(shot, power, lie) {
-    var p = clamp(isNum(power) ? power : 1, 0.05, 1), f = lieFactor(shot.club, lie), k = p * f.dist;
+    var p = clamp(isNum(power) ? power : 1, 0.01, 1), f = lieFactor(shot.club, lie), k = p * f.dist;
     var C0 = shot.carry_yds, out = {};
     Object.keys(shot).forEach(function (key) { out[key] = shot[key]; });
     function sc(key, m) { out[key] = isNum(shot[key]) ? shot[key] * m : null; }
@@ -711,6 +711,264 @@
     return w.join(', ');
   }
 
+  // ---------------------------------------------------------------------------
+  // The shot he means to hit
+  // ---------------------------------------------------------------------------
+  // A golfer picks the shot as well as the club. Each shot here is a change to his
+  // normal setup, the way a real one is played, and what that does to the flight:
+  //   shape: the curve it's set up for, as a share of the carry (+ a fade, − a draw, for
+  //     his hand), starting the other side of the line by as much, so it finishes on it.
+  //     The face and path that make it come from the ball-flight laws for the club, so a
+  //     driver needs less of a change than a wedge to curve as far; his own pattern and his
+  //     swing go on top of it.
+  //   launch, landing (degrees more), apex, carry and roll (shares of his normal shot's),
+  //     curve (a share of the curve: a low ball curves less), spin (rolls back this share
+  //     of the carry, on the green), q (how much harder it is to strike: less is easier;
+  //     the sand gives a splash some margin), run (a chip: it rolls by a ratio of its carry
+  //     that depends only on the club's loft, chipRun, not on his full shots' roll).
+  //   strokeYds: a shot played with a stroke of its own, like a putt: his biggest one (a
+  //     full stroke on the pad or the meter) goes this far with any club. A chip's biggest
+  //     is about waist high and runs about 50 yds, so a 20-yd chip is a stroke he can
+  //     control, not a twitch.
+  //   A draw or a fade he's committed to also takes most of the miss the other way out of
+  //   play (swingShot): his face-to-path scatter against the shape is halved, as a golfer
+  //   who plays a fade seldom hooks it.
+  var SHOTS = {
+    normal: { name: 'Normal', say: 'Your usual shot with this club.' },
+    draw: { name: 'Draw', shape: -0.06, roll: 1.15, launch: -0.5, say: 'A push-draw: it starts right of the target and curves back to it. Aim the face where it should start and swing out to the right of that.' },
+    fade: { name: 'Fade', shape: 0.06, roll: 0.85, launch: 0.5, carry: 0.98, say: 'A pull-fade: it starts left of the target and curves back to it. Aim the face where it should start and swing across to the left of that.' },
+    high: { name: 'High', launch: 4, landing: 6, apex: 1.25, carry: 0.96, roll: 0.6, q: 0.1, say: 'Ball forward, a full finish: up over trouble and down soft.' },
+    low: { name: 'Low', launch: -5, landing: -10, apex: 0.55, carry: 0.9, roll: 1.9, curve: 0.7, q: 0.05, say: 'Ball back, hands ahead, a short finish: under branches and running on.' },
+    spinner: { name: 'Spinner', launch: 1.5, landing: 4, apex: 1.1, carry: 0.97, spin: 0.04, q: 0.15, say: 'A crisp, full wedge that lands and spins back. It needs a clean lie and a pure strike.' },
+    pitch: { name: 'Pitch', say: 'Your usual short shot: in the air most of the way, a little roll.' },
+    punch: { name: 'Punch', say: 'Ball back, hands ahead, a short finish: low under the branches, and it runs. The trees take about 40% off.' },
+    chip: { name: 'Chip', launch: -8, landing: -14, apex: 0.35, carry: 0.55, run: true, curve: 0.5, q: -0.15, strokeYds: 50, say: 'A bump-and-run: low, landing just on the green and rolling like a putt. A full stroke is your biggest chip, about waist high.' },
+    flop: { name: 'Flop', launch: 18, landing: 20, apex: 2.4, carry: 0.45, roll: 0.2, curve: 0.4, q: 0.35, say: 'Face open, a long swing for a short shot: very high, landing soft over trouble. Risky: skulled, it flies the green; chunked, it goes nowhere.' },
+    splash: { name: 'Splash', launch: 10, landing: 10, apex: 1.6, carry: 0.5, roll: 0.4, curve: 0.4, q: -0.05, say: 'Hit the sand an inch behind the ball and let it splash out. The sand takes half the power.' }
+  };
+  function isShortIron(club) { return isWedge(club) || /^[89]i$/.test(club); }
+  // A shot type's stroke: how big a swing its longest stroke is with this club (pool),
+  // as a share of a full one (1: a full swing).
+  function strokeScale(type, pool) {
+    var t = SHOTS[type];
+    if (!t || !t.strokeYds || !pool) return 1;
+    return clamp(t.strokeYds / (pool.full * shotReach(type, pool.carry, pool.full - pool.carry, pool.club)), 0.05, 1);
+  }
+  // Whether a shot type has a stroke of its own (a chip).
+  function ownStroke(type) { return !!(SHOTS[type] && SHOTS[type].strokeYds); }
+  // The shots that change nothing about his normal one: under the trees every shot is a
+  // punch already (LIE.trees), and a pitch is his normal short shot.
+  function plainShot(type) { return !SHOTS[type] || type === 'normal' || type === 'pitch' || type === 'punch'; }
+  // A shot's words for his hand: a left-hander's draw starts left and curves right.
+  function shotSay(type, hand) {
+    var t = SHOTS[type];
+    if (!t) return '';
+    return hand === 'L' ? t.say.replace(/\b(left|right)\b/g, function (w) { return w === 'left' ? 'right' : 'left'; }) : t.say;
+  }
+  // The shots that make sense from here: ctx { lie, d (yds to the pin), toGreen (yds to the
+  // green's edge), club }. Around the green: a pitch, a chip or a flop; from a bunker near
+  // the green (within 30 yds: a full splash with a sand wedge goes about half its normal
+  // carry), a splash; under the trees, a punch, hooked or cut round them if need be;
+  // full shots: normal, draw, fade, high, low, and a spinner off a clean lie.
+  function shotTypes(ctx) {
+    var lie = ctx.lie, near = ctx.d <= 45 || ctx.toGreen <= 30;
+    if (lie === 'green') return [];
+    if (lie === 'bunker') return ctx.d <= 30 ? ['splash', 'normal'] : ['normal', 'low'];
+    if (lie === 'trees') return ['punch', 'draw', 'fade'];
+    if (near) return ['pitch', 'chip', 'flop'];
+    var out = ['normal', 'draw', 'fade', 'high', 'low'];
+    if (ctx.d <= 140 && lie !== 'rough') out.push('spinner');
+    return out;
+  }
+  // Whether a club can play a shot type: a flop or a splash needs a wedge, a spinner a
+  // wedge or a short iron, and a chip anything but a wood.
+  function shotFits(type, club) {
+    if (type === 'flop' || type === 'splash') return isWedge(club);
+    if (type === 'spinner') return isShortIron(club);
+    if (type === 'chip') return !/^(Driver|\d+w)$/.test(String(club));
+    return true;
+  }
+  // How far a chip rolls for each yard it carries, by the club's loft: like the chipping
+  // ratios golfers learn (a sand wedge about half its carry, a pitching wedge a little more
+  // than its carry, an 8 iron twice it, a 6 iron about two and a half times). A chip is a
+  // short stroke on a low ball, so it rolls the same way every time, whatever his full
+  // swings with the club do.
+  function chipRun(club) { return 0.25 + 1.75 * clamp((58 - (LOFT[club] || 45)) / 22, 0, 1.4); }
+  // A chip's carry as a share of its total (pool: his shots with the club).
+  function chipShare(pool) { return 1 / (1 + chipRun(pool.club)); }
+  // The angle a shot type comes down at with a club (his normal one's, changed by the type).
+  function typeLanding(pool, type) { var t = SHOTS[type]; return clamp((pool ? pool.landing : 46) + (t && t.landing || 0), 2, 80); }
+  // The club to chip with from d yds, toGreen of them to the green's edge, the green rise
+  // yds above the ball: as a golfer picks it, the least lofted of his irons and wedges that
+  // still lands it on the green (by a yard and a half, more on a longer chip) and lets it
+  // roll the rest. Uphill a chip comes down sooner, and its roll on the green is the same,
+  // so it lands shorter. null when none lands it on (pitch it instead).
+  function chipClub(pools, d, toGreen, rise) {
+    var list = Object.keys(pools).filter(function (c) { return /^(\d+i|PW|GW|AW|SW|LW)$/.test(c) && (LOFT[c] || 0) >= 28; })
+      .sort(function (a, b) { return LOFT[a] - LOFT[b]; });
+    var need = toGreen + Math.max(1.5, 0.08 * d), up = isNum(rise) ? rise : 0;
+    for (var i = 0; i < list.length; i++) {
+      var p = pools[list[i]], share = chipShare(p), land = share * d - (1 - share) * up / Math.tan(typeLanding(p, 'chip') * RAD);
+      if (land >= need) return list[i];
+    }
+    return null;
+  }
+  // The club a shot type wants, given his clubs (pools) and the one picked: a flop or a
+  // splash wants his most lofted wedge, a spinner a wedge or a short iron, a chip the club
+  // that lands it just on the green (chipClub; ctx: { d, toGreen }), or one that runs.
+  function clubForShot(type, pools, club, ctx) {
+    var has = function (c) { return !!pools[c]; };
+    if (type === 'chip' && ctx && isNum(ctx.d) && isNum(ctx.toGreen)) { var cc = chipClub(pools, ctx.d, ctx.toGreen, ctx.rise); if (cc) return cc; }
+    if (shotFits(type, club) && type !== 'chip') return club;
+    if (type === 'flop' || type === 'splash') { var w = ['LW', 'SW', 'GW', 'AW', 'PW'].filter(has); return w.length ? w[0] : club; }
+    if (type === 'spinner') return isShortIron(club) ? club : (['GW', 'AW', 'PW', 'SW', '9i'].filter(has)[0] || club);
+    if (type === 'chip') return shotFits(type, club) && !/^(SW|LW|GW|AW)$/.test(club) ? club : ['8i', '9i', '7i', 'PW', '6i'].filter(has)[0] || club;
+    return club;
+  }
+  // The face and path (degrees, his hand's way) that set a shot up to curve `shape` of its
+  // carry, starting the other side of the line by as much.
+  function shapeSetup(shape, club) {
+    if (!shape) return { face: 0, path: 0 };
+    var law = clubLaw(club), D = shape / law.curve, S = -Math.atan(shape) / RAD;
+    return { face: S + (1 - law.face) * D, path: S - law.face * D };
+  }
+  // How far a full swing goes with a shot type, as a share of his normal one's total
+  // (carry C0 and roll R0 of his good shot with the club). A chip runs farther the less
+  // loft the club has.
+  function shotReach(type, C0, R0, club) {
+    var t = SHOTS[type] || SHOTS.normal, c = C0 * (t.carry || 1), r = t.run ? c * chipRun(club) : Math.max(0, R0) * (t.roll != null ? t.roll : 1);
+    return (c + r) / Math.max(1, C0 + Math.max(0, R0));
+  }
+  // A shot's flight changed for a shot type. lie: where it's hit from (no spin from the
+  // rough: it comes out "hot" and runs); q: how well it was struck (a spinner needs a pure
+  // strike to bite). → the shot, with .spun when it spins back.
+  function typeFlight(out, type, lie, q) {
+    var t = SHOTS[type];
+    if (plainShot(type)) return out;
+    var C0 = out.carry_yds, R0 = (isNum(out.total_yds) ? out.total_yds : totalOf(out)) - C0, Cy = C0 * (t.carry || 1), R;
+    if (type === 'spinner') {
+      if (lie === 'rough') R = Math.max(0, R0) * 1.6 + 0.04 * C0;          // a flier: no spin, it runs
+      else if (q < 0.45) { R = -t.spin * Cy; out.spun = true; }            // it bites and spins back
+      else R = Math.max(0, R0) * 0.8;                                      // not crisp enough: it checks, then rolls
+    } else R = t.run ? Cy * chipRun(out.club) : Math.max(0, R0) * (t.roll != null ? t.roll : 1);
+    out.carry_yds = Cy;
+    out.total_yds = Cy + R;
+    if (isNum(out.launch_deg)) out.launch_deg = clamp(out.launch_deg + (t.launch || 0), 1, 70);
+    if (isNum(out.landing_deg)) out.landing_deg = clamp(out.landing_deg + (t.landing || 0), 2, 80);
+    if (isNum(out.apex_ft)) out.apex_ft = out.apex_ft * (t.apex || 1) * Cy / C0;
+    if (isNum(out.hang_time_s)) out.hang_time_s = out.hang_time_s * Math.sqrt((t.apex || 1) * Cy / C0);
+    return out;
+  }
+  // A shot type for the swing meter and the range (the real swing builds it in): the
+  // setup's face and path turned into the start line and curve, then the flight.
+  function typeShot(shot, type, hand, lie, q) {
+    var t = SHOTS[type];
+    if (plainShot(type)) return shot;
+    var out = {}, h = hand === 'L' ? -1 : 1, law = clubLaw(shot.club), fp = facePathOf(shot), su = shapeSetup(t.shape, shot.club);
+    Object.keys(shot).forEach(function (k) { out[k] = shot[k]; });
+    typeFlight(out, type, lie, isNum(q) ? q : 0.3);
+    if (fp) {
+      var Cy = out.carry_yds, R = out.total_yds - Cy, face = fp.face + h * su.face, path = fp.path + h * su.path;
+      var start = law.face * face + (1 - law.face) * path, cY = law.curve * Cy * (face - path) * (t.curve || 1);
+      out.curve_ft = 3 * cY;
+      out.offline_ft = 3 * (Math.tan(start * RAD) * (Cy + 0.6 * R) + cY * (1 + 1.2 * R / Cy));
+    }
+    return out;
+  }
+  // The trouble either side of a shot's landing area, from a to b (where he's aiming): the
+  // ground from 6 to 45 yds off the line, from three quarters of the way to a little past
+  // it, the nearer the more it counts. pen: water and out of bounds; all: those, the trees
+  // and the sand (a bunker counts a sixth as much as water). left and right are as he faces b.
+  //   → { left: { pen, all, what }, right: { pen, all, what } }  (what: the worst there)
+  var TROUBLE = { water: 3, ob: 3, trees: 1, bunker: 0.5 };
+  function troubleBeside(H, a, b) {
+    var D = dist(a, b), hd = headingTo(a, b), out = { left: { pen: 0, all: 0, what: '' }, right: { pen: 0, all: 0, what: '' } };
+    for (var f = 0.75; f <= 1.1001; f += 0.05) for (var side = -1; side <= 1; side += 2) for (var lat = 6; lat <= 45; lat += 3) {
+      var q = FL.offsetPoint(a.x, a.z, hd, D * f, side * lat), l = lieAt(H, q.x, q.z), w = TROUBLE[l];
+      if (!w) continue;
+      var o = side < 0 ? out.left : out.right, ww = w / (1 + lat / 12);
+      o.all += ww;
+      if (l === 'water' || l === 'ob') o.pen += ww;
+      if (!o.what || TROUBLE[o.what] < w) o.what = l;
+    }
+    ['left', 'right'].forEach(function (k) { out[k].pen = Math.round(out[k].pen * 10) / 10; out[k].all = Math.round(out[k].all * 10) / 10; });
+    return out;
+  }
+  // The side that's clearly worse (−1 left, 1 right): water or out of bounds on one side
+  // only (pen), or else much more of everything (at least 2.5, and 2.5 times the other
+  // side's: most holes have trees down both sides).
+  function worseSide(beside) {
+    if (!beside) return null;
+    var L = beside.left, R = beside.right;
+    if (Math.max(L.pen, R.pen) >= 1.5 && Math.min(L.pen, R.pen) * 2 < Math.max(L.pen, R.pen)) {
+      var ps = L.pen > R.pen ? -1 : 1;
+      return { side: ps, pen: true, what: ps < 0 ? L.what : R.what };
+    }
+    if (Math.max(L.all, R.all) >= 2.5 && Math.min(L.all, R.all) * 2.5 < Math.max(L.all, R.all)) {
+      var s = L.all > R.all ? -1 : 1;
+      return { side: s, pen: false, what: s < 0 ? L.what : R.what };
+    }
+    return null;
+  }
+  var TROUBLE_WORDS = { water: 'water on the ', ob: 'out of bounds down the ', trees: 'trees down the ', bunker: 'bunkers on the ' };
+  // The shot to play from here, and why, for a golfer thinking his way round: ctx { lie,
+  // d, toGreen, hand, club, reach (how far this club goes from here), types, bend (which way
+  // the hole turns over this shot and a little past it: −1 left, 1 right, 0 straight, only
+  // when the pin is out of reach), beside (from
+  // troubleBeside), treesLow / treesHigh (trees in the way of a normal flight, not of a low
+  // or a high one), overSand (a bunker on the line in the last 40 yds before the pin),
+  // room (yds of green between its near edge and the pin), chipClub (chipClub's, null when
+  // no club lands a chip on the green) }.  → { type, why }
+  //   In order: a splash, a punch from the trees, under or over trees in the way; round the
+  //   green, a flop, chip or pitch; then away from water or out of bounds, high over a
+  //   bunker to a tucked pin, a spinner to a tight one, round the corner, and away from
+  //   trees or sand. Not a draw or a fade with a wedge: that's a shot for distance.
+  function suggestShot(ctx) {
+    var types = ctx.types || shotTypes(ctx), has = function (t) { return types.indexOf(t) >= 0; }, h = ctx.hand === 'L' ? -1 : 1;
+    if (!types.length) return null;
+    // which shape curves the ball dir (−1 left, 1 right): a draw curves left for a right-hander
+    var shapeTo = function (dir) { return dir === -h ? 'draw' : 'fade'; }, canShape = has('draw') && has('fade') && !isWedge(ctx.club);
+    var atPin = !isNum(ctx.reach) || ctx.d <= ctx.reach + 10;
+    if (has('splash')) return { type: 'splash', why: 'a bunker shot near the green: splash it out' };
+    if (has('punch')) return { type: 'punch', why: 'under the branches: keep it low and back in play' };
+    if (ctx.treesLow && has('low')) return { type: 'low', why: 'trees in the way: keep it under them' };
+    if (ctx.treesHigh && has('high')) return { type: 'high', why: 'a tree in the way: go up over it' };
+    if (has('chip')) {
+      if (ctx.overSand && ctx.room < 5) return { type: 'flop', why: 'a bunker in the way and hardly any green to land on: go over it, high and soft' };
+      if (!ctx.overSand && ctx.room >= 6 && ctx.toGreen <= 12 && ctx.chipClub !== null) return { type: 'chip', why: 'green to roll it on: the safest shot' };
+      return { type: 'pitch', why: ctx.overSand ? 'carry the bunker, then a little roll' : 'carry it most of the way' };
+    }
+    var ws = canShape ? worseSide(ctx.beside) : null, side = ws ? (ws.side < 0 ? 'left' : 'right') : '';
+    if (ws && ws.pen) return { type: shapeTo(-ws.side), why: TROUBLE_WORDS[ws.what] + side + ': curve it away from it' };
+    if (atPin && ctx.overSand && ctx.room < 12 && has('high')) return { type: 'high', why: 'a bunker short of the pin: up high, down soft' };
+    if (has('spinner') && ctx.room < 8 && ctx.d <= 120) return { type: 'spinner', why: 'a tight pin: land it past and spin it back' };
+    if (canShape && ctx.bend) return { type: shapeTo(ctx.bend), why: 'the hole bends ' + (ctx.bend < 0 ? 'left' : 'right') + ': shape it round the corner' };
+    if (ws) return { type: shapeTo(-ws.side), why: TROUBLE_WORDS[ws.what] + side + ': curve it away from them' };
+    return { type: types[0], why: '' };
+  }
+  // Did the planned shot come off? rep: the swing's report (the real swing), or the
+  // finished shot's numbers: { type, curve (yds, + right), carry, apex, normalApex, spun,
+  // mis, lie, hand }. → { ok, text }.
+  function shotVerdict(o) {
+    var t = SHOTS[o.type], h = o.hand === 'L' ? -1 : 1;
+    if (plainShot(o.type)) return null;
+    var cv = h * o.curve / Math.max(1, o.carry);
+    if (o.mis) {
+      if (o.type === 'flop' && o.mis === 'thin') return { ok: false, text: 'Skulled the flop: it shot across the green.' };
+      if (o.type === 'flop' && o.mis === 'fat') return { ok: false, text: 'Chunked the flop: it barely moved.' };
+      return { ok: false, text: 'A mis-hit, so the ' + t.name.toLowerCase() + ' never had a chance.' };
+    }
+    if (o.type === 'draw') return cv < -0.02 ? { ok: true, text: 'It drew, as planned.' } : { ok: false, text: 'It didn’t draw: the face was ' + (cv > 0.02 ? 'open' : 'square') + ' to the path.' };
+    if (o.type === 'fade') return cv > 0.02 ? { ok: true, text: 'It faded, as planned.' } : { ok: false, text: 'It didn’t fade: the face was ' + (cv < -0.02 ? 'shut' : 'square') + ' to the path.' };
+    if (o.type === 'spinner') return o.spun ? { ok: true, text: 'It bit and spun back.' } : { ok: false, text: o.lie === 'rough' ? 'From the rough you can’t spin it: it came out hot and ran.' : 'Not struck crisply enough to spin: it released.' };
+    if (o.type === 'high') return { ok: true, text: 'Up high and down soft.' };
+    if (o.type === 'low') return { ok: true, text: 'Low and running.' };
+    if (o.type === 'chip') return { ok: true, text: 'Low and rolling, like a putt.' };
+    if (o.type === 'flop') return { ok: true, text: 'High and soft: a good flop.' };
+    if (o.type === 'splash') return { ok: true, text: 'Out of the sand.' };
+    return null;
+  }
+
   // The shape of a shot in a golfer's words, for his hand: where it started (a pull
   // starts to the left for a right-hander, a push to the right) and how it curved (a
   // draw curves left for a right-hander and a big one is a hook; a fade curves right
@@ -742,8 +1000,8 @@
     opts = opts || {};
     var cfg = opts.easy ? SWING.easy : SWING.normal, rnd = opts.rnd || Math.random, lie = opts.lie || 'fairway', h = opts.hand === 'L' ? -1 : 1;
     var club = pool.club, prof = swingProfile(pool), law = prof.law, kind = C.clubKind(club);
-    var ls = lieSlope(opts.slope, club, opts.hand, opts.equip);
-    var still = !!opts.still, tempo = clamp(sw.tempo, -1, 1), st = strikeOf(sw, cfg), q = st.q + (ls ? ls.q : 0) + (still ? 0 : Math.abs(gauss(rnd)) * 0.1);
+    var ls = lieSlope(opts.slope, club, opts.hand, opts.equip), type = SHOTS[opts.type] ? opts.type : 'normal', ty = SHOTS[type], su = shapeSetup(ty.shape, club);
+    var still = !!opts.still, tempo = clamp(sw.tempo, -1, 1), st = strikeOf(sw, cfg), q = Math.max(0, st.q + (ls ? ls.q : 0) + (ty.q || 0) + (still ? 0 : Math.abs(gauss(rnd)) * 0.1));
     // The strike: a mis-hit, or one of his solid shots, the better the swing the better struck.
     var pMis = pool.misRate * Math.min(1, q) * Math.min(1, q) + clamp((q - 1) * 0.6, 0, 0.8), mis = null, real, base;
     if (!still && rnd() < pMis) {
@@ -758,16 +1016,24 @@
       var n = byStrike.length, at = Math.round(Math.pow(Math.min(1, q), RANK_CURVE) * (n - 1)), k = Math.max(1, Math.round(n * 0.08));
       var band = byStrike.slice(clamp(at - k, 0, n - 1), clamp(at + k, 0, n - 1) + 1);
       real = base = band[still ? Math.floor(band.length / 2) : Math.floor(rnd() * band.length)];
+      // A chip is a short, simple stroke: a less than pure one costs it far less distance.
+      if (ty.run && isNum(pool.pure) && base.carry_yds < pool.pure) base = Object.assign({}, base, { carry_yds: pool.pure - (pool.pure - base.carry_yds) * 0.4 });
     }
-    var out = adjustShot(base, sw.power, lie), lf = lieFactor(club, lie);
+    var power = sw.power * strokeScale(type, pool), out = typeFlight(adjustShot(base, power, lie), type, lie, q), lf = lieFactor(club, lie);
+    // A skulled flop shoots off low across the green; a chunked one goes nowhere.
+    if (mis && type === 'flop') {
+      if (mis === 'thin') { out.carry_yds *= 2.6; out.total_yds = out.carry_yds * 1.6; if (isNum(out.launch_deg)) out.launch_deg = 9; if (isNum(out.apex_ft)) out.apex_ft *= 0.25; if (isNum(out.landing_deg)) out.landing_deg = 14; }
+      else { out.carry_yds *= 0.5; out.total_yds = out.carry_yds * 1.1; }
+    }
     // The face and the path: his own, his scatter (wider from a bad lie or an overswing), the timing and the swipe.
     var over = Math.max(0, sw.depth - 1), wild = (1 + 2.5 * over) * lf.spray * cfg.rest;
     var zS = still ? 0 : gauss(rnd), zD = still ? 0 : prof.rho * zS + Math.sqrt(1 - prof.rho * prof.rho) * gauss(rnd);
-    var nS = zS * prof.sdStart * wild, nD = zD * prof.sdF2p * wild;
+    var nS = zS * prof.sdStart * wild, nD = zD * prof.sdF2p * wild, plan = su.face - su.path;
+    if (plan && nD * h * plan < 0) nD *= 0.5;   // committed to a shape, he seldom curves it the other way
     var u = clamp(h * sw.strike, -3, 3), uOff = deadband(u, cfg.strikeMid);
     var dFace = -cfg.face * tempo, dPath = -cfg.path * tempo, dSwipe = cfg.swipe * deadband(sw.angle, cfg.dead);
-    var face = prof.face + nS + (1 - law.face) * nD + h * (dFace - TWIST * uOff + (ls ? ls.face : 0));
-    var path = prof.path + nS - law.face * nD + h * (dPath + (ls ? ls.path : 0)) + dSwipe;
+    var face = prof.face + nS + (1 - law.face) * nD + h * (dFace - TWIST * uOff + (ls ? ls.face : 0) + su.face);
+    var path = prof.path + nS - law.face * nD + h * (dPath + (ls ? ls.path : 0) + su.path) + dSwipe;
     var f2p = face - path, spin = f2p + h * GEAR[kind] * uOff;
     var start = law.face * face + (1 - law.face) * path;
     if (mis === 'shank') start = h * MIS_SHANK + 0.3 * start;
@@ -775,23 +1041,25 @@
     // quicker, a shut one lower, running on; off the middle it goes shorter.
     var open = clamp(h * spin, -6, 6), C0 = out.carry_yds, R0 = (isNum(out.total_yds) ? out.total_yds : totalOf(out)) - C0;
     var Cy = C0 * (1 - 0.004 * Math.max(0, Math.abs(spin) - 2)) * (mis ? 1 : Math.max(0.75, 1 - 0.06 * uOff * uOff)) * (ls ? ls.carry : 1);
-    var R = R0 * (Cy / C0) * (R0 > 0 ? clamp(1 - 0.06 * open, 0.5, 1.6) * (ls ? ls.roll : 1) : 1);
+    var R = R0 * (Cy / C0) * (R0 > 0 ? (ty.run ? 1 : clamp(1 - 0.06 * open, 0.5, 1.6)) * (ls ? ls.roll : 1) : 1);
+    if (out.spun) R = R0 * (Cy / C0);   // a spinner's spin-back isn't changed by the face
     out.carry_yds = Cy;
     out.total_yds = Cy + R;
     if (isNum(out.launch_deg)) out.launch_deg = Math.max(1, out.launch_deg + 0.35 * open + (ls ? ls.launch : 0));
     if (isNum(out.apex_ft)) out.apex_ft = out.apex_ft * (1 + 0.03 * open) * Cy / C0;
     if (isNum(out.landing_deg)) out.landing_deg = clamp(out.landing_deg + 0.4 * open, 1, 80);
-    var cY = law.curve * Cy * spin * (mis ? MIS_CURVE[mis] : 1), sl = Math.tan(start * RAD);
+    var cY = law.curve * Cy * spin * (mis ? MIS_CURVE[mis] : 1) * (ty.curve || 1), sl = Math.tan(start * RAD);
     out.curve_ft = 3 * cY;
     out.offline_ft = 3 * (sl * (Cy + 0.6 * R) + cY * (1 + 1.2 * R / Cy));
     return {
       shot: out,
       rep: {
-        club: club, depth: sw.depth, power: sw.power, ratio: sw.ratio, target: sw.target, tempo: sw.tempo, back: sw.back, down: sw.down, pause: sw.pause,
+        club: club, depth: sw.depth, power: power, ratio: sw.ratio, target: sw.target, tempo: sw.tempo, back: sw.back, down: sw.down, pause: sw.pause,
         angle: sw.angle, strike: u, q: q, mis: mis, misCause: mis ? misCause(st) : null, real: real, hand: h,
         dFace: dFace, dPath: dPath, dSwipe: h * dSwipe,
         face: h * face, path: h * path, f2p: h * spin, start: start, curve: cY, carry: Cy, side: sl * Cy + cY,
-        shape: shapeOf(start, cY, Cy, h), pMis: pMis, own: { face: h * prof.face, path: h * prof.path, n: prof.n }, slope: ls
+        shape: shapeOf(start, cY, Cy, h), pMis: pMis, own: { face: h * prof.face, path: h * prof.path, n: prof.n }, slope: ls,
+        type: type, spun: !!out.spun, apex: out.apex_ft, lie: lie, plan: { face: su.face, path: su.path }
       }
     };
   }
@@ -804,7 +1072,7 @@
     opts = opts || {};
     var depth = clamp(isNum(power) ? power : 1, 0.05, 1), target = tempoTarget(depth), back = 0.8;
     var sw = { ok: true, depth: depth, power: depth, back: back, down: back / target, pause: 0, ratio: target, target: target, tempo: 0, angle: 0, strike: 0 };
-    var out = swingShot(pool, sw, { lie: lie, still: true, hand: opts.hand, easy: opts.easy, slope: opts.slope, equip: opts.equip });
+    var out = swingShot(pool, sw, { lie: lie, still: true, hand: opts.hand, easy: opts.easy, slope: opts.slope, equip: opts.equip, type: opts.type });
     var tr = out && FL.trajectory(out.shot, flightOpts(pool.club, opts.equip));
     return { side: tr ? tr.rest.x : 0, shape: out ? out.rep.shape : 'Straight' };
   }
@@ -881,7 +1149,9 @@
     else if (Math.abs(swipe) >= 4) {
       var inOut = rep.hand * swipe > 0, cv = rep.hand * rep.curve, big = Math.abs(rep.curve) / Math.max(rep.carry, 1) > 0.07;
       var drew = cv < -1.5, faded = cv > 1.5, path = inOut ? 'in-to-out' : 'out-to-in';
-      if (inOut ? drew : faded) tips.push('You swiped ' + dir + ': ' + path + ', so it ' + (inOut ? (big ? 'hooked' : 'drew') : (big ? 'sliced' : 'faded')) + ' (curved ' + (inOut ? side[0] : side[1]) + '). For a straight one, swipe straight up the line.');
+      // With a draw or a fade planned, the setup curves it: the swipe should still go straight.
+      var then = rep.type === 'draw' || rep.type === 'fade' ? ' The ' + rep.type + ' is in the setup: swipe straight up the line.' : ' For a straight one, swipe straight up the line.';
+      if (inOut ? drew : faded) tips.push('You swiped ' + dir + ': ' + path + ', so it ' + (inOut ? (big ? 'hooked' : 'drew') : (big ? 'sliced' : 'faded')) + ' (curved ' + (inOut ? side[0] : side[1]) + ').' + then);
       else tips.push('You swiped ' + dir + ' (' + path + ', which ' + (inOut ? 'draws' : 'fades') + ' it), but the face was ' + (inOut ? (faded ? 'open' : 'square') : (drew ? 'shut' : 'square')) + ' to the path, so it ' + (inOut ? (faded ? 'still faded' : 'flew straight') : (drew ? 'still drew' : 'flew straight')) + '.');
     }
     if (!rep.mis && Math.abs(rep.strike) > 0.6) tips.push('Off the ' + (rep.strike > 0 ? 'heel' : 'toe') + ': you came back through ' + through + '. Swipe back up through it.');
@@ -918,7 +1188,8 @@
   // really rolls, and where it stops: { d, lie, end }. It's a ball rolling to a stop: what
   // it has left to spend (R × ROLL_MU, less after landing in the rough or the trees) goes on
   // the grass it rolls over (more in the rough, ROLL_COST) and on climbing; going downhill
-  // gives some back. A side slope turns it downhill, more as it slows. It stops in a
+  // gives some back. A side slope turns it downhill, more as it slows. The greens are
+  // level, as they putt (the heights are too coarse for a green's slopes). It stops in a
   // bunker and goes into water or out of bounds.
   function rollOut(H, land, dir, R) {
     var lie = lieAt(H, land.x, land.z);
@@ -929,11 +1200,11 @@
       var nx = x + dx * step, nz = z + dz * step, l = lieAt(H, nx, nz);
       if (STOPS[l]) return { d: d + step, lie: l, end: { x: nx, z: nz } };
       if (l === 'bunker') { var e = Math.min(0.8, E / (2 * ROLL_MU)); return { d: d + step + e, lie: 'bunker', end: { x: nx + dx * e, z: nz + dz * e } }; }
-      var h2 = heightAt(G, nx, nz) / 3, use = step * ROLL_MU * (ROLL_COST[l] || 1) + (h2 - h);
+      var flat = l === 'green', h2 = heightAt(G, nx, nz) / 3, use = step * ROLL_MU * (ROLL_COST[l] || 1) + (flat ? 0 : h2 - h);
       if (use >= E) { var f = use > 0 ? E / use : 1; x += dx * step * f; z += dz * step * f; d += step * f; break; }
       E -= use;
       x = nx; z = nz; d += step; h = h2;
-      if (G.elev) {
+      if (G.elev && !flat) {
         var rx = dz, rz = -dx, side = (heightAt(G, x + rx, z + rz) - heightAt(G, x - rx, z - rz)) / 3 / 2;
         var turn = clamp(-side * step / (2 * Math.max(E, 0.03)), -0.15, 0.15), c = Math.cos(turn), sn = Math.sin(turn);
         var ndx = dx * c + rx * sn, ndz = dz * c + rz * sn;
@@ -1083,7 +1354,9 @@
     // downhill), and the first bounce goes with the slope it lands on.
     var G = H.ground, h0 = heightAt(G, from.x, from.z) / 3, tr = tr0, fs = { kind: fo.kind, club: fo.club, launch: fo.launch, start: tr0.start };
     if (G.elev) {
-      var meet = groundMeet(G, tr0, from, heading, h0);
+      var meet = groundMeet(G, tr0, from, heading, h0), mp = FL.offsetPoint(from.x, from.z, heading, meet.s, tr0.lateral(meet.s));
+      // The greens are level (the heights are too coarse for one): no slope to bounce off.
+      if (lieAt(H, mp.x, mp.z) === 'green') meet.grade = 0;
       if (Math.abs(meet.s - tr0.carry) > 0.25 || Math.abs(meet.grade) > 0.01) {
         shot = landedAt(shot, tr0, meet.s, rollOnLanding(tr0.roll, meet.grade));
         tr = FL.trajectory(shot, fs) || tr0;
@@ -1200,9 +1473,10 @@
   // is taken as a curve peaking at about 16% of the club's reach (25 yds, 75 ft, for a
   // 150-yd club; at most 30), and much lower for a punch from under the trees. The first
   // and last 8% don't count (he's under the tree he's playing from, or it's where the ball
-  // comes down).
+  // comes down). low: true for a punch from the trees, or a number to scale the height by
+  // (a low or a high shot's apex).
   function treesInWay(H, a, b, reach, low) {
-    var len = dist(a, b), top = Math.min(30, 0.16 * reach) * (low ? LIE.trees.low : 1), n = Math.max(8, Math.ceil(len / 6)), hit = [];
+    var len = dist(a, b), top = Math.min(30, 0.16 * reach) * (typeof low === 'number' ? low : low ? LIE.trees.low : 1), n = Math.max(8, Math.ceil(len / 6)), hit = [];
     var G = H.ground, ha = heightAt(G, a.x, a.z) / 3, hb = heightAt(G, b.x, b.z) / 3;
     for (var k = 1; k < n; k++) {
       var u = k / n;
@@ -1258,8 +1532,17 @@
     }
     return best || { x: pin.x, z: pin.z, pin: true };
   }
-  // The share of a full swing to send this club `d` yds from this lie.
-  function powerFor(pool, d, lie) { return clamp(d / (pool.full * lieFactor(pool.club, lie).dist), 0.1, 1); }
+  // The share of a full swing to send this club `d` yds from this lie, with this shot type.
+  function powerFor(pool, d, lie, type) {
+    var k = type && type !== 'normal' ? shotReach(type, pool.carry, pool.full - pool.carry, pool.club) : 1;
+    return clamp(d / (pool.full * lieFactor(pool.club, lie).dist * k), 0.1, 1);
+  }
+  // How far back to take it for d yds: the power, on the shot type's own stroke (a chip's
+  // full stroke is its biggest chip), from a twentieth of the stroke to all of it.
+  function strokeFor(pool, d, lie, type) {
+    var k = type && type !== 'normal' ? shotReach(type, pool.carry, pool.full - pool.carry, pool.club) : 1;
+    return clamp(d / (pool.full * lieFactor(pool.club, lie).dist * k * strokeScale(type, pool)), ownStroke(type) ? 0.05 : 0.1, 1);
+  }
 
   function scoreName(score, par) {
     if (score === 1) return 'Hole in one';
@@ -1296,10 +1579,12 @@
     readSwing: readSwing, SWING: SWING, strikeOf: strikeOf, swingShot: swingShot, shapeOf: shapeOf, MIS_SHANK: MIS_SHANK,
     PUTT_SWING: PUTT_SWING, puttLength: puttLength, puttDepth: puttDepth, puttSwing: puttSwing, shapeAllowance: shapeAllowance,
     LOFT: LOFT, loftOf: loftOf, lieSlope: lieSlope, slopeShot: slopeShot, slopeWords: slopeWords,
+    SHOTS: SHOTS, shotTypes: shotTypes, shotFits: shotFits, clubForShot: clubForShot, shapeSetup: shapeSetup, shotReach: shotReach, typeFlight: typeFlight, typeShot: typeShot,
+    suggestShot: suggestShot, shotVerdict: shotVerdict, chipClub: chipClub, chipShare: chipShare, chipRun: chipRun, typeLanding: typeLanding, strokeScale: strokeScale, ownStroke: ownStroke, strokeFor: strokeFor, shotSay: shotSay, plainShot: plainShot, troubleBeside: troubleBeside, worseSide: worseSide,
     swingTips: swingTips, ownShapeText: ownShapeText, tempoWord: tempoWord, faceWord: faceWord, pathWord: pathWord, ratioText: ratioText, goalText: goalText,
     DECK: DECK, lieFactor: lieFactor, playShot: playShot, rollOut: rollOut, TRUNK: TRUNK, LEAVES: LEAVES, CUP: CUP, flightOpts: flightOpts,
     PUTT: PUTT, puttTarget: puttTarget, putt: putt, TAP_IN: TAP_IN,
-    suggestClub: suggestClub, SURE: SURE, aimFor: aimFor, powerFor: powerFor, headingTo: headingTo, dist: dist,
+    suggestClub: suggestClub, SURE: SURE, aimFor: aimFor, treesInWay: treesInWay, powerFor: powerFor, headingTo: headingTo, dist: dist,
     scoreName: scoreName, toParText: toParText, MAX_OVER: MAX_OVER, newRound: newRound, totals: totals, seedOf: seedOf
   };
 });

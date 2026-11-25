@@ -1081,5 +1081,100 @@ function swingRound(d, pools, seed) {
 });
 eq(JSON.stringify(swingRound(m3Data, m3Pools, 5)), JSON.stringify(swingRound(m3Data, m3Pools, 5)), 'the same seed plays the same round');
 
+
+section('Game: the shot he means to hit');
+{
+// Which shots are on offer: none on the green; from a bunker near the green a splash; under
+// the trees a punch (hooked or cut if need be); round the green a pitch, chip or flop; full
+// shots the rest, with a spinner only off a clean lie within 140.
+eq([GG.shotTypes({ lie: 'green', d: 5, toGreen: 0 }), GG.shotTypes({ lie: 'bunker', d: 25, toGreen: 4 }), GG.shotTypes({ lie: 'bunker', d: 45, toGreen: 35 }), GG.shotTypes({ lie: 'trees', d: 200, toGreen: 180 }), GG.shotTypes({ lie: 'fairway', d: 30, toGreen: 18 })],
+  [[], ['splash', 'normal'], ['normal', 'low'], ['punch', 'draw', 'fade'], ['pitch', 'chip', 'flop']], 'the shots on offer: on the green, in the sand by the green and 45 yds out, under the trees and round the green');
+eq([GG.shotTypes({ lie: 'fairway', d: 160, toGreen: 150 }), GG.shotTypes({ lie: 'fairway', d: 120, toGreen: 110 }).indexOf('spinner') >= 0, GG.shotTypes({ lie: 'rough', d: 120, toGreen: 110 }).indexOf('spinner') >= 0],
+  [['normal', 'draw', 'fade', 'high', 'low'], true, false], 'full shots, and a spinner only from a clean lie in range');
+eq([GG.shotFits('flop', 'SW'), GG.shotFits('flop', '7i'), GG.shotFits('splash', 'PW'), GG.shotFits('spinner', '9i'), GG.shotFits('spinner', '7i'), GG.shotFits('chip', '8i'), GG.shotFits('chip', 'Driver'), GG.shotFits('chip', '3w'), GG.shotFits('draw', 'Driver')],
+  [true, false, true, true, false, true, false, false, true], 'a flop or a splash needs a wedge, a spinner a short iron, a chip anything but a wood');
+eq([GG.clubForShot('flop', m3Pools, '7i'), GG.clubForShot('chip', m3Pools, 'SW'), GG.clubForShot('chip', m3Pools, '9i'), GG.clubForShot('spinner', m3Pools, '6i'), GG.clubForShot('draw', m3Pools, 'Driver')],
+  ['SW', '8i', '9i', 'PW', 'Driver'], 'the club a shot wants: his most lofted wedge to flop, one that runs to chip');
+// A draw's setup: the ball starts right by as much as it curves back, so it finishes on line.
+const law7 = GG.clubLaw('7i'), suD = GG.shapeSetup(-0.06, '7i'), startD = law7.face * suD.face + (1 - law7.face) * suD.path;
+ok(Math.abs(startD - Math.atan(0.06) * 180 / Math.PI) < 1e-9 && Math.abs(law7.curve * (suD.face - suD.path) + 0.06) < 1e-9 && suD.path > suD.face,
+  `a 7-iron draw: face ${suD.face.toFixed(1)}° and path ${suD.path.toFixed(1)}° right, so it starts ${startD.toFixed(1)}° right and curves 6% of its carry back`);
+eq(GG.shapeSetup(0, '7i'), { face: 0, path: 0 }, 'no shape, no change to the setup');
+// Each shot's flight, from a straight 7-iron (128 carry, 138 total, 70 ft apex, 45° landing).
+const base7 = { club: '7i', carry_yds: 128, total_yds: 138, launch_deg: 18, apex_ft: 70, landing_deg: 45, hang_time_s: 6, curve_ft: 0, offline_ft: 0, ball_speed_mph: 110 };
+const ty = (t, o) => GG.typeShot(base7, t, (o || {}).hand || 'R', (o || {}).lie || 'fairway', (o || {}).q != null ? o.q : 0.2);
+const tD = ty('draw'), tF = ty('fade'), tH = ty('high'), tL = ty('low'), tLL = ty('draw', { hand: 'L' });
+ok(tD.curve_ft / 3 < -7 && Math.abs(tD.offline_ft / 3) < 1.5 && tF.curve_ft / 3 > 7 && Math.abs(tF.offline_ft / 3) < 1.5, `a draw curves ${(tD.curve_ft / 3).toFixed(1)} yds left and a fade ${(tF.curve_ft / 3).toFixed(1)} right, both finishing on the line`);
+ok(tLL.curve_ft > 0 && tD.total_yds > base7.total_yds && tF.total_yds < tD.total_yds, 'a left-hander’s draw curves right; a draw runs on, a fade stops sooner');
+ok(tH.apex_ft > 80 && tH.landing_deg > 50 && tH.carry_yds < 128 && tH.total_yds - tH.carry_yds < 10, `high: up to ${Math.round(tH.apex_ft)} ft, down at ${tH.landing_deg}°, a little shorter, less roll`);
+ok(tL.apex_ft < 40 && tL.landing_deg < 40 && tL.total_yds - tL.carry_yds > 15, `low: ${Math.round(tL.apex_ft)} ft high and running ${Math.round(tL.total_yds - tL.carry_yds)} yds`);
+const baseSW = { club: 'SW', carry_yds: 70, total_yds: 73, launch_deg: 30, apex_ft: 60, landing_deg: 50, hang_time_s: 5, curve_ft: 0, offline_ft: 0 };
+const tyW = (t, lie, q) => GG.typeShot(baseSW, t, 'R', lie || 'fairway', q != null ? q : 0.2);
+const sSpin = tyW('spinner'), sLoose = tyW('spinner', 'fairway', 0.6), sRough = tyW('spinner', 'rough'), sFlop = tyW('flop'), sSplash = tyW('splash'), sChip = tyW('chip');
+ok(sSpin.spun && sSpin.total_yds < sSpin.carry_yds && !sLoose.spun && sLoose.total_yds > sLoose.carry_yds && sRough.total_yds - sRough.carry_yds > 3,
+  'a spinner struck pure spins back; not crisp, it releases; from the rough it comes out hot and runs');
+ok(sFlop.carry_yds < 35 && sFlop.landing_deg >= 65 && sFlop.apex_ft / sFlop.carry_yds > 2 * baseSW.apex_ft / baseSW.carry_yds, `a full-swing flop carries ${Math.round(sFlop.carry_yds)} yds and lands at ${sFlop.landing_deg}°`);
+ok(Math.abs(sSplash.carry_yds - 35) < 0.01 && sChip.total_yds > 1.4 * sChip.carry_yds, 'the sand takes half a splash; a chip rolls most of the way');
+ok(['normal', 'pitch', 'punch'].every((t) => GG.typeShot(base7, t, 'R', 'fairway', 0.2) === base7 && GG.plainShot(t)) && !GG.plainShot('draw'), 'a normal shot, a pitch and a punch (the trees make it one) change nothing');
+// How far a full swing goes with each, so the power allows for it.
+ok(GG.shotReach('chip', 100, 8, '8i') > 1.3 && GG.shotReach('chip', 70, 3, 'SW') < 1 && GG.shotReach('high', 128, 10, '7i') < 1 && GG.shotReach('normal', 128, 10, '7i') === 1, 'a chip with an 8 iron runs well past a normal shot; with a wedge it doesn’t');
+ok(GG.powerFor(m3Pools['8i'], 20, 'fairway', 'chip') < GG.powerFor(m3Pools['8i'], 20, 'fairway') * 0.8, 'a 20-yd chip needs less swing than a 20-yd pitch with the same club');
+// Through the real swing: the setup is built in, a perfect swing plays the shot, and the
+// report says what was planned.
+const stR = (pool, t, o) => GG.swingShot(pool, rs({}), Object.assign({ still: true, type: t }, o || {})).rep;
+const r0 = stR(m3Pools['7i'], 'normal'), rD = stR(m3Pools['7i'], 'draw'), rF = stR(m3Pools['7i'], 'fade');
+ok(rD.curve < r0.curve - 5 && rD.start > r0.start + 2 && rF.curve > r0.curve + 5 && rF.start < r0.start - 2 && rD.type === 'draw' && Math.abs(rD.plan.path - GG.shapeSetup(-0.06, '7i').path) < 1e-9,
+  `a perfect swing set up for a draw starts ${(rD.start - r0.start).toFixed(1)}° further right and curves ${(r0.curve - rD.curve).toFixed(1)} yds further left than his normal one`);
+// Committed to a shape, his miss the other way is halved: over 400 swings, a fade finishes
+// right of where his normal shot does, and a draw left, as he planned.
+const sideAvg = (t) => { const r = FL.rng(7); let sum = 0; for (let i = 0; i < 400; i++) sum += GG.swingShot(m3Pools['7i'], s31, { rnd: r, type: t }).rep.side; return sum / 400; };
+const sN = sideAvg('normal'), sFd = sideAvg('fade'), sDr = sideAvg('draw');
+ok(sFd > sN + 0.2 && sDr < sN - 0.2, `the one-way miss: on average a fade finishes ${(sFd - sN).toFixed(1)} yds right of his normal shot, a draw ${(sN - sDr).toFixed(1)} left`);
+const rSp = GG.swingShot(m3Pools.PW, rs({}), { still: true, type: 'spinner', lie: 'fairway' });
+ok(rSp.rep.spun && rSp.shot.total_yds < rSp.shot.carry_yds, 'a pure wedge set up to spin, spins back');
+// Did it come off?
+eq([GG.shotVerdict({ type: 'draw', curve: -8, carry: 150, hand: 'R' }).ok, GG.shotVerdict({ type: 'draw', curve: 6, carry: 150, hand: 'R' }).text, GG.shotVerdict({ type: 'draw', curve: 8, carry: 150, hand: 'L' }).ok, GG.shotVerdict({ type: 'fade', curve: -6, carry: 150, hand: 'R' }).text],
+  [true, 'It didn’t draw: the face was open to the path.', true, 'It didn’t fade: the face was shut to the path.'], 'a draw that drew, one that faded instead, a left-hander’s draw, a fade that drew');
+eq([GG.shotVerdict({ type: 'spinner', spun: true }).ok, GG.shotVerdict({ type: 'spinner', spun: false, lie: 'rough' }).text, GG.shotVerdict({ type: 'flop', mis: 'thin' }).text, GG.shotVerdict({ type: 'flop', mis: 'fat' }).text, GG.shotVerdict({ type: 'chip', mis: 'shank' }).text, GG.shotVerdict({ type: 'normal' }), GG.shotVerdict({ type: 'punch' })],
+  [true, 'From the rough you can’t spin it: it came out hot and ran.', 'Skulled the flop: it shot across the green.', 'Chunked the flop: it barely moved.', 'A mis-hit, so the chip never had a chance.', null, null], 'spun back, the flier from the rough, the flop’s two mis-hits, and nothing to say for a normal shot');
+// The words for his hand: a left-hander's draw starts left and curves right.
+ok(/starts right/.test(GG.shotSay('draw', 'R')) && /starts left/.test(GG.shotSay('draw', 'L')) && /out to the left/.test(GG.shotSay('draw', 'L')) && GG.shotSay('flop', 'L') === GG.SHOTS.flop.say, 'the words swap sides for a left-hander, only where they name one');
+
+}
+
+section('Game: which shot to play (thinking like a golfer)');
+{
+const full = ['normal', 'draw', 'fade', 'high', 'low'], none = { left: { pen: 0, all: 0, what: '' }, right: { pen: 0, all: 0, what: '' } };
+const sg = (o) => GG.suggestShot(Object.assign({ lie: 'fairway', d: 300, toGreen: 280, room: 15, reach: 180, club: 'Driver', hand: 'R', types: full, beside: none, bend: 0 }, o));
+const side = (L, R) => ({ left: Object.assign({ pen: 0, all: 0, what: '' }, L), right: Object.assign({ pen: 0, all: 0, what: '' }, R) });
+eq([sg({ types: ['splash', 'normal'] }).type, sg({ types: ['punch', 'draw', 'fade'] }).type, sg({ treesLow: true }).type, sg({ treesHigh: true }).type], ['splash', 'punch', 'low', 'high'], 'splash out, punch out, under trees in the way or over them');
+const near = { types: ['pitch', 'chip', 'flop'], d: 25, reach: 70, club: 'SW' };
+eq([sg(Object.assign({ overSand: true, room: 3 }, near)).type, sg(Object.assign({ overSand: true, room: 7 }, near)).type, sg(Object.assign({ toGreen: 6, room: 15, chipClub: '8i' }, near)).type, sg(Object.assign({ toGreen: 6, room: 15, chipClub: null }, near)).type, sg(Object.assign({ overSand: true, room: 14, toGreen: 12 }, near)).type, sg(Object.assign({ toGreen: 6, room: 4, chipClub: '9i' }, near)).type],
+  ['flop', 'pitch', 'chip', 'pitch', 'pitch', 'pitch'], 'round the green: flop only to a pin tucked right over the sand, chip when a club lands it on the green, otherwise pitch');
+// The chip club: the least lofted that still lands it a yard and a half on, as a golfer picks it.
+eq([GG.chipClub(m3Pools, 25, 4), GG.chipClub(m3Pools, 25, 7), GG.chipClub(m3Pools, 25, 8), GG.chipClub(m3Pools, 30, 15), GG.chipClub(m3Pools, 20, 18)], ['6i', '9i', 'PW', 'SW', null], 'chip with a 6 iron from just off, more loft from further off, and not at all from 18 yds off a 20-yd shot');
+eq(['SW', 'PW', '8i', '6i'].map((c) => Math.round(GG.chipRun(c) * 10) / 10), [0.4, 1.3, 2, 2.6], 'how far a chip rolls for each yard it carries: about the chipping ratios golfers learn');
+ok(['6i', '7i', '8i', '9i', 'PW', 'SW'].map((c) => GG.chipShare(m3Pools[c])).every((v, i, a) => !i || v > a[i - 1]), 'the more loft, the more of a chip is carry');
+eq([GG.clubForShot('chip', m3Pools, 'SW', { d: 25, toGreen: 7 }), GG.clubForShot('chip', m3Pools, 'SW', { d: 20, toGreen: 18 })], ['9i', '8i'], 'tapping Chip switches to the club that lands it on the green');
+// A chip's stroke: his biggest goes about 50 yds with any club, so 20 yds is a real stroke.
+ok(['6i', '8i', 'PW'].every((c) => Math.abs(GG.strokeFor(m3Pools[c], 20, 'fairway', 'chip') - 0.4) < 0.01) && GG.strokeFor(m3Pools['8i'], 20, 'fairway') < 0.2, 'a 20-yd chip is a 40% stroke with any club (with a normal swing it would be a twitch)');
+const chipSh = GG.swingShot(m3Pools['8i'], rs({ depth: 0.4, back: 0.5, down: 0.25 }), { still: true, type: 'chip' }).shot;
+ok(Math.abs(chipSh.total_yds - 20) < 2 && Math.abs(chipSh.total_yds / chipSh.carry_yds - 1 - GG.chipRun('8i')) < 0.01, `a 40% chip stroke with an 8 iron: ${chipSh.carry_yds.toFixed(1)} carry, ${chipSh.total_yds.toFixed(1)} total`);
+const water = side({ pen: 6, all: 6, what: 'water' }, {}), ob = side({}, { pen: 4, all: 4, what: 'ob' });
+eq([sg({ beside: water }).type, sg({ beside: water, hand: 'L' }).type, sg({ beside: ob }).type, sg({ beside: water }).why], ['fade', 'draw', 'draw', 'water on the left: curve it away from it'],
+  'curve it away from water or out of bounds: a fade for a right-hander, a draw for a left-hander');
+eq([sg({ bend: -1 }).type, sg({ bend: 1 }).type, sg({ bend: -1, hand: 'L' }).type, sg({ bend: -1, beside: side({}, { pen: 5, all: 5, what: 'water' }) }).type, sg({ bend: -1, beside: water }).type],
+  ['draw', 'fade', 'fade', 'draw', 'fade'], 'round the corner, unless that curves it toward water');
+eq([sg({ beside: side({}, { all: 4, what: 'trees' }) }).type, sg({ beside: side({ all: 3 }, { all: 4, what: 'trees' }) }).type, sg({ beside: side({}, { all: 4, what: 'trees' }) }).why],
+  ['draw', 'normal', 'trees down the right: curve it away from them'], 'away from trees when one side is clearly worse; trees down both sides, just hit it');
+const appr = { d: 110, reach: 120, club: 'PW', types: full.concat('spinner') };
+eq([sg(Object.assign({ overSand: true, room: 9 }, appr)).type, sg(Object.assign({ room: 5 }, appr)).type, sg(Object.assign({ room: 20, bend: -1 }, appr)).type, sg(Object.assign({ overSand: true, room: 9 }, appr, { d: 300, reach: 180, club: 'Driver' })).type],
+  ['high', 'spinner', 'normal', 'normal'], 'approaches: high over a bunker to a tucked pin, a spinner to a tight one; no shaping a wedge; the pin out of reach, no high shot for a bunker by it');
+eq(GG.suggestShot({ lie: 'green', d: 5, toGreen: 0 }), null, 'no suggestion on the green');
+// The trouble on the real course, either side of his drive.
+const besideOf = (n, club) => { const H = GG.buildHole(HP, n, 'white'), pin = GG.pinFor(H, 9), b = { x: H.start.x, z: H.start.z, lie: 'tee' }, tg = GG.aimFor(H, b, pin, m3Pools[club].full, m3Pools[club].landing); return GG.worseSide(GG.troubleBeside(H, b, tg)); };
+eq([besideOf(12, 'Driver'), besideOf(17, '3w')], [{ side: -1, pen: true, what: 'ob' }, { side: -1, pen: true, what: 'water' }], 'out of bounds down the left of the 12th, Lake Merced left of the 17th');
+eq([GG.worseSide(side({ pen: 5 }, { pen: 4 })), GG.worseSide(side({ pen: 1 }, {})), GG.worseSide(side({ all: 2.4 }, {}))], [null, null, null], 'trouble on both sides, or not much of it: no side is worse');
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
