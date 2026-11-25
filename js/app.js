@@ -1912,6 +1912,8 @@
   const GM_GUESS = { Driver: 200, '3w': 180, '5w': 170, '7w': 160, '3hy': 170, '4hy': 160, '5hy': 150, '6hy': 140, '3i': 165, '4i': 155, '5i': 145, '6i': 135, '7i': 125, '8i': 115, '9i': 105, PW: 95, GW: 85, SW: 72, LW: 58 };
   const GM_CLUB_RE = /^(Driver|[2-9]w|[2-7]hy|[2-9]i|PW|GW|SW|LW)$/;
   const GM_HOLES = { all: '18 holes', front: 'Front 9', back: 'Back 9' };
+  // The course maps are OpenStreetMap's (ODbL), which asks for this wherever they're shown.
+  const GM_MAP_CREDIT = '<p class="gm-src">Course map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a></p>';
   const GM_FROM = { rough: 'from the rough', bunker: 'from the sand', trees: 'punched out from under the trees' };
   const GM_WHERE = { fairway: 'In the fairway', rough: 'In the rough', bunker: 'In a bunker', trees: 'Under the trees', green: 'On the green', fringe: 'On the fringe', tee: 'On the tee' };
   let gm = null;
@@ -1972,7 +1974,8 @@
             : `Your clubs: ${esc(clubs.join(', '))}. Each plays your real shots with it. A club with no range shots yet can still be played from the range.`}</p></div>
         ${live ? '' : `<label class="gm-check"><input type="checkbox" data-change="gm-easy"${set.easy ? ' checked' : ''}> Easy meter: slower, with a bigger window</label>`}
         <div class="row-actions"><button class="btn block" data-action="gm-start">${icon('flag')}<span>Tee off</span></button></div>
-        <p class="gm-src">Pars and yardages come from the course scorecard. The holes are drawn from course guides, so they’re close to the real ones but not exact. The most a hole can cost is double par.</p>
+        <p class="gm-src">Pars and yardages come from the course scorecard, and the holes from OpenStreetMap’s map of the course: its fairways, greens, tee boxes and bunkers, Lake Merced and the boundary. The trees are placed between the holes. The most a hole can cost is double par.</p>
+        ${GM_MAP_CREDIT}
       </div>
       ${gmHistoryHtml(st, course)}`;
   }
@@ -2005,6 +2008,7 @@
           <button type="button" class="btn small ghost" data-action="gm-quit">End round</button>
         </div>
         <div class="gm-scorecard"${ui.game.card ? '' : ' hidden'}>${ui.game.card ? gmScorecardHtml(round) : ''}</div>
+        ${GM_MAP_CREDIT}
       </div>`;
   }
   function gmScorecardHtml(round) {
@@ -2087,9 +2091,12 @@
     const byGuess = list.slice().sort((a, b) => (GM_GUESS[a] || 0) - (GM_GUESS[b] || 0));
     return byGuess.find((x) => (GM_GUESS[x] || 0) * (GM.LIE[gmLie()] || GM.LIE.fairway).dist >= d - 3) || byGuess[byGuess.length - 1] || null;
   }
+  // His aim, or the default for this club from this spot (worked out once for each).
   function gmAimPoint() {
     if (gm.aim) return gm.aim;
-    return GM.aimFor(gm.H, gm.ball, gm.pin, gmReach(gm.club));
+    const k = gm.club + '@' + gm.ball.x.toFixed(2) + ',' + gm.ball.z.toFixed(2);
+    if (gm.autoKey !== k) Object.assign(gm, { autoKey: k, autoAim: GM.aimFor(gm.H, gm.ball, gm.pin, gmReach(gm.club)) });
+    return gm.autoAim;
   }
   // A new spot for the ball (a new hole, or after a shot): pick the club and the view.
   function gmNewSpot() {
@@ -2478,6 +2485,8 @@
     if (!(carry > 0)) { toast('Type the carry from the range screen'); const f = $('#gmCarry'); if (f) f.focus(); return; }
     if (off && !ui.game.dir) { toast('Tap Left or Right for the offline number'); return; }
     if (total != null && !(total > 0)) { toast('The total should be a number of yards'); return; }
+    // The same limits the data check uses: anything longer is a typo.
+    if (carry > 400 || (total != null && total > 450) || (off != null && Math.abs(off) > 700)) { toast('That looks too long. Check the number on the screen.'); return; }
     const shot = { club: gm.club, carry_yds: carry, total_yds: total, offline_ft: off ? (ui.game.dir === 'L' ? -Math.abs(off) : Math.abs(off)) : 0, curve_ft: null,
       ball_speed_mph: null, launch_deg: null, apex_ft: null, landing_deg: null, hang_time_s: null };
     ui.game.dir = null;
@@ -2663,7 +2672,12 @@
     gmStore(st);
     Object.assign(ui.game, { setup: false, card: false, dir: null });
     renderGame();
-    window.scrollTo(0, 0);
+    gmScrollTop();
+  }
+  // Bring the hole's title and map into view (they sit below the header and goals).
+  function gmScrollTop() {
+    const top = $('.gm-top') || $('#view-game');
+    if (top) top.scrollIntoView({ block: 'start' });
   }
   function gmEndRound() {
     const st = gm ? gm.st : gmState(), r = gmRound(st);
@@ -3185,7 +3199,7 @@
       renderGame();
     },
     'gm-start'() { gmStartRound(); },
-    'gm-continue'() { ui.game.setup = false; renderGame(); window.scrollTo(0, 0); },
+    'gm-continue'() { ui.game.setup = false; renderGame(); gmScrollTop(); },
     'gm-new'() { ui.game.setup = true; gmStop(); renderGame(); window.scrollTo(0, 0); },
     'gm-quit'() { gmEndRound(); },
     'gm-card'(b) {
@@ -3232,8 +3246,7 @@
       gmStore(gm.st);
       ui.game.card = false;
       renderGame();
-      const top = $('.gm-top') || $('#view-game');
-      if (top) top.scrollIntoView({ block: 'start' });
+      gmScrollTop();
     },
     'gm-pickup'() {
       if (!gm || gm.busy || gm.card.done) return;

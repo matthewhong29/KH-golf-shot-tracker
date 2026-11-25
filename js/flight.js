@@ -669,8 +669,8 @@
   }
 
   var HCOL = {
-    water: '#4b97cf', waterEdge: '#d9ecf5', penalty: '#7d9450', redStake: '#d6332a', ob: '#719c5d', whiteStake: '#ffffff',
-    treeGround: '#3e783b', hollow: '#4a883d', cup: '#111a15', markers: { 100: '#d6332a', 150: '#ffffff', 200: '#2f6fd6' }
+    water: '#4b97cf', waterEdge: '#d9ecf5', redStake: '#d6332a', ob: '#7f9a6c', whiteStake: '#ffffff', range: '#6c9f58',
+    path: 'rgba(226,223,208,0.9)', cup: '#111a15', markers: { 100: '#d6332a', 150: '#ffffff', 200: '#2f6fd6' }
   };
   function post(ctx, cam, x, z, color, top) {
     var b = project(cam, x, 0, z), t = project(cam, x, top || 1.1, z);
@@ -706,44 +706,88 @@
     ctx.closePath();
     ctx.fill();
   }
-  // Everything on a hole that doesn't move. H is a hole from GolfGame.buildHole; pin is
-  // { x, z }. opts.near: leave out trees closer to the camera than this (yds), so a view
-  // from behind the ball isn't blocked by the tree it's under.
+  // Mowing stripes across a fairway, clipped to it (its outline must be the current path).
+  // o.axis is the fairway's long direction, as a heading.
+  function stripes(ctx, cam, o) {
+    var sa = Math.sin(o.axis), ca = Math.cos(o.axis), s0 = Infinity, s1 = -Infinity, t0 = Infinity, t1 = -Infinity;
+    o.poly.forEach(function (p) {
+      var s = p[0] * sa + p[1] * ca, t = p[0] * ca - p[1] * sa;
+      s0 = Math.min(s0, s); s1 = Math.max(s1, s); t0 = Math.min(t0, t); t1 = Math.max(t1, t);
+    });
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = COL.stripe;
+    for (var s = s0 + 8; s < s1; s += 28) {
+      var q = [[s, t0 - 2], [s + 14, t0 - 2], [s + 14, t1 + 2], [s, t1 + 2]].map(function (st) { return [st[0] * sa + st[1] * ca, st[0] * ca - st[1] * sa]; });
+      if (groundPath(ctx, cam, q)) ctx.fill();
+    }
+    ctx.restore();
+  }
+  // Cart paths: thin pale lines on the ground.
+  function cartPaths(ctx, cam, list) {
+    var top = cam.pitch < -60 * DEG;
+    ctx.strokeStyle = HCOL.path;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = top ? clamp(1.8 * cam.F / Math.max(1, cam.y), 1, 6) : 1.5;
+    list.forEach(function (pl) {
+      var on = false;
+      ctx.beginPath();
+      for (var i = 0; i < pl.length; i++) {
+        var q = project(cam, pl[i][0], 0, pl[i][1]);
+        if (!q) { on = false; continue; }
+        if (on) ctx.lineTo(q.x, q.y); else { ctx.moveTo(q.x, q.y); on = true; }
+      }
+      ctx.stroke();
+    });
+  }
+  // Everything on a hole that doesn't move, on the course's ground (H.ground, from
+  // GolfGame.buildHole): out of bounds and Lake Merced beyond the boundary; the rough,
+  // practice ground, fairways (mowed in stripes), tee boxes, greens, bunkers and cart
+  // paths; the yardage markers and the stakes along the boundary (white for out of
+  // bounds, red by the lake); then the trees and the flag, farthest first. pin is { x, z }.
+  // opts.near: leave out trees closer to the camera than this (yds), so a view from behind
+  // the ball isn't blocked by the tree it's under.
   function drawHole(ctx, cam, H, pin, opts) {
     opts = opts || {};
-    var w = cam.w, h = cam.h, hy = horizonY(cam), g0 = Math.max(0, hy);
-    if (g0 < h) {
+    var G = H.ground, w = cam.w, h = cam.h, hy = horizonY(cam), g0 = Math.max(0, hy);
+    if (g0 < h) { ctx.fillStyle = HCOL.ob; ctx.fillRect(0, g0, w, h - g0); }
+    if (hy > 0) drawSky(ctx, cam, H, hy);
+    if (groundPath(ctx, cam, G.lake)) {
+      ctx.fillStyle = HCOL.water;
+      ctx.fill();
+      ctx.strokeStyle = HCOL.waterEdge;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    if (groundPath(ctx, cam, G.boundary)) {
       var gr = ctx.createLinearGradient(0, g0, 0, h);
       gr.addColorStop(0, hy > 0 ? COL.roughFar : COL.rough);
       gr.addColorStop(0.35, COL.rough);
       ctx.fillStyle = gr;
-      ctx.fillRect(0, g0, w, h - g0);
-    }
-    if (hy > 0) drawSky(ctx, cam, H, hy);
-    H.treeZones.forEach(function (p) { fillGround(ctx, cam, p, HCOL.treeGround); });
-    H.ob.forEach(function (o) { fillGround(ctx, cam, o.poly, HCOL.ob); });
-    H.water.forEach(function (o) {
-      if (!groundPath(ctx, cam, o.poly)) return;
-      ctx.fillStyle = o.kind === 'penalty' ? HCOL.penalty : HCOL.water;
       ctx.fill();
-      if (o.kind !== 'penalty') { ctx.strokeStyle = HCOL.waterEdge; ctx.lineWidth = 1.5; ctx.stroke(); }
-    });
-    H.tees.forEach(function (t) { fillGround(ctx, cam, t.poly, COL.tee); });
-    if (H.fairway) {
-      fillGround(ctx, cam, H.fairway, COL.fairway);
-      H.stripes.forEach(function (p) { fillGround(ctx, cam, p, COL.stripe); });
     }
-    H.hollows.forEach(function (b) { fillGround(ctx, cam, b.poly, HCOL.hollow); });
+    G.ranges.forEach(function (o) { fillGround(ctx, cam, o.poly, HCOL.range); });
+    G.fairways.forEach(function (o) {
+      if (!groundPath(ctx, cam, o.poly)) return;
+      ctx.fillStyle = COL.fairway;
+      ctx.fill();
+      stripes(ctx, cam, o);
+    });
+    G.tees.forEach(function (o) { fillGround(ctx, cam, o.poly, COL.tee); });
+    if (H.teeBoxDrawn) fillGround(ctx, cam, H.teeBox, COL.tee);
+    G.greens.forEach(function (o, i) { if (i !== H.green.index) fillGround(ctx, cam, o.poly, COL.green); });
     fillGround(ctx, cam, H.green.fringePoly, COL.fringe);
     fillGround(ctx, cam, H.green.poly, COL.green);
-    H.bunkers.forEach(function (b) {
-      if (!groundPath(ctx, cam, b.poly)) return;
+    G.bunkers.forEach(function (o) {
+      if (!groundPath(ctx, cam, o.poly)) return;
       ctx.fillStyle = COL.sand;
       ctx.fill();
       ctx.strokeStyle = COL.sandEdge;
       ctx.lineWidth = 1.5;
       ctx.stroke();
     });
+    cartPaths(ctx, cam, G.paths);
     H.markers.forEach(function (m) {
       var q = project(cam, m.x, 0, m.z);
       if (!q) return;
@@ -755,11 +799,14 @@
       ctx.fill();
       ctx.stroke();
     });
-    H.water.forEach(function (o) { if (o.kind === 'penalty') o.stakes.forEach(function (s) { post(ctx, cam, s[0], s[1], HCOL.redStake); }); });
-    H.ob.forEach(function (o) { o.stakes.forEach(function (s) { post(ctx, cam, s[0], s[1], HCOL.whiteStake); }); });
+    G.obStakes.forEach(function (s) { post(ctx, cam, s[0], s[1], HCOL.whiteStake); });
+    G.lakeStakes.forEach(function (s) { post(ctx, cam, s[0], s[1], HCOL.redStake); });
     var near = opts.near || 0;
-    var things = H.trees.map(function (t) { return { t: t, q: project(cam, t.x, 0, t.z) }; })
-      .filter(function (o) { return o.q && o.q.z >= near && o.q.x > -80 && o.q.x < w + 80 && o.q.y > -80; });
+    var things = [];
+    G.trees.forEach(function (t) {
+      var q = project(cam, t.x, 0, t.z);
+      if (q && q.z >= near && q.x > -100 && q.x < w + 100 && q.y > -100 && q.y < h + 400) things.push({ t: t, q: q });
+    });
     if (pin) { var fq = project(cam, pin.x, 0, pin.z); if (fq) things.push({ flag: true, q: fq }); }
     things.sort(function (a, b) { return b.q.z - a.q.z; });
     things.forEach(function (o) { if (o.flag) flagAt(ctx, cam, pin.x, pin.z); else drawTree(ctx, cam, o.t, o.q); });

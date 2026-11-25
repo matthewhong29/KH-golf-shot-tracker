@@ -702,28 +702,71 @@ ok(HP.holes.every((h) => h.yds.blue >= h.yds.white), 'every Blue tee is behind t
 ok(HP.sources.length >= 2 && HP.sources.every((s) => /^https:\/\//.test(s.url) && s.title), 'sources listed');
 ok(HP.holes.every((h) => h.note && h.note.length <= 140), 'every hole has a short note');
 
-section('Game: the holes on the ground');
-let badLen = 0, badTee = 0, badGreen = 0, badPin = 0, badBunker = 0;
+section('Game: the holes on the ground (OpenStreetMap)');
+const MAP = HP.map;
+ok(MAP && MAP.boundary.length > 20 && MAP.greens.length > 18 && MAP.trees.length > 500, 'the course map is loaded: the boundary, the golf features and the trees');
+const offCard = [];
+let badTee = 0, badGreen = 0, badPin = 0;
 HP.holes.forEach((h) => HP.tees.forEach((t) => {
   const H = GG.buildHole(HP, h.n, t.id), st = GG.toHole(H, H.start.x, H.start.z), pin = GG.pinFor(H, 99);
-  if (Math.abs(st.g - h.yds[t.id]) > 0.5 || Math.abs(st.lat) > 0.01) badLen++;
-  H.tees.forEach((tb) => { if (GG.lieAt(H, tb.x, tb.z) !== 'fairway') badTee++; });
+  if (Math.abs(st.g - h.yds[t.id]) > 12) offCard.push(`${h.n} ${t.id}: ${Math.round(st.g)}`);
+  if (GG.lieAt(H, H.start.x, H.start.z) !== 'fairway') badTee++;
   if (GG.lieAt(H, H.green.x, H.green.z) !== 'green') badGreen++;
   if (GG.lieAt(H, pin.x, pin.z) !== 'green') badPin++;
-  H.bunkers.forEach((b) => { if (GG.lieAt(H, b.x, b.z) !== 'bunker') badBunker++; });
 }));
-eq([badLen, badTee, badGreen, badPin, badBunker], [0, 0, 0, 0, 0], 'from each tee the line of play measures the scorecard yardage; tees, green, pin and bunkers lie right');
-function spotLie(n, g, lat) { const H = GG.buildHole(HP, n, 'white'), q = H.spot(g, lat); return GG.lieAt(H, q.x, q.z); }
-eq([14, 15, 16, 17, 18].map((n) => spotLie(n, n === 15 ? 300 : 120, -90)), ['water', 'water', 'water', 'water', 'water'], 'Lake Merced down the left of 14–18');
-eq([14, 16, 17].map((n) => spotLie(n, 120, 25)), ['rough', 'rough', 'rough'], '…and not on the right');
-eq(spotLie(18, 380, 0), 'water', '18: the tee shot carries the water');
-eq([spotLie(12, 250, -45), spotLie(12, 250, -30), spotLie(11, -40, 0)], ['ob', 'rough', 'ob'], 'out of bounds left of 12 and over the 11th green');
-eq(spotLie(2, 200, -60), 'penalty', '2: penalty area on the left');
-eq([spotLie(1, 200, 0), spotLie(1, 200, 25), spotLie(1, 200, -60), spotLie(1, 200, 40)], ['fairway', 'rough', 'trees', 'trees'], '1: fairway, rough, then the trees');
-eq(spotLie(7, 2, -21), 'rough', '7: the grassy hollow plays as rough');
-const H4 = GG.buildHole(HP, 4, 'blue'), H13 = GG.buildHole(HP, 13, 'blue');
-ok(H4.green.x < -60 && H13.green.x > 25, 'doglegs: 4 bends left, 13 bends right');
-eq(JSON.stringify(GG.buildHole(HP, 15, 'white').trees.slice(0, 5)), JSON.stringify(GG.buildHole(HP, 15, 'white').trees.slice(0, 5)), 'a hole is the same every time');
+eq([offCard, badTee, badGreen, badPin], [[], 0, 0, 0], 'every tee is within 12 yds of its scorecard yardage along the line of play and stands on a tee box; every green and pin is on its green');
+const usedGreens = new Set();
+let sharedGreens = 0;
+HP.holes.forEach((h) => { const gi = MAP.holes[h.n].green; if (gi != null) { if (usedGreens.has(gi)) sharedGreens++; usedGreens.add(gi); } });
+eq([sharedGreens, MAP.holes[9].green, !!MAP.holes[18].built, GG.buildHole(HP, 9, 'white').green.standIn], [0, null, true, true], 'each hole has its own green; the 9th green (not mapped) stands in, and the 18th’s line (not mapped) is built');
+let lakeEdges = 0, obEdges = 0, wrongSide = 0;
+const H1w = GG.buildHole(HP, 1, 'white'), t1w = GG.toHole(H1w, H1w.start.x, H1w.start.z);
+MAP.boundary.forEach((a, i) => {
+  const b = MAP.boundary[(i + 1) % MAP.boundary.length], mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2, len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  let nx = (b[1] - a[1]) / len, nz = -(b[0] - a[0]) / len;
+  if (GG.inPoly(MAP.boundary, mx + nx * 3, mz + nz * 3)) { nx = -nx; nz = -nz; }
+  const lake = MAP.lakeFrom > MAP.lakeTo ? i >= MAP.lakeFrom || i < MAP.lakeTo : i >= MAP.lakeFrom && i < MAP.lakeTo;
+  const lie = GG.lieAt(H1w, mx + nx * 20, mz + nz * 20);
+  if (lie !== (lake ? 'water' : 'ob')) wrongSide++;
+  if (lake) lakeEdges++; else obEdges++;
+});
+ok(wrongSide === 0 && lakeEdges > 10 && obEdges > 10, 'beyond the boundary: Lake Merced along the lake shore, out of bounds everywhere else');
+// The nearest water (or out of bounds) left and right of a hole's line of play, from the tee to the green.
+function sideOf(n, kind) {
+  const H = GG.buildHole(HP, n, 'white'), t = GG.toHole(H, H.start.x, H.start.z);
+  let l = Infinity, r = Infinity;
+  for (let s = t.s + 20; s <= H.L; s += 8) {
+    const p = H.at(s);
+    for (let d = 6; d <= 90; d += 3) {
+      if (GG.lieAt(H, p.x - Math.cos(p.h) * d, p.z + Math.sin(p.h) * d) === kind) l = Math.min(l, d);
+      if (GG.lieAt(H, p.x + Math.cos(p.h) * d, p.z - Math.sin(p.h) * d) === kind) r = Math.min(r, d);
+    }
+  }
+  return [l, r];
+}
+eq([14, 15, 16, 17].map((n) => { const s = sideOf(n, 'water'); return s[0] < 80 && s[1] === Infinity; }), [true, true, true, true], 'Lake Merced down the left of 14–17, and not the right');
+ok(sideOf(12, 'ob')[0] < 20 && sideOf(1, 'ob')[0] === Infinity, 'out of bounds all down the left of 12 (none near the 1st)');
+const H18w = GG.buildHole(HP, 18, 'white'), t18 = GG.toHole(H18w, H18w.start.x, H18w.start.z);
+let inlet = 0;
+for (let s = t18.s; s < t18.s + 200; s += 4) { const p = H18w.at(s); if (GG.lieAt(H18w, p.x, p.z) === 'water') inlet++; }
+ok(inlet > 15, '18: the line of play carries the inlet of Lake Merced');
+function bendOf(n) {
+  const H = GG.buildHole(HP, n, 'blue'), t = GG.toHole(H, H.start.x, H.start.z);
+  let d = (H.at(H.L - 10).h - H.at(t.s + 20).h) * 180 / Math.PI;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+eq([[4, 15, 18].every((n) => bendOf(n) < -25), [7, 16].every((n) => bendOf(n) > 15), Math.abs(bendOf(14)) < 8], [true, true, true], 'doglegs left on 4, 15 and 18; 7 and 16 bend right; 14 is straight');
+eq([110, 150, 200, 250].map((d) => { const p = H1w.at(t1w.s + d); return GG.lieAt(H1w, p.x, p.z); }), ['fairway', 'fairway', 'fairway', 'fairway'], 'the 1st fairway, 110 to 250 yds from the White tee');
+const H2w = GG.buildHole(HP, 2, 'white'), t2w = GG.toHole(H2w, H2w.start.x, H2w.start.z);
+const fwBunkers = H2w.ground.bunkers.map((b) => GG.centroidOf(b.poly)).map((c) => GG.toHole(H2w, c.x, c.z)).filter((q) => Math.abs(q.lat) < 45 && q.s - t2w.s > 60 && q.g > 40);
+ok(fwBunkers.length >= 3 && fwBunkers.every((q) => q.lat < 0), 'the 2nd’s fairway bunkers are all down the left');
+ok(MAP.trees.every((t) => GG.lieAt(H1w, t[0], t[1]) === 'trees'), 'every tree stands in the rough: off the fairways, greens, tee boxes and bunkers');
+const g2 = H2w.green;
+eq(GG.lieAt(H1w, g2.x, g2.z), 'fairway', 'another hole’s green plays as fairway');
+const H4 = GG.buildHole(HP, 4, 'blue');
+eq(JSON.stringify(GG.buildHole(HP, 15, 'white').start), JSON.stringify(GG.buildHole(HP, 15, 'white').start), 'a hole is the same every time');
 ok(GG.pinFor(H4, 1).x !== GG.pinFor(H4, 2).x, 'the pin moves from round to round');
 
 section('Game: his own shots');
@@ -764,31 +807,39 @@ eq([GG.adjustShot(drv, 1, 'tee').carry_yds, Math.round(GG.adjustShot(drv, 1, 'fa
 eq(base.carry_yds, 120, 'the real shot is left as it was');
 
 section('Game: a shot on the hole');
-const H1 = GG.buildHole(HP, 1, 'white'), pin1 = GG.pinFor(H1, 3);
-const tee1 = { x: H1.start.x, z: H1.start.z, lie: 'tee' }, down1 = H1.spot(H1.yds - 200, 0);
+const H1 = H1w, pin1 = GG.pinFor(H1, 3), tee1 = { x: H1.start.x, z: H1.start.z, lie: 'tee' }, down1 = H1.at(t1w.s + 175);
+const aimHd = GG.headingTo(tee1, down1), across = (p) => (p.x - tee1.x) * Math.cos(aimHd) - (p.z - tee1.z) * Math.sin(aimHd);
 const straight = GG.playShot(H1, tee1, down1, { club: '7i', carry_yds: 150, total_yds: 160, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
-eq([straight.result, straight.lie, Math.round(straight.carry), Math.round(GG.dist(tee1, straight.rest)), Math.round(GG.toHole(H1, straight.rest.x, straight.rest.z).lat * 10) / 10],
-  ['ok', 'fairway', 150, 160, 0], 'straight down the fairway: lands at its carry and finishes at its total');
+eq([straight.result, straight.lie, Math.round(straight.carry), Math.round(GG.dist(tee1, straight.rest)), Math.abs(across(straight.rest)) < 0.01],
+  ['ok', 'fairway', 150, 160, true], 'straight down the 1st fairway: lands at its carry and finishes at its total, on the aim line');
 eq(straight.next, { x: straight.rest.x, z: straight.rest.z, lie: 'fairway' }, 'the next shot is from where it stopped');
 const right = GG.playShot(H1, tee1, down1, { club: '7i', carry_yds: 150, total_yds: 160, offline_ft: 30, curve_ft: 20 }, { pin: pin1, rnd: FL.rng(1) });
-ok(Math.abs(GG.toHole(H1, right.rest.x, right.rest.z).lat - 10) < 0.5, 'offline 30 ft: finishes 10 yds right of the aim line');
-const rollRough = GG.playShot(H1, tee1, H1.spot(H1.yds - 200, 30), { club: '7i', carry_yds: 150, total_yds: 170, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
-ok(rollRough.lie === 'rough' && GG.dist(rollRough.land, rollRough.rest) < 11, 'landing in the rough cuts the roll');
-const H14 = GG.buildHole(HP, 14, 'white'), tee14 = { x: H14.start.x, z: H14.start.z, lie: 'tee' };
-const wet = GG.playShot(H14, tee14, H14.spot(H14.yds - 150, -110), { club: '7i', carry_yds: 150, total_yds: 160, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H14, 3), rnd: FL.rng(1) });
-ok(wet.result === 'water' && wet.penalty === 1 && !/water/.test(wet.next.lie) && GG.dist(tee14, wet.next) < GG.dist(tee14, wet.land), 'into Lake Merced: a penalty stroke, and a drop where it went in');
+ok(Math.abs(across(right.rest) - 10) < 0.5, 'offline 30 ft: finishes 10 yds right of the aim line');
+let wideAim = null;
+for (let lat = 20; lat <= 34 && !wideAim; lat += 1) {
+  const p = H1.at(t1w.s + 175), q = FL.offsetPoint(p.x, p.z, p.h, 0, lat), land = FL.offsetPoint(tee1.x, tee1.z, GG.headingTo(tee1, q), 150, 0);
+  if (GG.lieAt(H1, land.x, land.z) === 'rough') wideAim = q;
+}
+const rollRough = GG.playShot(H1, tee1, wideAim, { club: '7i', carry_yds: 150, total_yds: 170, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
+ok(GG.lieAt(H1, rollRough.land.x, rollRough.land.z) === 'rough' && GG.dist(rollRough.land, rollRough.rest) < 11, 'landing in the rough cuts the roll');
+const H17 = GG.buildHole(HP, 17, 'white'), tee17 = { x: H17.start.x, z: H17.start.z, lie: 'tee' };
+const wet = GG.playShot(H17, tee17, H17.spot(20, -70), { club: '7i', carry_yds: 150, total_yds: 158, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H17, 3), rnd: FL.rng(1) });
+ok(wet.result === 'water' && wet.penalty === 1 && !/water|ob/.test(wet.next.lie) && GG.dist(tee17, wet.next) < GG.dist(tee17, wet.land), 'into Lake Merced on 17: a penalty stroke, and a drop where it went in');
 const H12 = GG.buildHole(HP, 12, 'white'), tee12 = { x: H12.start.x, z: H12.start.z, lie: 'tee' };
-const ob = GG.playShot(H12, tee12, H12.spot(H12.yds - 140, -70), { club: '7i', carry_yds: 150, total_yds: 155, apex_ft: 160, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H12, 3), rnd: FL.rng(1) });
-eq([ob.result, ob.penalty, ob.next], ['ob', 1, tee12], 'out of bounds: a penalty stroke and hit again from the same spot');
-const H3 = GG.buildHole(HP, 3, 'white'), tree3 = H3.trees.find((t) => GG.dist(H3.start, t) > 40 && GG.dist(H3.start, t) < 90);
-const low = GG.playShot(H3, { x: H3.start.x, z: H3.start.z, lie: 'tee' }, tree3, { club: '7i', carry_yds: 130, total_yds: 140, apex_ft: 20, launch_deg: 8, landing_deg: 15, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H3, 3), rnd: FL.rng(1) });
+const ob = GG.playShot(H12, tee12, H12.spot(300, -60), { club: '7i', carry_yds: 150, total_yds: 155, apex_ft: 160, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H12, 3), rnd: FL.rng(1) });
+eq([ob.result, ob.penalty, ob.next], ['ob', 1, tee12], 'out of bounds left of 12: a penalty stroke and hit again from the same spot');
+const H3 = GG.buildHole(HP, 3, 'white'), tee3 = { x: H3.start.x, z: H3.start.z, lie: 'tee' }, s3 = GG.toHole(H3, tee3.x, tee3.z).s;
+const tree3 = H3.ground.trees.find((t) => GG.dist(tee3, t) > 40 && GG.dist(tee3, t) < 120 && GG.toHole(H3, t.x, t.z).s > s3);
+const low = GG.playShot(H3, tee3, tree3, { club: '7i', carry_yds: 140, total_yds: 150, apex_ft: 20, launch_deg: 8, landing_deg: 15, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H3, 3), rnd: FL.rng(1) });
 ok(low.result === 'tree' && low.tree && GG.dist(low.rest, low.tree) < low.tree.r + 4 && low.traj.hang < 4, 'a low shot into a cypress drops by the tree');
-const H2 = GG.buildHole(HP, 2, 'white'), tee2 = { x: H2.start.x, z: H2.start.z, lie: 'tee' }, bk = H2.bunkers[0], toBk = GG.headingTo(tee2, bk);
+const tee2 = { x: H2w.start.x, z: H2w.start.z, lie: 'tee' };
+const bk = H2w.ground.bunkers.map((b) => ({ b, c: GG.centroidOf(b.poly) })).find((o) => { const q = GG.toHole(H2w, o.c.x, o.c.z); return q.s - t2w.s > 200 && q.s - t2w.s < 260 && Math.abs(q.lat) < 30; }).c;
+const toBk = GG.headingTo(tee2, bk);
 let edge = 0;
-while (GG.lieAt(H2, bk.x - Math.sin(toBk) * edge, bk.z - Math.cos(toBk) * edge) === 'bunker') edge += 0.25;
+while (GG.lieAt(H2w, bk.x - Math.sin(toBk) * edge, bk.z - Math.cos(toBk) * edge) === 'bunker') edge += 0.25;
 const landSpot = { x: bk.x - Math.sin(toBk) * (edge + 1.5), z: bk.z - Math.cos(toBk) * (edge + 1.5) }, c2 = GG.dist(tee2, landSpot);
-const intoSand = GG.playShot(H2, tee2, bk, { club: '5hy', carry_yds: c2, total_yds: c2 + 12, apex_ft: 70, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H2, 3), rnd: FL.rng(1) });
-ok(intoSand.result === 'ok' && intoSand.lie === 'bunker' && GG.dist(intoSand.land, intoSand.rest) < 5, 'a ball rolling into a bunker stays in it');
+const intoSand = GG.playShot(H2w, tee2, bk, { club: '5hy', carry_yds: c2, total_yds: c2 + 12, apex_ft: 70, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H2w, 3), rnd: FL.rng(1) });
+ok(intoSand.result === 'ok' && intoSand.lie === 'bunker' && GG.dist(intoSand.land, intoSand.rest) < 5, 'a ball rolling into a fairway bunker on the 2nd stays in it');
 const nearPin = { x: pin1.x - Math.sin(GG.headingTo(tee1, pin1)) * 30, z: pin1.z - Math.cos(GG.headingTo(tee1, pin1)) * 30, lie: 'fairway' };
 const chip = GG.playShot(H1, nearPin, pin1, { club: 'SW', carry_yds: 27, total_yds: 31, offline_ft: 0, curve_ft: 0 }, { pin: pin1, rnd: FL.rng(1) });
 eq([chip.result, chip.lie, chip.next], ['holed', 'holed', undefined], 'rolling over the hole slowly: in!');
@@ -804,7 +855,10 @@ ok([2, 6, 12, 25, 50, 90].map(GG.puttTarget).every((v, i, a) => v >= 0.14 && v <
 eq([GG.suggestClub(dadPools, 200, 'tee'), GG.suggestClub(dadPools, 88, 'fairway'), GG.suggestClub(dadPools, 88, 'rough')], ['5hy', 'PW', '9i'], 'Dad: his 5 hybrid over the 5 wood he often mis-hits; one more club from the rough');
 eq([GG.suggestClub(m3Pools, 250, 'tee'), GG.suggestClub(m3Pools, 250, 'fairway')], ['Driver', '3w'], 'M3: driver off the tee, 3 wood off the fairway');
 const H4w = GG.buildHole(HP, 4, 'white'), aim4 = GG.aimFor(H4w, H4w.start, GG.pinFor(H4w, 1), 156);
-ok(!aim4.pin && Math.abs(GG.dist(H4w.start, aim4) - 156) < 8 && GG.lieAt(H4w, aim4.x, aim4.z) === 'fairway', 'a long hole: aim down the fairway as far as the club goes');
+ok(!aim4.pin && Math.abs(GG.dist(H4w.start, aim4) - 156) < 10 && GG.lieAt(H4w, aim4.x, aim4.z) === 'fairway', 'a long hole: aim down the fairway as far as the club goes');
+const wetCarry = (H, a) => { let w = 0; for (let k = 1; k < 20; k++) { if (GG.lieAt(H, H.start.x + (a.x - H.start.x) * k / 20, H.start.z + (a.z - H.start.z) * k / 20) === 'water') w = k / 20; } return w * GG.dist(H.start, a); };
+const aimDad18 = GG.aimFor(H18w, H18w.start, GG.pinFor(H18w, 1), 156), aimM318 = GG.aimFor(H18w, H18w.start, GG.pinFor(H18w, 1), 185);
+ok(wetCarry(H18w, aimDad18) === 0 && wetCarry(H18w, aimM318) > 80 && !/water|ob/.test(GG.lieAt(H18w, aimM318.x, aimM318.z)), '18: with 156 yds he plays round the inlet; with 185 he carries it');
 const near1 = H1.spot(120, 0);
 eq(GG.aimFor(H1, near1, pin1, 140).pin, true, 'in range: aim at the pin');
 eq([GG.scoreName(1, 3), GG.scoreName(2, 5), GG.scoreName(3, 4), GG.scoreName(4, 4), GG.scoreName(5, 4), GG.scoreName(6, 4), GG.scoreName(8, 4)],

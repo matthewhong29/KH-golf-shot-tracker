@@ -76,9 +76,10 @@ Don't change `coaching_notes` or the tips in `js/tips.js` unless asked. Don't co
 
 The Game tab plays TPC Harding Park with each player's own range shots (see README, "Game"). Rounds are saved on each phone, not in the data files, so there's nothing to commit after a round.
 
-- `js/courses.js` holds each course. Its pars and yardages come from the scorecard; each hole's shape comes from course guides and hole-by-hole write-ups.
+- `js/courses.js` holds each course's scorecard: par, each set of tees' yardage for every hole, and a short note from the course guides, checked against the map.
+- `js/course-maps.js` holds its ground, as mapped in OpenStreetMap (© OpenStreetMap contributors, ODbL): the boundary, Lake Merced, every hole's line of play, green, fairway, tee box and bunker, and the trees. It's built by `scripts/build-course-map.py` from OSM's data for the course (see the script for where that came from); don't edit it by hand. The page credits OpenStreetMap wherever the map shows, as the licence asks: keep that line.
 - Use only yardages from a real scorecard or the course's own site, and never estimate one. Leave out any set of tees whose hole-by-hole yardages can't be found. The Red and Gold tees at Harding Park are left out for that reason.
-- When Matthew sends a photo of a scorecard (say, for the forward tees), add the tees to `tees` and each hole's `yds`. `node tests/core.test.js` checks that they add up.
+- When Matthew sends a photo of a scorecard (say, for the forward tees), add the tees to `tees` and each hole's `yds`. The game stands them on the line of play at their yardage; to put them on their real tee boxes, add their yardages to `YDS` in `scripts/build-course-map.py` and rerun it. `node tests/core.test.js` checks that they add up and that every tee is within 12 yds of its yardage.
 
 ## Code
 

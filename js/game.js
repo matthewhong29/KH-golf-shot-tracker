@@ -8,18 +8,16 @@
 // the range, the shot he just hit is typed in instead, and a simulator could hand over
 // its numbers the same way: playShot takes any shot with the usual keys.
 //
-// Hole coordinates are yards, the same as GolfFlight's: x across, z along, y up. The
-// back tee sits at (0, 0) and the hole starts out heading up +z.
+// Hole coordinates are yards, the same as GolfFlight's: x is east, z north and y up, all
+// from the middle of the course, so every hole sits on the same ground.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./flight.js'), require('./core.js'));
   else root.GolfGame = factory(root.GolfFlight, root.GolfCore);
 })(typeof self !== 'undefined' ? self : this, function (FL, C) {
   'use strict';
 
-  var DEG = Math.PI / 180;
   function isNum(v) { return typeof v === 'number' && isFinite(v); }
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
-  function smooth(u) { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); }
   function dist(a, b) { return Math.hypot(a.x - b.x, a.z - b.z); }
   function seedOf(str) {
     var h = 2166136261;
@@ -30,39 +28,17 @@
   function headingTo(a, b) { return Math.atan2(b.x - a.x, b.z - a.z); }
 
   // ---------------------------------------------------------------------------
-  // A hole's ground, built from the course data (js/courses.js)
+  // A hole on the real ground: the course's map (js/course-maps.js, from OpenStreetMap)
   // ---------------------------------------------------------------------------
   var STEP = 2;          // yds between points on the line of play
-  var BEHIND = 70;       // the line of play runs on this far behind the back tee...
+  var BEHIND = 70;       // the line of play runs on this far behind its start...
   var BEYOND = 110;      // ...and past the middle of the green
-  var TURN_R = 130;      // doglegs bend around a curve this tight (yds)
   var FRINGE = 2.2;      // the fringe around the green (yds)
-  var TREE_DEPTH = 58;   // how deep a line of trees is (yds)
-  var LAKE = 300;        // how far a lake reaches out from its shore (yds)
-  var LAKE_END = 25;     // its shore curves away over this many yds at each end
+  var CELL = 20;         // trees are filed in squares this many yds across, to find the ones near a spot fast
+  var STAKES = { ob: 25, lake: 35 }; // yds between stakes along the boundary: white for out of bounds, red by the lake
+  var BOX = { w: 8, d: 6 };          // a tee box drawn where a set of tees has no mapped one (yds)
+  var STAND_IN = { w: 26, d: 30 };   // a green the map hasn't got (the 9th) is one this size
 
-  // A blob: an ellipse with a gently wavy edge, rx across and rz along `rot`.
-  function blob(c, rx, rz, rot, rnd, wave) {
-    var p1 = rnd() * 6.28, p2 = rnd() * 6.28, a1 = wave * (0.6 + 0.4 * rnd()), a2 = wave * 0.6 * rnd();
-    var b = { x: c.x, z: c.z, rx: rx, rz: rz, rot: rot, p1: p1, p2: p2, a1: a1, a2: a2 };
-    b.poly = blobPoly(b, 0);
-    return b;
-  }
-  function lobe(b, a) { return 1 + b.a1 * Math.sin(2 * a + b.p1) + b.a2 * Math.sin(3 * a + b.p2); }
-  function blobPoly(b, grow) {
-    var out = [], n = 44;
-    for (var i = 0; i < n; i++) {
-      var a = 2 * Math.PI * i / n, r = lobe(b, a);
-      var q = FL.offsetPoint(b.x, b.z, b.rot, (b.rz + grow) * r * Math.sin(a), (b.rx + grow) * r * Math.cos(a));
-      out.push([q.x, q.z]);
-    }
-    return out;
-  }
-  function inBlob(b, x, z, grow) {
-    var dx = x - b.x, dz = z - b.z, c = Math.cos(b.rot), s = Math.sin(b.rot);
-    var u = (dx * c - dz * s) / (b.rx + grow), v = (dx * s + dz * c) / (b.rz + grow);
-    return Math.hypot(u, v) <= lobe(b, Math.atan2(v, u));
-  }
   function inPoly(poly, x, z) {
     var inside = false;
     for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -71,221 +47,181 @@
     }
     return inside;
   }
-  // A shore or boundary given as a number, or as [[g, edge], …] from the tee end toward the green.
-  function edgeAt(edge, g) {
-    if (isNum(edge)) return edge;
-    if (!edge || !edge.length) return 0;
-    if (g >= edge[0][0]) return edge[0][1];
-    for (var i = 0; i < edge.length - 1; i++) {
-      var a = edge[i], b = edge[i + 1];
-      if (g <= a[0] && g >= b[0]) return a[1] + (b[1] - a[1]) * (a[0] - g) / ((a[0] - b[0]) || 1);
-    }
-    return edge[edge.length - 1][1];
+  function bboxOf(poly) {
+    var b = [Infinity, Infinity, -Infinity, -Infinity];
+    poly.forEach(function (p) { b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]); b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]); });
+    return b;
   }
-  function gSteps(from, to, step) {
+  function inBox(b, x, z) { return x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3]; }
+  function centroidOf(poly) {
+    var a = 0, cx = 0, cz = 0;
+    for (var i = 0; i < poly.length; i++) {
+      var p = poly[i], q = poly[(i + 1) % poly.length], c = p[0] * q[1] - q[0] * p[1];
+      a += c; cx += (p[0] + q[0]) * c; cz += (p[1] + q[1]) * c;
+    }
+    return Math.abs(a) < 1e-9 ? { x: poly[0][0], z: poly[0][1] } : { x: cx / (3 * a), z: cz / (3 * a) };
+  }
+  // The same shape, every point moved `by` yds further from its middle.
+  function grow(poly, c, by) {
+    return poly.map(function (p) {
+      var dx = p[0] - c.x, dz = p[1] - c.z, d = Math.hypot(dx, dz) || 1;
+      return [p[0] + dx / d * by, p[1] + dz / d * by];
+    });
+  }
+  function ellipsePoly(c, rx, rz, rot, n) {
     var out = [];
-    for (var g = from; g > to; g -= step) out.push(g);
-    out.push(to);
+    for (var i = 0; i < n; i++) {
+      var a = 2 * Math.PI * i / n, q = FL.offsetPoint(c.x, c.z, rot, rz * Math.sin(a), rx * Math.cos(a));
+      out.push([q.x, q.z]);
+    }
     return out;
   }
+  function isLakeEdge(m, i) { return m.lakeFrom > m.lakeTo ? i >= m.lakeFrom || i < m.lakeTo : i >= m.lakeFrom && i < m.lakeTo; }
 
-  // buildHole(course, n, teeId) → the hole's ground for that tee: the line of play, the
-  // tees, fairway, green and fringe, bunkers, grassy hollows, water and penalty areas,
-  // out of bounds (with its stakes), the trees and the ground under them, and the
-  // 100/150/200 yd markers. The same every time for one course and hole.
+  // The course's ground, shared by all its holes and built once: the boundary and the lake,
+  // every green, fairway, tee box, bunker, practice area, wood and cart path, the trees
+  // (filed by square), and the stakes along the boundary.
+  var GROUNDS = {};
+  function groundOf(course) {
+    if (GROUNDS[course.id]) return GROUNDS[course.id];
+    var m = course.map, rnd = FL.rng(seedOf(course.id));
+    function item(poly) { return { poly: poly, bb: bboxOf(poly) }; }
+    var G = {
+      boundary: m.boundary, bb: bboxOf(m.boundary), lake: m.lake,
+      greens: m.greens.map(item), bunkers: m.bunkers.map(item), tees: m.tees.map(item), ranges: m.ranges.map(item), woods: m.woods.map(item),
+      fairways: m.fairways.map(function (p, i) { var o = item(p); o.axis = m.fairwayAxis[i]; return o; }),
+      paths: m.paths, grid: {}, obStakes: [], lakeStakes: [],
+      trees: m.trees.map(function (t) { return { x: t[0], z: t[1], h: t[2], r: t[3], tone: t[4] }; })
+    };
+    G.trees.forEach(function (t) {
+      for (var cx = Math.floor((t.x - t.r) / CELL); cx <= Math.floor((t.x + t.r) / CELL); cx++) {
+        for (var cz = Math.floor((t.z - t.r) / CELL); cz <= Math.floor((t.z + t.r) / CELL); cz++) (G.grid[cx + ',' + cz] = G.grid[cx + ',' + cz] || []).push(t);
+      }
+    });
+    var nb = m.boundary.length;
+    for (var i = 0; i < nb; i++) {
+      var a = m.boundary[i], b = m.boundary[(i + 1) % nb], lake = isLakeEdge(m, i), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      for (var d = 0; d < len; d += lake ? STAKES.lake : STAKES.ob) (lake ? G.lakeStakes : G.obStakes).push([a[0] + (b[0] - a[0]) * d / len, a[1] + (b[1] - a[1]) * d / len]);
+    }
+    G.clouds = [0, 1, 2, 3].map(function () { return { x: rnd(), y: 0.2 + rnd() * 0.55, w: 0.12 + rnd() * 0.12 }; });
+    G.hills = [0, 1, 2].map(function () { return rnd() * 6.28; });
+    return (GROUNDS[course.id] = G);
+  }
+  function treesNear(G, x, z) { return G.grid[Math.floor(x / CELL) + ',' + Math.floor(z / CELL)] || []; }
+
+  // buildHole(course, n, teeId) → hole n from that set of tees, on the course's ground:
+  //   n, par, tee, yds (the scorecard's), note, L (the line of play's length to the middle of
+  //   the green), path (a point every STEP yds along it, with its heading), at(s), spot(g, side),
+  //   start (where the ball is teed up), teeBox, green { x, z, rot, rx, rz, poly, fringePoly },
+  //   markers (100, 150 and 200 yds from the middle of the green), and ground (the course's).
+  // The line of play is the mapped one, from its back tee to the middle of the green; each
+  // set of tees stands on its tee box, or on the line at its scorecard yardage.
   function buildHole(course, n, teeId) {
     var def = null;
     (course.holes || []).forEach(function (h) { if (h.n === n) def = h; });
-    if (!def) return null;
+    var hm = def && course.map && course.map.holes[String(n)];
+    if (!hm) return null;
     var tees = course.tees.filter(function (t) { return isNum(def.yds[t.id]); });
     if (!tees.length) return null;
-    var L = Math.max.apply(null, tees.map(function (t) { return def.yds[t.id]; }));
     var tee = tees.filter(function (t) { return t.id === teeId; })[0] || tees[tees.length - 1];
-    var rnd = FL.rng(seedOf(course.id + ':' + n));
-    var turns = (def.turns || []).map(function (t) {
-      var a = t.deg * DEG;
-      return { s: L - t.g, a: a, len: Math.max(24, TURN_R * Math.abs(a)) };
-    });
-    function headingAt(s) {
-      var hd = 0;
-      turns.forEach(function (t) { hd += t.a * smooth((s - (t.s - t.len / 2)) / t.len); });
-      return hd;
+    var G = groundOf(course);
+    var line = hm.line.map(function (p) { return { x: p[0], z: p[1] }; }), segs = [], acc = 0;
+    for (var i = 0; i < line.length - 1; i++) {
+      var a = line[i], b = line[i + 1], len = Math.hypot(b.x - a.x, b.z - a.z);
+      segs.push({ a: a, b: b, s: acc, len: len });
+      acc += len;
     }
-    // The line of play: a point every STEP yds, from behind the back tee to past the green.
-    var path = [], x = 0, z = -BEHIND;
+    var L = acc;
+    function onLine(s) {
+      var k = 0;
+      while (k < segs.length - 1 && s > segs[k].s + segs[k].len) k++;
+      var sg = segs[k], u = (s - sg.s) / sg.len;
+      return { x: sg.a.x + (sg.b.x - sg.a.x) * u, z: sg.a.z + (sg.b.z - sg.a.z) * u };
+    }
+    // A point every STEP yds, its heading taken over 16 yds so it turns smoothly at a corner.
+    var path = [];
     for (var s = -BEHIND; s <= L + BEYOND; s += STEP) {
-      path.push({ s: s, x: x, z: z, h: headingAt(s) });
-      var hm = headingAt(s + STEP / 2);
-      x += Math.sin(hm) * STEP;
-      z += Math.cos(hm) * STEP;
+      var p = onLine(s), p0 = onLine(s - 8), p1 = onLine(s + 8);
+      path.push({ s: s, x: p.x, z: p.z, h: headingTo(p0, p1) });
     }
     function at(s) {
       var i = clamp(Math.floor((s + BEHIND) / STEP), 0, path.length - 2), a = path[i], b = path[i + 1];
       var u = (s - a.s) / STEP;
       return { x: a.x + (b.x - a.x) * u, z: a.z + (b.z - a.z) * u, h: a.h + (b.h - a.h) * u };
     }
-    // g yds back from the middle of the green, `side` yds right of the line of play.
-    function spot(g, side) { var p = at(L - g); return FL.offsetPoint(p.x, p.z, p.h, 0, side || 0); }
-    function pt(g, side) { var q = spot(g, side); return [q.x, q.z]; }
+    function spot(g, side) { var q = at(L - g); return FL.offsetPoint(q.x, q.z, q.h, 0, side || 0); }
 
-    var H = {
-      course: course.id, n: def.n, par: def.par, tee: tee.id, yds: def.yds[tee.id], note: def.note || '', L: L,
-      path: path, at: at, spot: spot,
-      bunkers: [], hollows: [], water: [], ob: [], treeZones: [], trees: [], tees: [], markers: [], stripes: []
-    };
-    var gd = def.green.d / 2, gw = def.green.w / 2;
-    var g0 = at(L);
-    H.green = blob({ x: g0.x, z: g0.z }, gw, gd, g0.h, rnd, 0.05);
-    H.green.fringePoly = blobPoly(H.green, FRINGE);
-
-    // Tee boxes: 9 yds across and 7 deep, one for each set of tees.
-    tees.forEach(function (t) {
-      var g = def.yds[t.id], p = at(L - g), poly = [];
-      [[-4.5, -3.5], [4.5, -3.5], [4.5, 3.5], [-4.5, 3.5]].forEach(function (c) {
-        var q = FL.offsetPoint(p.x, p.z, p.h, c[1], c[0]);
-        poly.push([q.x, q.z]);
+    var H = { course: course.id, n: def.n, par: def.par, tee: tee.id, yds: def.yds[tee.id], note: def.note || '', L: L,
+      path: path, at: at, spot: spot, ground: G, markers: [], clouds: G.clouds, hills: G.hills };
+    // The green: the mapped one at the end of the line (or, for the 9th, one that stands in).
+    var end = line[line.length - 1], rot = headingTo(line[line.length - 2], end);
+    var gpoly = hm.green != null ? course.map.greens[hm.green] : ellipsePoly(end, STAND_IN.w / 2, STAND_IN.d / 2, rot, 40);
+    var gc = centroidOf(gpoly), rx = 0, rz = 0;
+    gpoly.forEach(function (q) {
+      var dx = q[0] - gc.x, dz = q[1] - gc.z;
+      rx = Math.max(rx, Math.abs(dx * Math.cos(rot) - dz * Math.sin(rot)));
+      rz = Math.max(rz, Math.abs(dx * Math.sin(rot) + dz * Math.cos(rot)));
+    });
+    H.green = { x: gc.x, z: gc.z, rot: rot, rx: rx, rz: rz, poly: gpoly, bb: bboxOf(grow(gpoly, gc, FRINGE)), fringePoly: grow(gpoly, gc, FRINGE), index: hm.green, standIn: hm.green == null };
+    // Where this set of tees stands: on its tee box, or on the line at its yardage.
+    var tm = hm.tees && hm.tees[tee.id], at0;
+    if (tm && tm.box != null) {
+      at0 = { x: tm.at[0], z: tm.at[1] };
+      H.teeBox = course.map.tees[tm.box];
+    } else {
+      at0 = at(L - (tm ? tm.g : H.yds));
+      var hd0 = at(L - (tm ? tm.g : H.yds)).h;
+      H.teeBox = [[-BOX.w / 2, -BOX.d / 2], [BOX.w / 2, -BOX.d / 2], [BOX.w / 2, BOX.d / 2], [-BOX.w / 2, BOX.d / 2]].map(function (c) {
+        var q = FL.offsetPoint(at0.x, at0.z, hd0, c[1], c[0]);
+        return [q.x, q.z];
       });
-      H.tees.push({ id: t.id, name: t.name, x: p.x, z: p.z, h: p.h, poly: poly, active: t.id === tee.id });
-      if (t.id === tee.id) H.start = { x: p.x, z: p.z, h: p.h };
-    });
-
-    // The fairway: from about 95 yds in front of the forward tee to the green (a short
-    // apron in front of the green on a par 3), with gently wavy edges, narrowing to the
-    // green's width as it gets there.
-    var forward = Math.min.apply(null, tees.map(function (t) { return def.yds[t.id]; }));
-    var par3 = def.par === 3, half = par3 ? Math.max(6, gw - 3) : (def.fw || 16);
-    var f1 = par3 ? gd + 22 : forward - 95, f2 = gd - 2, ph = rnd() * 6.28;
-    function fwW(g) {
-      var base = half + (par3 ? 0 : 2 * Math.sin(g / 37 + ph));
-      var narrow = (gw - 1) + (base - (gw - 1)) * smooth((g - f2) / 40);
-      return Math.max(1, narrow * (0.25 + 0.75 * Math.sqrt(clamp((f1 - g) / 12, 0, 1))));
+      H.teeBoxDrawn = true;
     }
-    H.fwHalf = fwW;
-    function strip(ga, gb, wf) {
-      var gs = gSteps(ga, gb, 3), poly = [];
-      gs.forEach(function (g) { poly.push(pt(g, wf(g))); });
-      gs.slice().reverse().forEach(function (g) { poly.push(pt(g, -wf(g))); });
-      return poly;
-    }
-    H.fairway = strip(f1, f2, fwW);
-    for (var sa = f1 - 10; sa - 14 > f2 + 8; sa -= 28) H.stripes.push(strip(sa, sa - 14, fwW));
-
-    (def.bunkers || []).forEach(function (b) {
-      var p = at(L - b.g), c = spot(b.g, b.x);
-      H.bunkers.push(blob(c, b.w / 2, b.d / 2, p.h + (rnd() - 0.5) * 0.6, rnd, 0.13));
-    });
-    (def.hollows || []).forEach(function (b) {
-      var p = at(L - b.g), c = spot(b.g, b.x);
-      H.hollows.push(blob(c, b.w / 2, b.d / 2, p.h + (rnd() - 0.5) * 0.4, rnd, 0.1));
-    });
-
-    // Water and penalty areas: beyond a shore on one side. A lake reaches far out (its
-    // far side is joined up well away from the hole); a penalty area is `width` deep.
-    // Penalty areas get red stakes along their edge.
-    (def.water || []).forEach(function (o) {
-      var sd = o.side === 'right' ? 1 : -1, wav = rnd() * 6.28, lake = o.kind !== 'penalty';
-      var gs = gSteps(o.from, o.to, 5), shore = gs.map(function (g) { return pt(g, sd * (edgeAt(o.edge, g) + (lake ? 2.5 * Math.sin(g / 19 + wav) : 0))); });
-      var poly;
-      if (lake) {
-        // Its shore curves away at both ends (a quarter circle), then it reaches far out.
-        var e0 = edgeAt(o.edge, o.from) + 2.5 * Math.sin(o.from / 19 + wav), e1 = edgeAt(o.edge, o.to) + 2.5 * Math.sin(o.to / 19 + wav), R = LAKE_END, k, t;
-        var capA = [], capB = [];
-        for (k = 6; k > 0; k--) { t = k / 6 * Math.PI / 2; capA.push(pt(o.from + R - R * Math.cos(t), sd * (e0 + R * Math.sin(t)))); }
-        for (k = 1; k <= 6; k++) { t = k / 6 * Math.PI / 2; capB.push(pt(o.to - R + R * Math.cos(t), sd * (e1 + R * Math.sin(t)))); }
-        // Out from each end, a wavy shore of its own.
-        var outA = [], outB = [];
-        for (k = 1; k <= 8; k++) {
-          outB.push(pt(o.to - R + 7 * Math.sin(k * 1.3 + wav), sd * (e1 + R + LAKE * k / 8)));
-          outA.unshift(pt(o.from + R + 7 * Math.sin(k * 1.1 + wav), sd * (e0 + R + LAKE * k / 8)));
-        }
-        poly = capA.concat(shore, capB, outB, outA);
-      } else {
-        var wd = o.width || 40;
-        poly = shore.concat(gs.slice().reverse().map(function (g) { return pt(g, sd * (edgeAt(o.edge, g) + wd)); }));
-      }
-      H.water.push({ kind: lake ? 'water' : 'penalty', poly: poly, stakes: lake ? [] : shore.filter(function (p, i) { return i % 5 === 0; }) });
-    });
-    // Out of bounds: beyond a line on one side, or past the green.
-    (def.ob || []).forEach(function (o) {
-      var sd = o.side === 'right' ? 1 : -1, gs = gSteps(o.from, o.to, 5);
-      var line = gs.map(function (g) { return pt(g, sd * edgeAt(o.edge, g)); });
-      var poly = line.concat(gs.slice().reverse().map(function (g) { return pt(g, sd * (edgeAt(o.edge, g) + 80)); }));
-      H.ob.push({ poly: poly, stakes: line.filter(function (p, i) { return i % 5 === 0; }) });
-    });
-    if (isNum(def.obLong)) {
-      var gl = -def.obLong, line = [];
-      for (var xs = -75; xs <= 75; xs += 25) line.push(pt(gl, xs));
-      H.ob.push({ poly: [pt(gl, -75), pt(gl, 75), pt(gl - 80, 75), pt(gl - 80, -75)], stakes: line });
-    }
-
-    // Trees: a line down each side (where the course has one), more behind the green, and
-    // any single trees the hole is known for. The ground under them is darker.
-    var top = L + 40, inWater = function (q) { return H.water.some(function (o) { return inPoly(o.poly, q.x, q.z); }); };
-    function tree(q, big) {
-      if (inWater(q)) return;
-      H.trees.push({ x: q.x, z: q.z, h: (big ? 16 : 12) + rnd() * (big ? 4 : 9), r: (big ? 6 : 3.6) + rnd() * 2.6, tone: Math.floor(rnd() * 3) });
-    }
-    [['left', -1], ['right', 1]].forEach(function (sd) {
-      var d = def.trees ? def.trees[sd[0]] : null;
-      if (!isNum(d)) return;
-      H.treeZones.push(zone(d, sd[1]));
-      for (var g = top; g > -36; g -= 9 + rnd() * 5) {
-        tree(spot(g, sd[1] * (d + 2 + Math.pow(rnd(), 1.6) * (TREE_DEPTH - 8))));
-        if (rnd() < 0.6) tree(spot(g - 4, sd[1] * (d + 8 + rnd() * (TREE_DEPTH - 14))));
-      }
-    });
-    function zone(d, sd) {
-      var gs = gSteps(top, -36, 5);
-      return gs.map(function (g) { return pt(g, sd * d); }).concat(gs.slice().reverse().map(function (g) { return pt(g, sd * (d + TREE_DEPTH)); }));
-    }
-    var back = [pt(-38, -75), pt(-38, 75), pt(-92, 75), pt(-92, -75)];
-    if (!H.water.some(function (o) { return o.kind === 'water' && back.some(function (p) { return inPoly(o.poly, p[0], p[1]); }); })) {
-      H.treeZones.push(back);
-      for (var gb = -41; gb > -90; gb -= 10 + rnd() * 4) for (var xb = -70; xb <= 70; xb += 10 + rnd() * 6) tree(spot(gb - rnd() * 4, xb));
-    }
-    (def.extraTrees || []).forEach(function (t) { tree(spot(t.g, t.x), true); });
-
-    if (!par3) [100, 150, 200].forEach(function (d) { if (d < H.yds - 30) { var q = spot(d, 0); H.markers.push({ d: d, x: q.x, z: q.z }); } });
-    H.clouds = [0, 1, 2, 3].map(function () { return { x: rnd(), y: 0.2 + rnd() * 0.55, w: 0.12 + rnd() * 0.12 }; });
-    H.hills = [0, 1, 2].map(function () { return rnd() * 6.28; });
+    H.start = { x: at0.x, z: at0.z, h: toHole(H, at0.x, at0.z).h };
+    if (def.par > 3) [100, 150, 200].forEach(function (d) { if (d < H.yds - 30) { var q = spot(d, 0); H.markers.push({ d: d, x: q.x, z: q.z }); } });
     return H;
   }
 
-  // Where a point is along the hole: s yds from the back tee along the line of play, g
-  // yds back from the middle of the green, and lat yds right (+) or left (−) of the line.
+  // Where a point is along the hole: s yds from the start of the line of play, g yds back
+  // from the middle of the green, lat yds right (+) or left (−) of the line, and h, the
+  // line's heading there.
   function toHole(H, x, z) {
     var best = null, p = H.path;
     for (var i = 0; i < p.length - 1; i++) {
       var a = p[i], b = p[i + 1], dx = b.x - a.x, dz = b.z - a.z, len2 = dx * dx + dz * dz;
       var u = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
       var qx = a.x + dx * u, qz = a.z + dz * u, d = Math.hypot(x - qx, z - qz);
-      if (!best || d < best.d) best = { d: d, s: a.s + STEP * u, lat: ((x - a.x) * dz - (z - a.z) * dx) / Math.sqrt(len2) };
+      if (!best || d < best.d) best = { d: d, s: a.s + STEP * u, lat: ((x - a.x) * dz - (z - a.z) * dx) / Math.sqrt(len2), h: a.h };
     }
-    return { s: best.s, g: H.L - best.s, lat: best.lat };
+    return { s: best.s, g: H.L - best.s, lat: best.lat, h: best.h };
   }
 
-  // What the ball is lying on: 'green', 'fringe', 'fairway', 'rough', 'bunker', 'trees',
-  // 'water', 'penalty' (a penalty area that isn't open water) or 'ob'. Tee boxes play as
-  // fairway and grassy hollows as rough.
+  // What the ball is lying on: 'green' (this hole's), 'fringe', 'fairway' (any fairway, tee
+  // box, practice ground, or another hole's green, which plays as fairway), 'rough',
+  // 'bunker', 'trees' (under a tree), 'water' (Lake Merced) or 'ob' (beyond the boundary).
   function lieAt(H, x, z) {
-    var i;
-    if (inBlob(H.green, x, z, 0)) return 'green';
-    for (i = 0; i < H.bunkers.length; i++) if (inBlob(H.bunkers[i], x, z, 0)) return 'bunker';
-    for (i = 0; i < H.water.length; i++) if (inPoly(H.water[i].poly, x, z)) return H.water[i].kind;
-    for (i = 0; i < H.ob.length; i++) if (inPoly(H.ob[i].poly, x, z)) return 'ob';
-    if (inBlob(H.green, x, z, FRINGE)) return 'fringe';
-    for (i = 0; i < H.hollows.length; i++) if (inBlob(H.hollows[i], x, z, 0)) return 'rough';
-    for (i = 0; i < H.tees.length; i++) if (inPoly(H.tees[i].poly, x, z)) return 'fairway';
-    if (H.fairway && inPoly(H.fairway, x, z)) return 'fairway';
-    for (i = 0; i < H.treeZones.length; i++) if (inPoly(H.treeZones[i], x, z)) return 'trees';
+    var G = H.ground, i, o, lists = [G.greens, G.tees, G.fairways, G.ranges];
+    if (inBox(H.green.bb, x, z) && inPoly(H.green.poly, x, z)) return 'green';
+    for (i = 0; i < G.bunkers.length; i++) { o = G.bunkers[i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'bunker'; }
+    if (!inBox(G.bb, x, z) || !inPoly(G.boundary, x, z)) return inPoly(G.lake, x, z) ? 'water' : 'ob';
+    if (inBox(H.green.bb, x, z) && inPoly(H.green.fringePoly, x, z)) return 'fringe';
+    if (H.teeBox && inPoly(H.teeBox, x, z)) return 'fairway';
+    for (var k = 0; k < lists.length; k++) for (i = 0; i < lists[k].length; i++) { o = lists[k][i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'fairway'; }
+    var near = treesNear(G, x, z);
+    for (i = 0; i < near.length; i++) if (Math.hypot(x - near[i].x, z - near[i].z) < near[i].r) return 'trees';
     return 'rough';
   }
   var LIE_WORDS = { tee: 'Tee', green: 'Green', fringe: 'Fringe', fairway: 'Fairway', rough: 'Rough', bunker: 'Bunker', trees: 'Trees', water: 'Water', penalty: 'Penalty area', ob: 'Out of bounds' };
 
-  // Today's pin: somewhere in the middle half of the green, the same all round for one seed.
+  // Today's pin: somewhere in the middle part of the green (a spot that's still on the green
+  // when pushed out to 1/0.6 of its distance from the middle), the same all round for one seed.
   function pinFor(H, seed) {
-    var r = FL.rng(seedOf(seed + ':' + H.course + ':' + H.n)), g = H.green;
-    return FL.offsetPoint(g.x, g.z, g.rot, (r() - 0.5) * g.rz, (r() - 0.5) * g.rx);
+    var r = FL.rng(seedOf(seed + ':' + H.course + ':' + H.n)), g = H.green, b = bboxOf(g.poly);
+    for (var k = 0; k < 400; k++) {
+      var x = b[0] + r() * (b[2] - b[0]), z = b[1] + r() * (b[3] - b[1]);
+      if (inPoly(g.poly, g.x + (x - g.x) / 0.6, g.z + (z - g.z) / 0.6)) return { x: x, z: z };
+    }
+    return { x: g.x, z: g.z };
   }
 
   // ---------------------------------------------------------------------------
@@ -477,9 +413,9 @@
     var skip = from.lie === 'trees' ? 14 : 5, sm = placed.samples, lt = placed.local.samples;
     for (var i = 1; i < sm.length; i++) {
       if (lt[i].z < skip) continue;
-      var p = sm[i];
-      for (var j = 0; j < H.trees.length; j++) {
-        var t = H.trees[j], r = t.r * 0.85, dx = p.x - t.x, dz = p.z - t.z;
+      var p = sm[i], near = treesNear(H.ground, p.x, p.z);
+      for (var j = 0; j < near.length; j++) {
+        var t = near[j], r = t.r * 0.85, dx = p.x - t.x, dz = p.z - t.z;
         if (p.y >= t.h || Math.abs(dx) > r || Math.abs(dz) > r) continue;
         var d = Math.hypot(dx, dz);
         if (d < TRUNK || (d < r && p.y > LEAVES * t.h)) return { i: i, t: sm[i].t, tree: t, p: p };
@@ -639,23 +575,74 @@
     for (var i = 0; i < sure.length; i++) if (sure[i].full * lieFactor(sure[i].club, lie).dist >= d - 3) return sure[i].club;
     return sure[sure.length - 1].club;
   }
-  // Where to aim with a club that goes `reach` yds: the pin if it's in range, else the
-  // farthest point on the line of play he can reach, stepping back off sand, water and
-  // trees, so a tee shot on a dogleg aims at the corner.
+  // Where to aim with a club that goes `reach` yds: the pin if it's in range and nothing's
+  // in the way. Otherwise the spot that leaves the least of the hole to play, counting rough
+  // as 25 yds more, sand as 45 and the trees as 60, and never in the water or out of bounds
+  // (the pin stays in the running): tried from straight
+  // down the hole (toward the line of play as far ahead as he can reach) to 40° either side,
+  // (80° from the rough or the trees, so he can chip out sideways), and from his full reach
+  // down to 35% of it (a short way out of trouble). A carry over water with little to spare
+  // counts against a spot too, and so does each tree in the way while the ball is low. On a dogleg that aims at the corner; on the 18th,
+  // round the narrow end of the inlet of Lake Merced rather than a long carry over it.
+  var AIM_COST = { fairway: 0, green: 0, fringe: 0, rough: 25, bunker: 45, trees: 60 };
+  var TREE_COST = 60;
+  // How many trees stand in the way of a shot from a to b (up to 2), the same way a flight
+  // hits one (treeHit): its trunk, or its leaves above the bottom third. The ball's height
+  // is taken as a curve peaking at about 16% of the club's reach (25 yds, 75 ft, for a
+  // 150-yd club; at most 30), and much lower for a punch from under the trees. The first
+  // and last 8% don't count (he's under the tree he's playing from, or it's where the ball
+  // comes down).
+  function treesInWay(H, a, b, reach, low) {
+    var len = dist(a, b), top = Math.min(30, 0.16 * reach) * (low ? LIE.trees.low : 1), n = Math.max(8, Math.ceil(len / 6)), hit = [];
+    for (var k = 1; k < n; k++) {
+      var u = k / n;
+      if (u < 0.08 || u > 0.92) continue;
+      var x = a.x + (b.x - a.x) * u, z = a.z + (b.z - a.z) * u, y = top * 4 * u * (1 - u), near = treesNear(H.ground, x, z);
+      for (var i = 0; i < near.length; i++) {
+        var t = near[i];
+        var d = Math.hypot(x - t.x, z - t.z);
+        if (y < t.h && hit.indexOf(t) < 0 && (d < TRUNK + 0.5 || (d < t.r * 0.85 + 1 && y > LEAVES * t.h))) hit.push(t);
+      }
+      if (hit.length >= 2) return 2;
+    }
+    return hit.length;
+  }
   function aimFor(H, ball, pin, reach) {
-    if (dist(ball, pin) <= reach + 5) return { x: pin.x, z: pin.z, pin: true };
-    var b = toHole(H, ball.x, ball.z), best = null;
+    var low = ball.lie === 'trees', dPin = dist(ball, pin), best = null, cost = Infinity;
+    // What a spot costs: the hole it leaves to play (along the line of play, or to the pin
+    // once that's further), its lie, how far off straight down the hole it is, a carry over
+    // water or out of bounds with little to spare (his good carry, about 93% of his reach,
+    // less the carry it needs: 3 yds for every yard under 45), and the trees in the way.
+    function costOf(q, l, da, dq) {
+      var wet = 0;
+      for (var k = 1; k < 12; k++) {
+        var w = lieAt(H, ball.x + (q.x - ball.x) * k / 12, ball.z + (q.z - ball.z) * k / 12);
+        if (w === 'water' || w === 'ob') wet = k / 12;
+      }
+      var left = Math.max(toHole(H, q.x, q.z).g, dist(q, pin));
+      return left + AIM_COST[l] + Math.abs(da) * 0.15 + (wet ? Math.max(0, 45 - (0.93 * reach - wet * dq)) * 3 : 0) + TREE_COST * treesInWay(H, ball, q, reach, low);
+    }
+    if (dPin <= reach + 5) {
+      cost = costOf(pin, 'green', 0, dPin);
+      best = { x: pin.x, z: pin.z, pin: true };
+      if (cost < 45) return best; // a clear shot at the pin
+    }
+    var b = toHole(H, ball.x, ball.z), ahead = null;
     for (var s = Math.max(b.s + 10, 0); s <= H.L; s += STEP) {
       var p = H.at(s);
-      if (dist(ball, p) <= reach) best = s; else if (best != null) break;
+      if (dist(ball, p) <= reach) ahead = p; else if (ahead) break;
     }
-    if (best == null) return { x: pin.x, z: pin.z, pin: true };
-    for (var k = 0; k <= 20; k++) {
-      var q = H.at(best - k * 3), l = lieAt(H, q.x, q.z);
-      if (l === 'fairway' || l === 'green' || l === 'fringe') return { x: q.x, z: q.z, pin: false };
+    var h0 = headingTo(ball, dPin <= reach + 5 ? pin : ahead || pin), fan = ball.lie === 'rough' || ball.lie === 'trees' ? 80 : 40;
+    var dMax = Math.min(reach, dPin + 10);
+    for (var da = -fan; da <= fan; da += 5) {
+      for (var f = 1; f >= 0.35 - 1e-9; f -= 0.05) {
+        var q = FL.offsetPoint(ball.x, ball.z, h0 + da * Math.PI / 180, dMax * f, 0), l = lieAt(H, q.x, q.z);
+        if (!(l in AIM_COST)) continue;
+        var c = costOf(q, l, da, dMax * f);
+        if (c < cost) { cost = c; best = { x: q.x, z: q.z, pin: false }; }
+      }
     }
-    var q0 = H.at(best);
-    return { x: q0.x, z: q0.z, pin: false };
+    return best || { x: pin.x, z: pin.z, pin: true };
   }
   // The share of a full swing to send this club `d` yds from this lie.
   function powerFor(pool, d, lie) { return clamp(d / (pool.full * lieFactor(pool.club, lie).dist), 0.1, 1); }
@@ -687,7 +674,7 @@
   }
 
   return {
-    buildHole: buildHole, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, inBlob: inBlob, edgeAt: edgeAt,
+    buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf,
     rankShots: rankShots, clubPools: clubPools, clubList: clubList, totalOf: totalOf,
     METER: METER, timingOf: timingOf, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
     DECK: DECK, lieFactor: lieFactor, playShot: playShot, rollOut: rollOut, TRUNK: TRUNK, LEAVES: LEAVES, CUP: CUP, flightOpts: flightOpts,
