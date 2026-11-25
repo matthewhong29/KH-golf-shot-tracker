@@ -109,6 +109,10 @@ Units match the screen. Carry and total are in yards. Apex, curve and offline ar
 
 A shot can also have `club_speed_mph`, `spin_rpm`, `smash_factor` (derived from ball and club speed when missing) and `note`, and `"partial": true` when it wasn't a full swing: a drill ball, a half swing or a warm-up (see "Warm-ups and half swings" below).
 
+A player's file can also have `swing_notes`, a list of `{ "date", "source", "note" }` shown under Practice → Swing (M2's came with his data), and `rounds_reset`, a day (`YYYY-MM-DD`): the first time a phone loads the file, it erases that player's saved round and past rounds from that day or before, so test rounds go from every phone. M3's is 2026-11-25. On one phone, **Erase all rounds** under Your rounds on the Game tab does the same.
+
+A session whose shots have only some numbers (M2's August sessions, transcribed from screenshots) has `"shot_level_data": "partial"`, so the data check doesn't flag shots without a carry. Its numbers worked out from others rather than measured stay in an `estimated` block beside the shots and are never plotted, and its ranges (`summary`) fill in what the shots don't have.
+
 A session can also have `equipment`, when it was hit with other clubs than the bag lists, like Dad's August baseline (`"Callaway Edge irons (same set Matthew used)"`). Progress then says that some of the change since is the clubs.
 
 A player's clubs can go in a top-level `equipment` block: a `bag` with one entry per club, e.g. Dad's `"7i": { "model": "Lynx Black Cat", "loft_deg": 33 }` and `"Driver": { "model": "Callaway Edge", "loft_deg": 10.5 }`. `loft_deg` can be `null` when it isn't known, like his Callaway Edge 5 hybrid. A `note` and `lofts_source` say which clubs are which and where the lofts came from. Each club's launch target comes from its loft. The club cards show the model and loft, e.g. "7 iron · Lynx Black Cat, 33° loft", and the Practice tab lists every club with its launch target.

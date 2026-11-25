@@ -396,7 +396,7 @@ const players = JSON.parse(fs.readFileSync(path.join(root, 'data', 'players.json
 eq(players.map((p) => [p.id, p.name, p.file]), [['dad', 'Dad', 'data/dad_golf_data.json'], ['matthew', 'M2', 'data/matthew_golf_data.json'], ['brother', 'M3', 'data/brother_golf_data.json']], 'players.json: Dad, M2 (Matthew) and M3');
 {
   const m2 = JSON.parse(fs.readFileSync(path.join(root, 'data', 'matthew_golf_data.json'), 'utf8'));
-  eq([m2.player.name, m2.baseline_session_id, Array.isArray(m2.personal_goals), m2.sessions.length], ['M2', null, true, 0], 'M2’s file: ready for his first session');
+  eq([m2.player.name, m2.baseline_session_id, Array.isArray(m2.personal_goals)], ['M2', null, true], 'M2’s file: his name on the tab, each club’s first session as its baseline');
 }
 for (const p of players) {
   const d = JSON.parse(fs.readFileSync(path.join(root, p.file), 'utf8'));
@@ -409,7 +409,19 @@ ok(bro.sessions.every((s) => (s.shots || []).every((x) => bro.clubs[x.club])), '
 const broNov12 = bro.sessions.find((s) => s.id === '2026-11-12-toptracer');
 eq([C.outliers(C.sessionShots(broNov12)).length, C.mishits(C.sessionShots(broNov12)).filter((m) => m.shot.club === 'Driver').map((m) => [m.shot.id, m.shot.carry_yds, C.misKind(m)])],
   [0, [['2026-11-12-toptracer-071', 132, 'thin']]], 'M3 Nov 12: the 132-yd driver launched at 6°, so it was thin, not a solid outlier');
-eq(Object.keys(bro), Object.keys(data).filter((k) => k !== 'equipment'), 'brother file has the same top-level keys as Dad’s (equipment is optional)');
+eq(Object.keys(bro).filter((k) => k !== 'rounds_reset'), Object.keys(data).filter((k) => k !== 'equipment'), 'brother file has the same top-level keys as Dad’s (equipment and rounds_reset are optional)');
+eq(bro.rounds_reset, '2026-11-25', 'M3’s rounds before Nov 26 (Matthew’s test rounds) are erased on every phone');
+// M2's launch monitor data, from the file Matthew sent: six August sessions, partly filled.
+{
+  const m2 = JSON.parse(fs.readFileSync(path.join(root, 'data', 'matthew_golf_data.json'), 'utf8'));
+  eq([m2.sessions.length, m2.sessions.reduce((t, s) => t + s.shots.length, 0), Object.keys(m2.clubs)], [6, 22, ['9i', '7i', 'Driver']], 'M2: 6 sessions, 22 shots, with the 9 iron, 7 iron and driver');
+  const nine = C.clubData([m2.sessions.find((s) => s.id === '2026-08-d-9i-12-shots')])['9i'];
+  const car = C.summarize(nine.solid, 'carry_yds');
+  eq([nine.mis.map((m) => m.id.slice(-3)), C.roundHalfEven(car.avg, 1), car.min, car.max], [['008'], 122.1, 109.4, 136.7], 'M2’s 9 iron: shot 8 (5.4° launch) is the thin mis-hit, and the rest average 122.1 yds (109.4–136.7), as his file says');
+  const seven = C.clubData([m2.sessions.find((s) => s.id === '2026-08-05-rapsodo-7i')])['7i'], bs = C.metricStat(seven, 'ball_speed_mph');
+  eq([bs.summaryOnly, bs.min, bs.max, C.metricStat(seven, 'landing_deg').max, C.metricStat(seven, 'total_yds').n], [true, 107, 109, 34, 4], 'M2’s Aug 5 7 iron: ball speed and landing from the session’s ranges, totals from its shots');
+  ok(m2.sessions.every((s) => s.shots.every((x) => !('descent_deg' in x))) && m2.sessions.some((s) => s.estimated), 'M2: descent became landing_deg; the estimated blocks are kept beside the shots, not in them');
+}
 eq([data.player.age, data.player.height_in], [56, 73], 'Dad: age and height');
 eq([C.buildHighlights([], null), C.sessionCallout('carry', []), C.progressFor([], 'PW', null).rows.length], [[], null, 0], 'no data: no highlights, callouts or progress rows');
 eq([C.resolvePlayer(players, 'brother', 'dad'), C.resolvePlayer(players, 'nobody', 'brother'), C.resolvePlayer(players, null, null), C.resolvePlayer([], 'x', 'y')],

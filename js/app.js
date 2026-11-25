@@ -92,6 +92,7 @@
     bundleStatus = 'loading';
     local = loadLocal();
     data = merge();
+    gmApplyReset();
   }
   function setURL() {
     try {
@@ -131,6 +132,7 @@
       // local.baselineSessionId: null = use the file's; '' = none (first session per club)
       baseline_session_id: local.baselineSessionId != null ? (local.baselineSessionId || null) : (b.baseline_session_id || null),
       goals: C.mergeGoals(b.personal_goals, local.goals),
+      swingNotes: (Array.isArray(b.swing_notes) ? b.swing_notes : []).filter((x) => x && typeof x.note === 'string' && x.note.trim()),
       reviews: (Array.isArray(b.swing_reviews) ? b.swing_reviews : [])
         .filter((r) => r && r.id && Array.isArray(r.frames) && r.frames.length).map(safeReview).filter((r) => r.frames.length)
         .sort((x, y) => String(y.date || '').localeCompare(String(x.date || ''))),
@@ -1951,11 +1953,20 @@
         </ul>
       </div></details>`;
   }
+  // Notes on his swing kept in the data file (swing_notes: { date, source, note }), newest first.
+  function swingNotesHtml() {
+    const list = (data.swingNotes || []).slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    if (!list.length) return '';
+    const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const when = (d) => { const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(d || ''); return !m ? '' : m[3] ? C.fmtDate(d) : `${MON[+m[2] - 1]} ${m[1]}`; };
+    return `<div class="card"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Swing notes</h3></div>
+      <ul class="rv-good">${list.map((x) => `<li>${icon('check')}<span>${esc(x.note)}${x.source || x.date ? `<span class="muted"> (${esc([when(x.date), x.source].filter(Boolean).join(', '))})</span>` : ''}</span></li>`).join('')}</ul></div>`;
+  }
   function swingView() {
     const list = data.reviews || [];
-    if (list.length) return list.map(reviewCard).join('') + filmGuide(false);
+    if (list.length) return swingNotesHtml() + list.map(reviewCard).join('') + filmGuide(false);
     const ex = exampleReview();
-    return `<div class="card"><div class="card-head"><span class="head-ico">${icon('play')}</span><h3 class="card-title">No swing reviews yet</h3></div>
+    return `${swingNotesHtml()}<div class="card"><div class="card-head"><span class="head-ico">${icon('play')}</span><h3 class="card-title">No swing reviews yet</h3></div>
         <p class="note">Film a few swings and ${sendTo('video')}. Claude pulls out the key frames (setup, top, impact and finish), draws on them to show what’s happening, and adds the fixes and drills here.</p></div>
       ${filmGuide(true)}
       ${ex ? reviewCard(ex) : ''}`;
@@ -2104,15 +2115,31 @@
         <p class="gm-src">Pars and yardages come from the course scorecard, and the holes from OpenStreetMap’s map of the course: its fairways, greens, tee boxes and bunkers, Lake Merced and the boundary. The trees are placed between the holes. The most a hole can cost is double par.</p>
         ${GM_MAP_CREDIT}
       </div>
-      ${gmHistoryHtml(st, course)}`;
+      ${gmHistoryHtml(st, course, round)}`;
   }
-  function gmHistoryHtml(st, course) {
+  function gmHistoryHtml(st, course, round) {
     const hist = (st.history || []).filter((r) => r && C.isNum(r.strokes));
-    if (!hist.length) return '';
+    const erase = round || hist.length ? `<div class="row-actions"><button class="btn ghost small" data-action="gm-erase">Erase all rounds</button></div>` : '';
+    if (!hist.length) return erase ? `<div class="card">${erase}</div>` : '';
     const full = hist.filter((r) => r.holes === 18), best = full.length ? full.reduce((a, b) => (b.strokes < a.strokes ? b : a)) : null;
     return `<h2>Your rounds</h2><div class="card"><ul class="plain gm-rounds">${hist.slice(0, 8).map((r) => `<li><span>${esc(C.fmtDate(r.date, { short: true }))} · ${esc(r.label || plural(r.holes, 'hole'))} · ${esc(gmTeeName(course, r.tee))}${r.mode === 'live' ? ' · from the range' : r.mode === 'meter' ? ' · swing meter' : ''}</span>
       <span class="sc">${r.strokes} (${GM.toParText(r.toPar)})</span></li>`).join('')}</ul>
-      ${best ? `<p class="hint">Best 18 holes: ${best.strokes} (${GM.toParText(best.toPar)}) on ${esc(C.fmtDate(best.date, { short: true }))}.</p>` : ''}</div>`;
+      ${best ? `<p class="hint">Best 18 holes: ${best.strokes} (${GM.toParText(best.toPar)}) on ${esc(C.fmtDate(best.date, { short: true }))}.</p>` : ''}${erase}</div>`;
+  }
+  // A rounds reset from the data file ("rounds_reset": "YYYY-MM-DD"): the first time a phone
+  // sees it, it erases this player's round in progress and past rounds from that day or
+  // before (so test rounds go from every phone). Rounds played after that are kept.
+  function gmApplyReset() {
+    const day = bundle && /^\d{4}-\d{2}-\d{2}$/.test(String(bundle.rounds_reset || '')) ? bundle.rounds_reset : null;
+    if (!day) return false;
+    const st = gmState();
+    if (st.resetApplied === day) return false;
+    st.history = (st.history || []).filter((r) => r && r.date && r.date > day);
+    if (st.round && !(st.round.started && st.round.started > day)) delete st.round;
+    st.resetApplied = day;
+    gmStore(st);
+    if (gm) gmStop();
+    return true;
   }
 
   // ----- During a round -----
@@ -4212,6 +4239,15 @@
     'gm-start'() { gmStartRound(); },
     'gm-continue'() { ui.game.setup = false; renderGame(); gmScrollTop(); },
     'gm-new'() { ui.game.setup = true; gmStop(); renderGame(); window.scrollTo(0, 0); },
+    'gm-erase'() {
+      if (!window.confirm(`Erase all of ${playerName()}’s rounds on this phone? The round in progress and every past round are deleted.`)) return;
+      const st = gmState();
+      delete st.round; st.history = [];
+      gmStop(); gmStore(st);
+      Object.assign(ui.game, { setup: false, card: false });
+      renderGame(); window.scrollTo(0, 0);
+      toast('Rounds erased');
+    },
     'gm-quit'() { gmEndRound(); },
     'gm-card'(b) {
       ui.game.card = !ui.game.card;
@@ -4674,6 +4710,7 @@
         bundle = d;
         bundleStatus = 'fresh';
         saveJSON(key('bundle'), d);
+        if (gmApplyReset() && ui.tab === 'game') refreshWhenFree();
         if (changed || !data.sessions.length) refreshWhenFree(); else renderBanner();
         syncGoals(); // upload goal changes made earlier on this phone, if it has a key
       })

@@ -9,7 +9,7 @@ A phone-first web page that tracks golf shots for Matthew's family. GitHub Pages
 | Player | id (URL `?player=`) | File | About |
 |---|---|---|---|
 | Dad | `dad` | `data/dad_golf_data.json` | 56, 6′1″; has had lessons and knows the basics; older Lynx Black Cat irons (3 iron to PW), Callaway Edge 5 hybrid and driver |
-| M2 (Matthew) | `matthew` | `data/matthew_golf_data.json` | Matthew himself, for when he starts playing; no sessions or clubs yet, so add them when he sends his data. On his page, photos and videos go straight to Claude |
+| M2 (Matthew) | `matthew` | `data/matthew_golf_data.json` | Matthew himself. Six August 2026 sessions from his own file (Rapsodo and Toptracer, partly filled: twelve 9 iron carries, single best shots for the 7 iron and driver), plus his swing notes. Callaway Edge irons, regular flex, confirmed only for Aug 5. On his page, photos and videos go straight to Claude |
 | M3 (Matthew's brother) | `brother` | `data/brother_golf_data.json` | 14, 5′0″; has had lessons and knows the basics; plays for fun and wants to keep up with his friends on the team |
 
 If it isn't clear whose photos they are, ask Matthew before adding anything.
@@ -76,7 +76,7 @@ Don't change `coaching_notes` or the tips in `js/tips.js` unless asked. Don't co
 
 ## Courses for the Game tab
 
-The Game tab plays TPC Harding Park with each player's own range shots (see README, "Game"). Rounds are saved on each phone, not in the data files, so there's nothing to commit after a round.
+The Game tab plays TPC Harding Park with each player's own range shots (see README, "Game"). Rounds are saved on each phone, not in the data files, so there's nothing to commit after a round. To erase a player's rounds on every phone (say, test rounds), set `rounds_reset` in his data file to today's date (`YYYY-MM-DD`): each phone erases his rounds from that day or before the first time it loads the file. M3's is set to 2026-11-25. On one phone, "Erase all rounds" under Your rounds does it too.
 
 - `js/courses.js` holds each course's scorecard: par, each set of tees' yardage for every hole, and a short note from the course guides, checked against the map.
 - `js/course-maps.js` holds its ground, as mapped in OpenStreetMap (© OpenStreetMap contributors, ODbL): the boundary, Lake Merced, every hole's line of play, green, fairway, tee box and bunker, and the trees. It's built by `scripts/build-course-map.py` from OSM's data for the course (see the script for where that came from); don't edit it by hand. The page credits OpenStreetMap wherever the map shows, as the licence asks: keep that line. Seven holes (2, 4, 5, 7, 9, 13, 15) have no fairway in OSM, so the script builds one along each line of play (`fairwaysBuilt` lists them); if OSM gains them, drop them from `BUILD_FW`.

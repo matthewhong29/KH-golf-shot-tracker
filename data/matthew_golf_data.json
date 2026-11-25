@@ -1,7 +1,13 @@
 {
   "player": {
     "name": "M2",
-    "relationship": "Matthew himself"
+    "relationship": "Matthew himself",
+    "self_reported": {
+      "driver_swing_speed_mph": 100,
+      "driver_swing_speed_note": "approximate, stated before the Aug 2026 sessions",
+      "three_wood_before_fix": "carry ~200 yds, total sometimes close to 240 yds; ball flight too low",
+      "irons_before_fix": "carried reasonably but rolled out a lot; low flight, poor stopping power"
+    }
   },
   "units": {
     "carry_yds": "yards (flat carry)",
@@ -13,11 +19,690 @@
     "hang_time_s": "seconds",
     "curve_ft": "feet",
     "offline_ft": "feet",
-    "club_speed_mph": "mph"
+    "club_speed_mph": "mph",
+    "smash_factor": "ball speed ÷ club speed",
+    "launch_dir_deg": "degrees, positive = right of the target"
   },
-  "sign_convention": "curve_ft and offline_ft: negative = left, positive = right (right-handed golfer view). curve = how much the ball bent in the air; offline = where it finished relative to the target line.",
-  "clubs": {},
+  "sign_convention": "curve_ft and offline_ft: negative = left, positive = right (right-handed golfer view). curve = how much the ball bent in the air; offline = where it finished relative to the target line. launch_dir_deg: positive = right of the target. shot_type uses Rapsodo’s codes: D = draw, F = fade, RF = right-fade, R = right (push).",
+  "data_quality": [
+    "Every value was transcribed from Claude's written readouts of screenshots in past chats. The screenshots themselves are not saved in chat text, so many per-shot fields are null.",
+    "Fields under 'estimated' were inferred by Claude from other numbers, not measured by a device.",
+    "Session dates are approximate; most data came from one chat last active Aug 16, 2026.",
+    "Device rule from Matthew: sessions with Rapsodo-only metrics (club speed, smash factor, launch direction, shot type) are Rapsodo; sessions without them are Toptracer at Topgolf."
+  ],
+  "clubs": {
+    "9i": "9 iron",
+    "7i": "7 iron",
+    "Driver": "Driver"
+  },
   "baseline_session_id": null,
   "personal_goals": [],
-  "sessions": []
+  "sessions": [
+    {
+      "id": "2026-08-05-rapsodo-7i",
+      "date": "2026-08-05",
+      "date_note": "date of the chat",
+      "device": "Rapsodo MLM2PRO (free tier)",
+      "equipment": "Callaway Edge 7-iron, standard shaft, regular flex",
+      "shot_level_data": "partial",
+      "metrics_not_available": [
+        "spin_rpm",
+        "spin_axis",
+        "attack_angle_deg",
+        "club_path_deg"
+      ],
+      "notes": [
+        "Before the ball-position / weight-shift fix.",
+        "Shot data: partial.",
+        "Screenshot of the best totals: shots #39-44 of the session.",
+        "Every shot started right. The two pushes (R) had the lowest smash factors.",
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+      ],
+      "coaching_notes": [],
+      "summary": {
+        "7i": {
+          "ball_speed_mph": {
+            "min": 107,
+            "max": 109
+          },
+          "club_speed_mph": {
+            "min": 80,
+            "max": 83
+          },
+          "smash_factor": {
+            "min": 1.23,
+            "max": 1.33
+          },
+          "total_yds": {
+            "min": 181.4,
+            "max": 191.0
+          },
+          "launch_deg": {
+            "min": 20,
+            "max": 23
+          },
+          "apex_ft": {
+            "min": 58,
+            "max": 67
+          },
+          "landing_deg": {
+            "min": 31,
+            "max": 34
+          },
+          "launch_dir_deg": {
+            "min": 1.3,
+            "max": 6.3
+          }
+        }
+      },
+      "shots": [
+        {
+          "id": "2026-08-05-rapsodo-7i-001",
+          "time": null,
+          "club": "7i",
+          "carry_yds": null,
+          "total_yds": 191.0,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": 1.33,
+          "launch_dir_deg": 1.9,
+          "shot_type": "D"
+        },
+        {
+          "id": "2026-08-05-rapsodo-7i-002",
+          "time": null,
+          "club": "7i",
+          "carry_yds": null,
+          "total_yds": 190.9,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": 1.33,
+          "launch_dir_deg": 4.7,
+          "shot_type": "RF"
+        },
+        {
+          "id": "2026-08-05-rapsodo-7i-003",
+          "time": null,
+          "club": "7i",
+          "carry_yds": null,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": 2.8,
+          "shot_type": "F",
+          "note": "total somewhere in the 189.6-190.9 band; exact value not recorded"
+        },
+        {
+          "id": "2026-08-05-rapsodo-7i-004",
+          "time": null,
+          "club": "7i",
+          "carry_yds": null,
+          "total_yds": 189.6,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": 1.31,
+          "launch_dir_deg": 6.3,
+          "shot_type": "R"
+        },
+        {
+          "id": "2026-08-05-rapsodo-7i-005",
+          "time": null,
+          "club": "7i",
+          "carry_yds": null,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": 1.3,
+          "shot_type": "D",
+          "note": "total somewhere in the 189.6-190.9 band; exact value not recorded"
+        },
+        {
+          "id": "2026-08-05-rapsodo-7i-006",
+          "time": null,
+          "club": "7i",
+          "carry_yds": null,
+          "total_yds": 181.4,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": 1.23,
+          "launch_dir_deg": 5.8,
+          "shot_type": "R",
+          "shot_number": 39,
+          "note": "outlier, likely off-center strike"
+        }
+      ]
+    },
+    {
+      "id": "2026-08-a-7i-after-fix",
+      "date": "2026-08-16",
+      "date_note": "Exact date not stated: in August 2026, on or before Aug 16 (the day the chat it came from was last active).",
+      "device": "Toptracer (Topgolf)",
+      "shot_level_data": "partial",
+      "notes": [
+        "First session after moving the ball forward and shifting weight.",
+        "Shot data: best shot only.",
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+      ],
+      "coaching_notes": [],
+      "estimated": {
+        "club_speed_mph": 79.5,
+        "smash_factor": "1.34-1.35"
+      },
+      "shots": [
+        {
+          "id": "2026-08-a-7i-after-fix-001",
+          "time": null,
+          "club": "7i",
+          "carry_yds": null,
+          "total_yds": null,
+          "ball_speed_mph": 107,
+          "launch_deg": null,
+          "apex_ft": 85,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "note": "apex 'around 85 ft'"
+        }
+      ]
+    },
+    {
+      "id": "2026-08-b-driver",
+      "date": "2026-08-16",
+      "date_note": "Exact date not stated: in August 2026, on or before Aug 16 (the day the chat it came from was last active).",
+      "device": "Toptracer (Topgolf)",
+      "shot_level_data": "partial",
+      "notes": [
+        "Shot data: best ball speed only.",
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+      ],
+      "coaching_notes": [],
+      "estimated": {
+        "club_speed_mph": "104-106"
+      },
+      "shots": [
+        {
+          "id": "2026-08-b-driver-001",
+          "time": null,
+          "club": "Driver",
+          "carry_yds": null,
+          "total_yds": null,
+          "ball_speed_mph": 157,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null
+        }
+      ]
+    },
+    {
+      "id": "2026-08-c-topgolf-9i",
+      "date": "2026-08-16",
+      "date_note": "Exact date not stated: in August 2026, on or before Aug 16 (the day the chat it came from was last active).",
+      "device": "Toptracer (Topgolf)",
+      "shot_level_data": "partial",
+      "notes": [
+        "Shot data: one shot, recalled from memory.",
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+      ],
+      "coaching_notes": [],
+      "shots": [
+        {
+          "id": "2026-08-c-topgolf-9i-001",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 150,
+          "total_yds": 153,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "note": "approximate: '~150 yds' with '~3 yds' rollout; landed on the green; apex not remembered"
+        }
+      ]
+    },
+    {
+      "id": "2026-08-d-9i-12-shots",
+      "date": "2026-08-16",
+      "date_note": "Exact date not stated: in August 2026, on or before Aug 16 (the day the chat it came from was last active).",
+      "device": "Rapsodo MLM2PRO (free tier)",
+      "shot_level_data": "partial",
+      "notes": [
+        "Shot data: partial: carry for every shot, other metrics only as groups.",
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+      ],
+      "coaching_notes": [],
+      "summary": {
+        "9i": {
+          "club_speed_mph": {
+            "avg": 77.5
+          },
+          "ball_speed_mph": {
+            "avg": 91.75
+          },
+          "smash_factor": {
+            "avg": 1.18
+          },
+          "launch_deg": {
+            "avg": 23
+          }
+        }
+      },
+      "summary_note": "The summary is the session’s averages without shot 8 (a thin mis-hit); carry comes from the shots.",
+      "group_details": [
+        {
+          "shots": [
+            2,
+            9,
+            11
+          ],
+          "label": "best strikes",
+          "smash_factor": {
+            "min": 1.2,
+            "max": 1.27
+          },
+          "launch_deg": {
+            "min": 22.8,
+            "max": 25.3
+          },
+          "ball_speed_mph": {
+            "min": 95.4,
+            "max": 99.6
+          }
+        },
+        {
+          "shots": [
+            2,
+            9,
+            10,
+            11
+          ],
+          "launch_deg": {
+            "min": 22,
+            "max": 28
+          }
+        },
+        {
+          "shots": [
+            6,
+            7
+          ],
+          "launch_deg": {
+            "min": 18,
+            "max": 19
+          },
+          "note": "low launch with low smash: thin/delofted"
+        },
+        {
+          "shots": [
+            6,
+            7,
+            12
+          ],
+          "smash_factor": {
+            "min": 1.11,
+            "max": 1.15
+          }
+        },
+        {
+          "shots": [
+            7,
+            12
+          ],
+          "smash_factor": {
+            "min": 1.11,
+            "max": 1.12
+          },
+          "carry_note": "the weaker clean strikes"
+        }
+      ],
+      "shots": [
+        {
+          "id": "2026-08-d-9i-12-shots-001",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 120.4,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 1
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-002",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 136.7,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 2
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-003",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 127.2,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 3
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-004",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 125.0,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 4
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-005",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 116.1,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 5
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-006",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 114.3,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 6
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-007",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 111.3,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 7
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-008",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 68.1,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": 5.4,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 8,
+          "note": "thin mishit; excluded from session averages"
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-009",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 128.6,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 9
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-010",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 125.0,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 10
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-011",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 128.9,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 11
+        },
+        {
+          "id": "2026-08-d-9i-12-shots-012",
+          "time": null,
+          "club": "9i",
+          "carry_yds": 109.4,
+          "total_yds": null,
+          "ball_speed_mph": null,
+          "launch_deg": null,
+          "apex_ft": null,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "shot_number": 12
+        }
+      ]
+    },
+    {
+      "id": "2026-08-e-toptracer-7i",
+      "date": "2026-08-16",
+      "date_note": "Exact date not stated: in August 2026, on or before Aug 16 (the day the chat it came from was last active).",
+      "device": "Toptracer (Topgolf)",
+      "shot_level_data": "partial",
+      "notes": [
+        "Shot data: one shot.",
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+      ],
+      "coaching_notes": [],
+      "shots": [
+        {
+          "id": "2026-08-e-toptracer-7i-001",
+          "time": null,
+          "club": "7i",
+          "carry_yds": 159.6,
+          "total_yds": null,
+          "ball_speed_mph": 110.2,
+          "launch_deg": null,
+          "apex_ft": 91.2,
+          "landing_deg": null,
+          "hang_time_s": null,
+          "curve_ft": null,
+          "offline_ft": null,
+          "club_speed_mph": null,
+          "smash_factor": null,
+          "launch_dir_deg": null,
+          "shot_type": null,
+          "curve_magnitude_ft": 8.2,
+          "note": "curve direction not recorded"
+        }
+      ]
+    }
+  ],
+  "swing_notes": [
+    {
+      "date": "2026-08-05",
+      "source": "7i Rapsodo data",
+      "note": "Push-right misses lined up with lower smash factor; possible heel contact or open face."
+    },
+    {
+      "date": "2026-08",
+      "source": "self-description",
+      "note": "Steep angle of attack and too little dynamic loft: low 3-wood, irons that run out."
+    },
+    {
+      "date": "2026-08",
+      "source": "fix",
+      "note": "Moving the ball forward and shifting weight raised the 7i apex to ~85 ft."
+    },
+    {
+      "date": "2026-08",
+      "source": "freeze frame, 0.5x, short club, no ball",
+      "note": "Hands ahead of the clubhead, weight on the lead leg, mat marks just ahead of center."
+    },
+    {
+      "date": "2026-08",
+      "source": "slow-motion video IMG_0353.mov, no ball",
+      "note": "Lead leg braced with trail heel up, head stable through impact, trail arm connected, full rotated finish."
+    }
+  ]
 }

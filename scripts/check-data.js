@@ -38,6 +38,7 @@ function checkPlayerFile(file, playerId) {
   if (!data) return { errors, warnings, sessions: 0, shots: 0 };
 
   if (!data.player || typeof data.player !== 'object' || !data.player.name) errors.push('top level: "player" needs a "name"');
+  if ('rounds_reset' in data && !/^\d{4}-\d{2}-\d{2}$/.test(String(data.rounds_reset))) errors.push('top level: "rounds_reset" must be a day, YYYY-MM-DD (every phone then erases this player\'s rounds from that day or before)');
   if (!Array.isArray(data.sessions)) errors.push('top level: "sessions" must be an array');
   const clubs = data.clubs || {};
   const sessionIds = new Set();
@@ -83,18 +84,19 @@ function checkPlayerFile(file, playerId) {
         if (typeof v !== 'number' || !Number.isFinite(v)) { errors.push(`${w}: ${k} must be a number or null`); continue; }
         if (v < lo || v > hi) warnings.push(`${w}: ${k} = ${v} looks out of range; check the photo`);
       }
-      if (shot.carry_yds == null) warnings.push(`${w}: no carry distance`);
+      // a session marked "shot_level_data": "partial" has shots with only some numbers known
+      if (shot.carry_yds == null && s.shot_level_data !== 'partial') warnings.push(`${w}: no carry distance`);
       if ('partial' in shot && shot.partial !== true) warnings.push(`${w}: "partial" should be true (a ball that wasn't a full swing) or left out`);
       if (typeof shot.carry_yds === 'number' && typeof shot.total_yds === 'number' && shot.total_yds < shot.carry_yds - 5) {
         warnings.push(`${w}: total (${shot.total_yds}) is well short of carry (${shot.carry_yds}); check the photo`);
       }
     });
 
-    // Two rows with every number the same are probably one shot entered twice (rows that
-    // only share time, club, carry, total and ball speed can be two real shots).
+    // Two rows the same in every field but the id are probably one shot entered twice (rows
+    // that only share time, club, carry, total and ball speed can be two real shots).
     const seen = new Map();
     s.shots.forEach((shot) => {
-      const key = JSON.stringify([shot.time, shot.club].concat(Object.keys(RANGES).map((k) => shot[k])));
+      const key = JSON.stringify(Object.keys(shot).filter((k) => k !== 'id').sort().map((k) => [k, shot[k]]));
       if (seen.has(key)) warnings.push(`${where}: shot ${shot.id} repeats ${seen.get(key)} in every column; check it isn't the same shot twice`);
       else seen.set(key, shot.id);
     });
@@ -121,7 +123,8 @@ function checkPlayerFile(file, playerId) {
   (data.sessions || []).forEach((s) => {
     const k = `${s.date}|${String(s.device || '').toLowerCase()}`;
     const other = byDay.get(k);
-    if (other && !(other.location && s.location && other.location !== s.location)) {
+    // (dates marked approximate, with a date_note, can coincide)
+    if (other && !other.date_note && !s.date_note && !(other.location && s.location && other.location !== s.location)) {
       warnings.push(`sessions ${other.id} and ${s.id} are on the same day with the same device; add the shots to one session`);
     } else if (!other) byDay.set(k, s);
   });
