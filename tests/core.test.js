@@ -515,6 +515,16 @@ const peakOf = (tr) => { let m = 0; for (let i = 0; i <= 2000; i++) m = Math.max
 const slopeDeg = (tr, s0, s1) => Math.atan2(tr.height(s1) - tr.height(s0), s1 - s0) * 180 / Math.PI;
 const top3w0 = FL.trajectory({ club: '3w', carry_yds: 65, total_yds: 145, ball_speed_mph: 115, launch_deg: 2, apex_ft: 2, landing_deg: 3, curve_ft: 0, offline_ft: 15 }, { kind: 'wood' });
 const t7 = FL.trajectory({ club: '7i', carry_yds: 125, total_yds: 130, ball_speed_mph: 94, launch_deg: 22, apex_ft: 63, landing_deg: 40, hang_time_s: null, curve_ft: -16, offline_ft: 6 }, { kind: 'iron' });
+// The Game's landing camera: it cuts in after the apex, on the way down, and keeps the ball
+// in view from there through the landing to where it stops (a chip, which barely rises, too).
+{
+  const seen = (cam, p) => { const q = FL.project(cam, p.x, p.y || 0, p.z); return !!q && q.x > 0 && q.x < cam.w && q.y > 0 && q.y < cam.h; };
+  [[t7, 0.4], [FL.trajectory({ club: '9i', carry_yds: 12, total_yds: 30, ball_speed_mph: 40, launch_deg: 10, apex_ft: 6, landing_deg: 20, hang_time_s: null, curve_ft: 0, offline_ft: 0 }, { kind: 'iron' }), -1.1]].forEach(([tr0, hd], k) => {
+    const tr = FL.place(tr0, 120, -40, hd), tc = FL.landCut(tr), cam = FL.fitLanding(tr, 390, 400, hd, []);
+    const along = [tc, (tc + tr.hang) / 2, tr.hang, (tr.hang + tr.duration) / 2, tr.duration].map((t) => tr.at(t));
+    ok(tc >= tr.apexT && tc <= tr.hang && along.every((p) => seen(cam, p)) && seen(cam, tr.rest), `${k ? 'a chip' : 'a 7 iron'}: the landing camera cuts in on the way down (${tc.toFixed(2)} s; apex ${tr.apexT.toFixed(2)} s, landing ${tr.hang.toFixed(2)} s) and sees the ball from there till it stops`);
+  });
+}
 ok(near(peakOf(t7) * 3, 63, 0.2), 'peaks at the apex height (63 ft)');
 ok(near(slopeDeg(t7, 0, 0.05), 22, 0.3), 'leaves the ground at the launch angle');
 ok(near(-slopeDeg(t7, 124.95, 125), 40, 0.5), 'comes down at the landing angle');

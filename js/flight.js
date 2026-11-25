@@ -659,6 +659,39 @@
     var c = offsetPoint(0, 0, heading, (v0 + v1) / 2, (u0 + u1) / 2);
     return camera(c.x, hgt, c.z, -90 * DEG, vf, w, h, heading);
   }
+  // When the Game's camera cuts to the landing: after the apex, once the ball has come down
+  // to half its peak height, and at least 0.6 s before it lands (at once for a low shot).
+  function landCut(tr) {
+    var top = tr.apexPoint ? tr.apexPoint.y : 0, t = tr.hang;
+    for (var i = 0; i < tr.samples.length; i++) {
+      var s = tr.samples[i];
+      if (s.t > tr.apexT && s.y <= 0.5 * top) { t = s.t; break; }
+    }
+    return Math.max(tr.apexT, Math.min(t, tr.hang - 0.6));
+  }
+  // Framed on where the ball comes down: from behind and above the landing spot, looking
+  // down the line of the shot at about 30°, so the end of the descent, the landing, the
+  // bounce and the roll all show, with a little ground round them (and anything in `extra`,
+  // such as the pin when it comes down near one). tr: a shot placed on a hole (place()).
+  function fitLanding(tr, w, h, heading, extra) {
+    var tc = landCut(tr), o = tr.land;
+    var pts = tr.samples.filter(function (s) { return s.t >= tc && s.t <= tr.hang; }).map(function (s) { return { x: s.x, y: s.y, z: s.z }; });
+    pts.push({ x: tr.land.x, y: 0, z: tr.land.z }, { x: tr.rest.x, y: 0, z: tr.rest.z });
+    [[-9, -10], [9, -10], [-9, 6], [9, 6]].forEach(function (q) { var g = offsetPoint(o.x, o.z, heading, q[1], q[0]); pts.push({ x: g.x, y: 0, z: g.z }); });
+    (extra || []).forEach(function (p) { pts.push({ x: p.x, y: p.y || 0, z: p.z }); });
+    var sh = Math.sin(heading), ch = Math.cos(heading);
+    var local = pts.map(function (p) { var dx = p.x - o.x, dz = p.z - o.z; return { x: dx * ch - dz * sh, y: p.y || 0, z: dx * sh + dz * ch }; });
+    var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    local.forEach(function (p) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); });
+    var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, pitch = -30 * DEG, vfov = 44 * DEG, d = Math.max(30, (z1 - z0) * 0.9), cam = null;
+    for (var it = 0; it < 40; it++) {
+      cam = camera(cx, d * Math.sin(-pitch), cz - d * Math.cos(pitch), pitch, vfov, w, h, 0);
+      if (local.every(function (p) { return inside(cam, p, 0.08); })) break;
+      d *= 1.1;
+    }
+    var q = offsetPoint(o.x, o.z, heading, cam.z, cam.x);
+    return camera(q.x, cam.y, q.z, cam.pitch, cam.vfov, w, h, heading);
+  }
   // From behind the ball at (x0, z0), facing `heading`, framed like the tee box view.
   function fitBehind(points, w, h, x0, z0, heading) {
     var sh = Math.sin(heading), ch = Math.cos(heading);
@@ -863,7 +896,7 @@
     camera: camera, project: project, inside: inside, horizonY: horizonY, fitTee: fitTee, fitSide: fitSide, fitGreen: fitGreen, VIEWS: VIEWS,
     course: course, rng: rng, FAIRWAY_HALF: FAIRWAY_HALF,
     drawCourse: drawCourse, drawShot: drawShot, drawFrame: drawFrame, COL: COL,
-    fwd: fwd, offsetPoint: offsetPoint, place: place, unproject: unproject, fitTop: fitTop, fitBehind: fitBehind,
+    fwd: fwd, offsetPoint: offsetPoint, place: place, unproject: unproject, fitTop: fitTop, fitBehind: fitBehind, fitLanding: fitLanding, landCut: landCut,
     drawHole: drawHole, flagAt: flagAt, pill: pill, HCOL: HCOL, G_YDS: G_YDS
   };
 });

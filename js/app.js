@@ -3551,12 +3551,17 @@
     const pts = [o, tr.apexPoint, tr.land, tr.rest, { x: aim.x, y: 0, z: aim.z }].concat(tr.samples.filter((s, i) => i % 6 === 4));
     const cam = FL.fitBehind(pts, gm.w, gm.h, o.x, o.z, res.heading);
     const bg = gmBg(cam, { near: 12 });
+    // Once the ball is past its peak and on its way down, the camera cuts to where it's
+    // landing, so he sees it come down, bounce and roll out (and the flag, near the pin).
+    const cut = FL.landCut(tr), landing = tr.duration - cut > 0.8;
+    const camL = landing ? FL.fitLanding(tr, gm.w, gm.h, res.heading, GM.dist(tr.rest, gm.pin) < 30 ? [{ x: gm.pin.x, y: 0, z: gm.pin.z }] : []) : null;
+    const bgL = camL ? gmBg(camL, { near: 25 }) : null;
     const skip = $('.gm-skip', gm.box);
     if (skip) skip.hidden = false;
     gm.phase = 'flight';
     gm.canvas.setAttribute('aria-label', 'The shot from behind the ball');
     gm.canvas.classList.remove('aim');
-    const fl = gm.fl = { cam, bg, tr, t: 0, last: 0, after, done: false };
+    const fl = gm.fl = { cam, bg, camL, bgL, cut: camL ? cut : Infinity, tr, t: 0, last: 0, after, done: false };
     const end = () => {
       if (!gm || fl.done) return;
       fl.done = true;
@@ -3564,6 +3569,7 @@
       gm.raf = 0;
       if (skip) skip.hidden = true;
       gm.bgs.delete(cam);
+      if (camL) gm.bgs.delete(camL);
       gm.fl = null;
       after();
     };
@@ -3573,8 +3579,10 @@
       const dt = fl.last ? Math.min(0.05, (ts - fl.last) / 1000) : 0;
       fl.last = ts;
       fl.t += dt;
+      const down = fl.t >= fl.cut;
+      if (down && !fl.landed) { fl.landed = true; gm.canvas.setAttribute('aria-label', 'Where the ball lands, and how it rolls'); }
       gm.ctx.clearRect(0, 0, gm.w, gm.h);
-      FL.drawFrame(gm.ctx, { cam, view: 'game', bg, past: [], cur: tr, t: Math.min(fl.t, tr.duration), hud: true });
+      FL.drawFrame(gm.ctx, { cam: down ? camL : cam, view: 'game', bg: down ? bgL : bg, past: [], cur: tr, t: Math.min(fl.t, tr.duration), hud: true });
       if (fl.t >= tr.duration + GM_HOLD) { end(); return; }
       gm.raf = requestAnimationFrame(tick);
     };
