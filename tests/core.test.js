@@ -129,34 +129,44 @@ eq(C.sortClubs(['5hy', 'PW', '7i', '9i', 'Driver', '3w', '5i', 'SW']), ['SW', 'P
 section('Mis-hits & highlights');
 eq(C.mishits(C.sessionShots(nov)).map((m) => m.shot.id), ['2026-11-01-037', '2026-11-01-038', '2026-11-01-039'], 'mis-hits on Nov 1: exactly the three topped 5w shots');
 eq(C.sessionMishits(data.sessions).size, 3, 'mis-hits across all sessions');
-eq(['5hy', '4hy', '5w', '3w', 'Driver', '7i', '4i', 'PW', 'SW'].map(C.launchFloor), [5, 5, 5, 5, 5, 10, 10, 10, 10], 'launch floor: 5° woods/hybrids/driver, 10° irons/wedges');
+eq(['5hy', '4hy', '5w', '3w', 'Driver', '7i', '4i', 'PW', 'SW'].map((c) => Math.round(C.launchFloor(c) * 10) / 10), [9, 8.4, 7.2, 6.6, 7.2, 11.4, 10, 15.6, 18],
+  'launch floor: 5° woods/hybrids/driver and 10° irons/wedges, or 60% of the low end of the club’s usual launch window, whichever is higher');
 eq(C.mishits([{ club: '5hy', carry_yds: 138, launch_deg: 9 }, { club: '5hy', carry_yds: 140, launch_deg: 18 }]).length, 0, 'a 9° hybrid shot is not a mis-hit');
 eq(C.quantile([21, 26, 68, 136, 138], 0.75), 136, '5w upper quartile');
 eq(C.quantile([54, 55, 63, 64, 70, 80, 88], 0.75), 75, 'SW upper quartile (interpolated)');
 eq(C.median([21, 26, 68, 136, 138]), 68, 'median (why it was replaced: 60% of 68 misses the 68-yd top)');
-const fake = [{ club: 'PW', carry_yds: 85, launch_deg: 30 }, { club: 'PW', carry_yds: 88, launch_deg: 31 }, { club: 'PW', carry_yds: 20, launch_deg: 12 }, { club: 'PW', carry_yds: 70, launch_deg: 4 }];
+const fake = [{ club: 'PW', carry_yds: 85, launch_deg: 30 }, { club: 'PW', carry_yds: 88, launch_deg: 31 }, { club: 'PW', carry_yds: 20, launch_deg: 28 }, { club: 'PW', carry_yds: 70, launch_deg: 4 }];
 eq(C.mishits(fake).map((m) => m.reasons.join('+')), ['short carry', 'low launch'], 'mis-hit rules');
-eq(C.mishits([{ club: 'Driver', carry_yds: 200, launch_deg: 7 }]).length, 0, 'driver launch floor is 5°');
+eq(C.mishits(fake).map(C.misKind), ['fat', 'thin'], 'named by what happened: a short carry at a normal height is fat, a low launch thin');
+eq([C.mishits([{ club: 'Driver', carry_yds: 200, launch_deg: 8 }]).length, C.mishits([{ club: 'Driver', carry_yds: 150, launch_deg: 6 }]).length], [0, 1], 'a driver at 8° is fine, at 6° it came off thin');
+// The real shots that launched far too low for the club but ran a long way: thin, not solid.
+const allShots = data.sessions.concat(fileData.sessions).reduce((a, x) => a.concat(C.sessionShots(x)), []);
+const thinIds = ['2026-11-10-toptracer-064', '2026-11-12-toptracer-042', '2026-11-22-toptracer-006'];
+eq(fileData.sessions.filter((x) => C.sessionShots(x).length).reduce((a, x) => a.concat(C.mishits(C.sessionShots(x)).map((m) => m.shot.id)), []).filter((id) => thinIds.includes(id)), thinIds,
+  'Dad’s 8° and 7° hybrids and his 11° pitching wedge count as thin');
+ok(allShots.length > 0, 'shots to check');
 const hlNov = C.buildHighlights([nov], aug).map((h) => h.text);
 eq(hlNov, [
   '48 shots with 6 clubs (SW, PW, 9i, 7i, 5hy, 5w).',
   'Solid contact: 45 of 48 shots (94%).',
-  '3 likely thin or topped shots, all with the 5w (launch as low as 2°, carry as short as 21 yds).',
+  '3 likely mis-hits, all with the 5w (2 thin or topped, launch as low as 2°; 1 fat or mis-struck, carry as short as 26 yds at a normal height).',
   'Average miss: SW 3.2 R · PW 0.6 L · 9i 2.4 R · 7i 4.6 R · 5hy 28.3 R · 5w 16.2 R yds. Mis-hits are left out.',
-  'Needs work: SW (carry varies a lot, 54 to 88 yds), 5hy (misses about 28 yds right on average), 5w (3 of 5 shots were mis-hits; misses about 16 yds right on average).',
-  'Since Aug 9, 2026 (baseline): PW shortest carry 9 → 69 yds, lowest launch 1.7° → 26°.',
+  'Needs work: SW (carry varies a lot, 54 to 88 yds), 9i (only 7 of 15 finished within 10 yds of the line, missing both ways), 5hy (misses about 28 yds right on average), 5w (3 of 5 shots were mis-hits).',
+  'Since Aug 9, 2026 (baseline, on Rapsodo): PW shortest carry 9 → 69 yds, lowest launch 1.7° → 26°.',
 ], 'Nov 1 highlights');
 // The first 36 shots alone (the brief's original data) still give the clean-contact line and the rightward trend.
 eq(C.buildHighlights([nov36], aug).map((h) => h.text).slice(1, 4), [
   'Solid contact: 36 of 36 shots (100%).',
-  'No thin or topped shots, lowest launch 18° (9i, 5hy).',
+  'No likely mis-hits, lowest launch 18° (9i, 5hy).',
   'Average miss: PW 0.6 L · 9i 2.4 R · 7i 4.6 R · 5hy 28.3 R yds. The miss moves farther right as the clubs get longer.',
 ], 'first 36 shots: clean contact and rightward miss trend');
 eq(C.buildHighlights([{ id: 'x', shots: [{ club: 'SW', carry_yds: 70, launch_deg: 40 }, { club: 'SW', carry_yds: 72, launch_deg: 41 }, { club: 'SW', carry_yds: 20, launch_deg: 30 }, { club: '5w', carry_yds: 140, launch_deg: 10 }, { club: '5w', carry_yds: 60, launch_deg: 3 }] }], null)[2].text,
-  '2 likely thin or topped shots: SW ×1, 5w ×1 (launch as low as 3°, carry as short as 20 yds).', 'contact text across clubs');
+  '2 likely mis-hits: SW ×1, 5w ×1 (1 thin or topped, launch as low as 3°; 1 fat or mis-struck, carry as short as 20 yds at a normal height).', 'contact text across clubs, by what happened');
+// Nov 22: the miss only moves right with the hybrid (PW 1.1 L, 9i 0.3 L, 7i 1.3 R are the same within a yard), so no trend is claimed.
+ok(!/moves farther/.test(C.buildHighlights([fileData.sessions.find((x) => x.id === '2026-11-22-toptracer')], null).map((h) => h.text).join(' ')), 'no miss trend from differences of a yard');
 eq(C.buildHighlights([aug], aug).map((h) => h.text), [
   'Ranges only; individual shots weren’t recorded.',
-  'Thin or topped contact: PW launch as low as 1.7°, carry as short as 9 yds.',
+  'Likely mis-hits among them: PW launch as low as 1.7°, carry as short as 9 yds.',
   'This is the baseline session that progress is measured from.',
 ], 'Aug highlights');
 eq(C.buildHighlights([], null), [], 'no sessions -> no highlights');
@@ -197,21 +207,23 @@ const olGoal = (id) => olG.goals.find((g) => g.id === id);
 eq([olGoal('contact').n, olGoal('contact').of, olGoal('contact').met, olGoal('carry').of, olGoal('line').of], [10, 10, true, 10, 10],
   'goals: outliers count as solid, and in the carry-zone and on-line counts');
 const olFast = C.clubData([{ id: 'f', shots: ol([118, 120, 121, 119, 122, 120, 117, 123, 150], '7i', (c) => ({ ball_speed_mph: c === 150 ? 105 : 88 + (c - 117) })) }])['7i'];
-eq(C.strikeReference(olFast, '7i', null).metrics.carry_yds.max, 123, 'pure strike leaves out a long outlier, even with the fastest ball speed');
+eq(C.strikeReference(olFast, '7i', null).metrics.carry_yds.max, 150, 'a long shot struck as fast as his best isn’t an outlier: it counts in the pure strike');
+ok(C.outliers(olShots).some((o) => o.shot.carry_yds === 150), 'a long shot at an ordinary ball speed is still an outlier');
 eq(C.buildHighlights([olSession], null).map((h) => h.text).slice(1, 4), [
   'Solid contact: 10 of 10 shots (100%).',
-  'No thin or topped shots, lowest launch 20° (7i).',
+  'No likely mis-hits, lowest launch 20° (7i).',
   '2 outliers, far off the usual carry: 7i 90 and 150 yds (usually 120). They’re left out of the numbers but still count as solid contact.',
 ], 'highlights list the outliers');
 eq(C.sessionCallout('carry', [olSession]).text, 'Average carry: 7i 120.0 yds. Outliers are left out.', 'callout says outliers are left out');
-eq(C.sessionCallout('mishits', [olSession]).text, 'No thin or topped shots in 10 shots.', 'outliers are not thin or topped');
+eq(C.sessionCallout('mishits', [olSession]).text, 'No likely mis-hits in 10 shots.', 'outliers are not mis-hits');
 
 section('Needs work and per-club goals');
 const novE = C.clubData([nov]);
 eq(C.sortClubs(Object.keys(novE)).map((c) => [c, C.needsWork(novE[c]).map((f) => f.kind)]),
-  [['SW', ['distance']], ['PW', []], ['9i', []], ['7i', []], ['5hy', ['direction']], ['5w', ['contact', 'direction']]], 'needs-work flags on Nov 1');
+  [['SW', ['distance']], ['PW', []], ['9i', ['direction']], ['7i', []], ['5hy', ['direction']], ['5w', ['contact']]], 'needs-work flags on Nov 1: the 9i misses both ways; 2 solid 5w shots are too few for a miss pattern');
+eq(C.needsWork(novE['9i'])[0].text, 'only 7 of 15 finished within 10 yds of the line, missing both ways', '9i: a two-way miss');
 eq(C.needsWork(novE['5hy'])[0].text, 'misses about 28 yds right on average', '5hy direction text');
-eq(C.needsWork(novE['5w']).map((f) => f.key), ['solid_pct', 'offline_ft'], '5w flags point at solid contact and offline');
+eq(C.needsWork(novE['5w']).map((f) => f.key), ['solid_pct'], '5w flags point at solid contact');
 eq(C.needsWork(novE.SW)[0].key, 'carry_yds', 'SW flag points at carry');
 eq(C.needsWork(null), [], 'no entry, no flags');
 const goalsOf = (c) => {
@@ -219,17 +231,20 @@ const goalsOf = (c) => {
   G.goals.forEach((g) => { o[g.id] = g.id === 'carry' ? [g.lo, g.hi, g.n, g.of, g.met] : g.id === 'launch' ? [g.lo, g.hi, g.status] : [g.n, g.of, g.met]; });
   return [G.focus.kind, o];
 };
-eq(goalsOf('PW'), ['launch', { carry: [85, 97, 4, 9, false], line: [6, 9, false], launch: [26, 30, 'high'], contact: [9, 9, true] }], 'PW goals: focus on launch, zone around the 91-yd pure strike');
-eq(goalsOf('5hy'), ['direction', { carry: [140, 156, 2, 4, false], line: [1, 4, false], launch: [15, 19, 'high'], contact: [4, 4, true] }], '5hy goals: focus on direction');
+eq(goalsOf('PW'), ['launch', { carry: [77, 87, 6, 9, false], line: [6, 9, false], launch: [26, 30, 'high'], contact: [9, 9, true] }], 'PW goals: focus on launch; the same distance every time: ±5 yds around his typical 82');
+eq(goalsOf('5hy'), ['direction', { carry: [132, 148, 2, 4, false], line: [1, 4, false], launch: [15, 19, 'high'], contact: [4, 4, true] }], '5hy goals: focus on direction');
+eq([C.clubGoals(novE.PW, 'PW').goals[0].typical, C.clubGoals(novE.PW, 'PW').goals[0].pureCarry], [82, 91], 'the distance goal: his typical carry, with the pure strike beside it as the stretch target');
 eq(goalsOf('5w'), ['contact', { carry: [129, 145, 2, 5, false], line: [1, 5, false], launch: [12, 16, 'low'], contact: [2, 5, false] }], '5w goals: focus on contact');
-eq(goalsOf('SW'), ['launch', { carry: [66, 84, 2, 7, false], line: [6, 7, true], launch: [30, 34, 'high'], contact: [7, 7, true] }], 'SW goals');
+eq(goalsOf('SW'), ['launch', { carry: [59, 69, 2, 7, false], line: [6, 7, true], launch: [30, 34, 'high'], contact: [7, 7, true] }], 'SW goals');
+// A scattered session can't widen the zone and pass: Dad's Nov 10 7 iron (81–132 yds) doesn't meet it.
+ok(!C.clubGoals(C.clubData([fileData.sessions.find((x) => x.id === '2026-11-10-toptracer')])['7i'], '7i').goals[0].met, 'a scattered 7 iron doesn’t pass the same-distance goal');
 eq(goalsOf('9i')[0], 'direction', '9i focus: direction (7 of 15 within 10 yds)');
 eq(C.clubGoals(null, 'PW'), null, 'no shots, no goals');
 
 section('Pure strikes and checking a live shot');
 const refOf = (c) => { const r = C.strikeReference(novE[c], c); return [r.carry, r.n, r.metrics.ball_speed_mph.min, r.by]; };
 eq(C.sortClubs(Object.keys(novE)).map((c) => [c].concat(refOf(c))), [
-  ['SW', 75, 2, 64, 'ball_speed_mph'], ['PW', 91, 3, 73, 'ball_speed_mph'], ['9i', 109, 5, 84, 'ball_speed_mph'],
+  ['SW', 75, 2, 64, 'ball_speed_mph'], ['PW', 91, 3, 73, 'ball_speed_mph'], ['9i', 110, 4, 84, 'ball_speed_mph'],
   ['7i', 127, 2, 95, 'ball_speed_mph'], ['5hy', 148, 2, 104, 'ball_speed_mph'], ['5w', 137, 2, 106, 'ball_speed_mph']],
   'pure-strike carry, shot count and ball speed per club');
 eq(C.bestStrikes(novE.SW, 'SW').shots.some((s) => s.launch_deg === 22), false, 'the 22° sand wedge (a thin strike) is not a pure strike');
@@ -243,10 +258,13 @@ const pure = C.checkShot(novE.PW, 'PW', { carry_yds: 91, ball_speed_mph: 76, lau
 eq([pure.verdict, pure.title, pure.lines.map((l) => l.ok)], ['pure', 'Pure strike!', [true, true, true, true]], 'a pure PW strike');
 eq(C.checkShot(novE.PW, 'PW', { carry_yds: 80, ball_speed_mph: 70, launch_deg: 35, offline_ft: -45 }).lines.map((l) => l.text), [
   'Ball speed 70 mph: close to a pure strike (73+).',
-  'Carry 80 yds: 5 short of your 85–97 yd zone.',
+  'Carry 80 yds: in your 77–87 yd zone.',
   'Launch 35° is high (aim for 26–30°): keep your hands ahead.',
   '45 ft L (15 yds): outside the 10-yd target.'], 'a so-so PW: what was off');
 eq(C.checkShot(novE.PW, 'PW', { carry_yds: 40, ball_speed_mph: 55, launch_deg: 6 }).verdict, 'mishit', 'a topped PW');
+eq((({ verdict, title }) => [verdict, title])(C.checkShot(novE.PW, 'PW', { carry_yds: 93, ball_speed_mph: 80, launch_deg: 15, offline_ft: 6 })), ['mishit', 'Looks thin or topped'], 'a PW launched at 15° is thin, however fast and far');
+eq(C.checkShot(novE.PW, 'PW', { carry_yds: 91, ball_speed_mph: 76, launch_deg: 20, offline_ft: 6 }).verdict, 'keep', 'a PW at 20° isn’t a pure strike: it launched well under the window');
+eq(C.checkShot(novE.PW, 'PW', { carry_yds: 45, ball_speed_mph: 60, launch_deg: 29 }).title, 'Looks fat or mis-struck', 'a short PW at a normal height: fat');
 eq(C.checkShot(novE['5hy'], '5hy', { carry_yds: 150, launch_deg: 17 }).verdict, 'good', 'carry and launch only: good shot');
 eq(C.checkShot(null, 'PW', { carry_yds: 80 }), null, 'no data for the club: nothing to check');
 
@@ -317,20 +335,36 @@ eq(C.solidPct(C.progressFor(data.sessions, '5w', null).latest.entry), 40, '5w so
 section('Better or worse since the baseline');
 const sum = (key, vals) => C.summarize(vals.map((v) => ({ [key]: v })), key);
 const tr = (key, a, b, w) => { const t = C.trend(key, sum(key, a), sum(key, b), { window: w }); return t && [t.dir, t.level, t.basis]; };
-eq(tr('carry_yds', [100, 100], [105, 105]), ['better', 2, 'average'], 'carry +5%: better, two arrows');
-eq(tr('carry_yds', [100, 100], [90, 90]), ['worse', 3, 'average'], 'carry −10%: much worse');
-eq(tr('carry_yds', [100, 100], [101, 101]), ['same', 0, 'average'], 'carry +1%: about the same');
-eq(tr('ball_speed_mph', [80, 80], [82, 82]), ['better', 1, 'average'], 'ball speed +2.5%: a little better');
-eq(tr('launch_deg', [26, 26], [23, 23], [19, 23]), ['better', 2, 'target'], 'launch moving into its window: better');
-eq(tr('launch_deg', [21, 21], [27, 27], [19, 23]), ['worse', 3, 'target'], 'launch moving 4° past its window: much worse');
+// A spread of shots around a middle: n shots, the middle m, ± up to sp.
+const around = (m, sp, n) => Array.from({ length: n }, (_, i) => m + sp * Math.sin(i * 2.4));
+eq(tr('carry_yds', around(100, 6, 15), around(105, 6, 15)), ['better', 2, 'average'], 'carry +5% over 15 shots each: better, two arrows');
+eq(tr('carry_yds', around(100, 6, 15), around(90, 6, 15)), ['worse', 3, 'average'], 'carry −10%: much worse');
+eq(tr('carry_yds', around(100, 6, 15), around(101, 6, 15)), ['same', 0, 'average'], 'carry +1%: about the same');
+eq(tr('carry_yds', around(100, 12, 4), around(104, 12, 4)), ['same', 0, 'average'], 'carry +4% from 4 shots of a wide spread each: could be luck, so about the same');
+eq(tr('ball_speed_mph', around(80, 1.5, 20), around(82, 1.5, 20)), ['better', 1, 'average'], 'ball speed +2.5% over 20 shots: a little better');
+eq(tr('launch_deg', around(26, 1, 10), around(23, 1, 10), [19, 23]), ['better', 2, 'target'], 'launch moving into its window: better');
+eq(tr('launch_deg', around(21, 1, 10), around(27, 1, 10), [19, 23]), ['worse', 3, 'target'], 'launch moving 4° past its window: much worse');
+// Dad’s 7 iron, Nov 1 (8 shots) to Nov 22: 114.5 to 111.4 yds is within the noise.
+const dad7 = (id) => C.metricStat(C.clubData([fileData.sessions.find((x) => x.id === id)])['7i'], 'carry_yds');
+eq(C.trend('carry_yds', dad7('2026-11-01-toptracer'), dad7('2026-11-22-toptracer')).dir, 'same', 'Dad’s 7 iron 114.5 → 111.4 yds: about the same, not worse');
 eq(C.trend('launch_deg', sum('launch_deg', [26]), sum('launch_deg', [23]), {}), null, 'launch with no window: no arrow');
 eq(tr('offline_ft', [80, 90, 85], [-60, 20, 40, 30, 10, -5]), ['better', 3, 'line'], 'offline closer to the line on average is better, even with a wider spread');
-eq(tr('curve_ft', [5, -5], [20, -20]), ['worse', 3, 'line'], 'more bend: worse');
+eq(tr('curve_ft', [5, -6, 4, -5, 6, -4], [20, -22, 18, -20, 21, -19]), ['worse', 3, 'line'], 'more bend: worse');
 eq(tr('apex_ft', [60, 60], [70, 70]), null, 'peak height gets no arrow');
-eq(C.trend('solid_pct', { avg: 80 }, { avg: 90 }).dir + C.trend('solid_pct', { avg: 80 }, { avg: 90 }).level, 'better2', 'solid contact +10 points: better');
-eq(C.trend('solid_pct', { avg: 90 }, { avg: 88 }).dir, 'same', 'solid contact −2 points: about the same');
+const sp = (k, n) => ({ avg: 100 * k / n, n: k, of: n });
+eq(C.trend('solid_pct', sp(80, 100), sp(90, 100)).dir + C.trend('solid_pct', sp(80, 100), sp(90, 100)).level, 'better2', 'solid contact +10 points over 100 shots each: better');
+eq(C.trend('solid_pct', sp(16, 20), sp(18, 20)).dir, 'same', '+10 points over 20 shots each: could be luck');
+eq(C.trend('solid_pct', sp(21, 30), sp(27, 30)).dir, 'better', '70% to 90% over 30 shots each: better');
+eq(C.trend('solid_pct', sp(15, 15), sp(22, 23)).dir, 'same', '15 of 15 to 22 of 23: one mis-hit isn’t worse');
+eq(C.trend('solid_pct', sp(90, 100), sp(88, 100)).dir, 'same', 'solid contact −2 points: about the same');
 const summaryOnly = { n: 0, of: 0, avg: null, min: 9, max: 95, summaryOnly: true, values: [] };
-eq((({ dir, level, basis }) => [dir, level, basis])(C.trend('carry_yds', summaryOnly, sum('carry_yds', [80, 108]))), ['better', 3, 'best'], 'a ranges-only baseline compares the longest shots');
+eq((({ dir, level, basis, from, to }) => [dir, level, basis, from, to])(C.trend('carry_yds', summaryOnly, sum('carry_yds', [80, 108]))), ['same', 0, 'best', 95, 108],
+  'a ranges-only baseline: the longest shots side by side, with no verdict (a longer list has a longer longest)');
+// From one session to the next, a rate is judged on the clubs hit both times, each club evenly.
+const rc = C.rateChange([].concat(Array(8).fill({ club: 'PW', ok: true }), Array(2).fill({ club: 'PW', ok: false }), Array(6).fill({ club: '5hy', ok: true }), Array(29).fill({ club: '5hy', ok: false })),
+  [].concat(Array(9).fill({ club: 'PW', ok: true }), Array(5).fill({ club: 'PW', ok: false }), Array(4).fill({ club: '5hy', ok: true }), Array(4).fill({ club: '5hy', ok: false })));
+ok(rc && rc.d < 15 && !rc.sig, `Nov 10 to Nov 12 on line, club by club: ${rc && rc.d.toFixed(1)} points, not a jump (pooled, the mix of clubs made it +14)`);
+eq(C.rateChange([{ club: 'PW', ok: true }], [{ club: '7i', ok: true }]), null, 'no club in common: no change');
 eq(C.trend('offline_ft', summaryOnly, sum('offline_ft', [5, 10])), null, 'a ranges-only baseline: no verdict on offline');
 eq(C.trend('carry_yds', { allMis: true }, sum('carry_yds', [100])), null, 'all mis-hits: no arrow');
 ok(C.trend('carry_yds', sum('carry_yds', [100, 101]), sum('carry_yds', [110])).few, 'flags a comparison with only a few shots');
@@ -339,11 +373,11 @@ ok(C.trend('carry_yds', sum('carry_yds', [100, 101]), sum('carry_yds', [110])).f
 section('Tips callouts (from the last session)');
 const callTitle = 'From your last session (Nov 1, 2026)';
 eq(C.sessionCallout('mishits', data.sessions), { sessionId: '2026-11-01-toptracer', title: callTitle,
-  text: '3 likely thin or topped shots, all with the 5w (launch as low as 2°, carry as short as 21 yds). Solid contact: 45 of 48 shots (94%).' }, 'mis-hits callout');
+  text: '3 likely mis-hits, all with the 5w (2 thin or topped, launch as low as 2°; 1 fat or mis-struck, carry as short as 26 yds at a normal height). Solid contact: 45 of 48 shots (94%).' }, 'mis-hits callout');
 eq(C.sessionCallout('launch', data.sessions).text, 'Average launch: SW 40.0° · PW 34.1° · 9i 31.7° · 7i 26.0° · 5hy 20.8° · 5w 10.0°. Mis-hits are left out.', 'launch callout');
 eq(C.sessionCallout('miss', data.sessions).text, 'Average miss: SW 3.2 R · PW 0.6 L · 9i 2.4 R · 7i 4.6 R · 5hy 28.3 R · 5w 16.2 R yds. Mis-hits are left out.', 'miss callout');
 eq(C.sessionCallout('carry', data.sessions).text, 'Average carry: SW 67.7 · PW 83.4 · 9i 100.7 · 7i 114.5 · 5hy 141.0 · 5w 137.0 yds. Mis-hits are left out.', 'carry callout');
-eq(C.sessionCallout('mishits', [nov36]).text, 'No thin or topped shots in 36 shots.', 'clean-session callout');
+eq(C.sessionCallout('mishits', [nov36]).text, 'No likely mis-hits in 36 shots.', 'clean-session callout');
 eq([C.sessionCallout('mishits', [aug]), C.sessionCallout('launch', []), C.sessionCallout('nope', data.sessions)], [null, null, null], 'no callout without shot data');
 
 section('Players and tips content');
@@ -359,8 +393,8 @@ eq([bro.player.relationship, bro.player.level, bro.player.age, bro.player.height
   ["Matthew's brother", 'beginner', 14, 60, null], 'brother file: player details, baseline is each club’s first session');
 ok(bro.sessions.every((s) => (s.shots || []).every((x) => bro.clubs[x.club])), 'brother file: every club he has hit is in the clubs map');
 const broNov12 = bro.sessions.find((s) => s.id === '2026-11-12-toptracer');
-eq(C.outliers(C.sessionShots(broNov12)).map((o) => [o.shot.id, o.shot.club, o.shot.carry_yds, o.side]), [['2026-11-12-toptracer-071', 'Driver', 132, 'short']],
-  'M3 Nov 12: the 132-yd driver is the one outlier');
+eq([C.outliers(C.sessionShots(broNov12)).length, C.mishits(C.sessionShots(broNov12)).filter((m) => m.shot.club === 'Driver').map((m) => [m.shot.id, m.shot.carry_yds, C.misKind(m)])],
+  [0, [['2026-11-12-toptracer-071', 132, 'thin']]], 'M3 Nov 12: the 132-yd driver launched at 6°, so it was thin, not a solid outlier');
 eq(Object.keys(bro), Object.keys(data).filter((k) => k !== 'equipment'), 'brother file has the same top-level keys as Dad’s (equipment is optional)');
 eq([data.player.age, data.player.height_in], [56, 73], 'Dad: age and height');
 eq([C.buildHighlights([], null), C.sessionCallout('carry', []), C.progressFor([], 'PW', null).rows.length], [[], null, 0], 'no data: no highlights, callouts or progress rows');
@@ -621,8 +655,13 @@ eq([r.p.delim, r.rows[0].shot.hang_time_s], [';', 4.7], 'semicolon CSV with deci
 
 r = shotsOf('PW 82 82 70 41 73 53 4.7 5R 15R\nPW 81 87 72 26 44 41 24R 15R');
 eq(r.p.nCols, 9, 'mixed row lengths: mapping follows the longer row on a tie');
-ok(r.rows[1].warn.some((w) => /8 values, expected 9/.test(w)), 'count mismatch warned');
-ok(r.rows[1].warn.some((w) => /Hang time 24 looks off/.test(w)), 'out-of-range value warned');
+ok(r.rows[1].warn.some((w) => /8 values, expected 9 \(read without hang time\)/.test(w)), 'count mismatch warned, and the shorter row read without hang time');
+eq([r.rows[1].shot.hang_time_s, r.rows[1].shot.curve_ft, r.rows[1].shot.offline_ft], [undefined, 24, 15], 'so its curve and offline land in the right columns');
+ok(shotsOf('PW 82 82 70 41 73 53 4.7 5R 15R\nPW 81 87 72 26 44 41 24R 15R').rows[0].warn.length === 0, 'the full row needs no warning');
+// A letter before the curve, with the landing angle before it: the curve's, not the landing's.
+eq((({ landing_deg, curve_ft, offline_ft }) => [landing_deg, curve_ft, offline_ft])(C.buildShots(C.parsePaste('4:01 PM 9i 89 93 74 31 55 42 L 8 4'))[0].shot), [42, -8, 4], '"42 L 8 4": curve 8 left');
+eq((({ hang_time_s, curve_ft, offline_ft }) => [hang_time_s, curve_ft, offline_ft])(C.buildShots(C.parsePaste('12:01 PM Pw 95 96 80 34 82 51 6 R 30\n12:00 PM Pw 96 97 81 35 83 52 5.1 ◀ 6 ◀ 31\n11:59 AM Pw 94 95 79 33 80 50 ◀ 4 12')).find((x) => x.shot.time === '12:00').shot),
+  [5.1, -6, -31], 'a row with hang time among rows without: read by its own nine columns');
 
 r = shotsOf('11:52\tPW\t81\t87\t72\t26\t44\t41\t\t24 R\t15 R');
 eq([r.p.delim, r.p.nCols, r.rows[0].shot.hang_time_s, r.rows[0].shot.offline_ft], ['\t', 9, null, 15], 'headerless TSV keeps empty cells as missing');

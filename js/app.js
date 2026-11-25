@@ -318,7 +318,7 @@
     return tipAttr([
       `${C.fmtRaw(s.carry_yds)} yds carry` + (C.isNum(s.offline_ft) ? ` · ${dirU(s.offline_ft, 'ft')} (${dirU(s.offline_ft / 3, 'yds', 1)})` : ''),
       [s.club, s.time].filter(Boolean).join(' · '),
-      kind === 'mis' ? 'Likely thin or topped, left out of the numbers'
+      kind === 'mis' ? 'Likely mis-hit (thin, topped or fat), left out of the numbers'
         : kind === 'out' ? 'Outlier: far off the usual carry, left out of the numbers but still solid contact' : ''
     ]);
   }
@@ -355,8 +355,8 @@
       const y0 = top + i * rowH, ty = y0 + 22, tv = twoLine ? y0 + 46 : ty, cy = twoLine ? y0 + 84 : y0 + 62;
       g.push(text('rowlbl', padL, ty, r.club));
       if (r.st && C.isNum(r.st.avg)) {
-        const gap = prev != null ? `${C.fmtSigned(r.st.avg - prev, 1)} gap` : '';
-        g.push(`<text class="val" x="${f1(W - padR)}" y="${f1(tv)}" text-anchor="end">${esc(C.fmtNum(r.st.avg, 1))} yds${gap ? `<tspan class="sub"> · ${esc(gap)}</tspan>` : ''}</text>`);
+        const gap = prev != null ? `${C.fmtSigned(r.st.avg - prev, 1)} gap` : '', few = r.st.n < 4 ? `${plural(r.st.n, 'solid shot')}` : '';
+        g.push(`<text class="val" x="${f1(W - padR)}" y="${f1(tv)}" text-anchor="end">${esc(C.fmtNum(r.st.avg, 1))} yds${gap || few ? `<tspan class="sub"> · ${esc([gap, few].filter(Boolean).join(' · '))}</tspan>` : ''}</text>`);
         prev = r.st.avg;
       } else if (r.st && r.st.allMis) {
         g.push(text('sub', W - padR, tv, `all ${r.st.total} were mis-hits`, 'end'));
@@ -365,7 +365,7 @@
       }
       if (r.st && C.isNum(r.st.min) && C.isNum(r.st.max)) {
         g.push(rangeMark(x(r.st.min), x(r.st.max), cy, tipAttr([`${C.fmtRange(r.st.min, r.st.max)} yds`,
-          `${r.club} carry range` + (r.st.summaryOnly ? ' (recorded, includes any topped shots)' : ` · ${plural(r.st.n, 'solid shot')}`)])));
+          `${r.club} carry range` + (r.st.summaryOnly ? ' (recorded, includes any mis-hits)' : ` · ${plural(r.st.n, 'solid shot')}`)])));
       }
       const dys = swarm(r.pts.map((s) => x(s.carry_yds)), 6);
       r.pts.forEach((s, k) => { const kind = shotKind(r.e, s); g.push(dotMark(x(s.carry_yds), cy + dys[k], 6, shotTip(s, kind), kind)); });
@@ -536,7 +536,7 @@
           : e.outliers.length ? `${st.n} of ${plural(e.shots.length, 'shot')}` : e.mis.length ? `${st.n} solid of ${e.shots.length}` : plural(st.n, 'shot');
         if (C.isNum(st.min) && C.isNum(st.max)) {
           g.push(rangeMark(x(st.min), x(st.max), cy, tipAttr([`${C.fmtRange(st.min, st.max, m.dir)} ${m.dir ? 'ft' : m.unit}`.trim(),
-            `${m.label} range · ${C.fmtDate(s.date)}` + (st.summaryOnly ? ' (includes any topped shots)' : '')])));
+            `${m.label} range · ${C.fmtDate(s.date)}` + (st.summaryOnly ? ' (includes any mis-hits)' : '')])));
         }
         if (C.isNum(st.avg)) g.push(dotMark(x(st.avg), cy, 6, tipAttr([withUnit(m, st.avg) + ' average', `${C.fmtDate(s.date)} · ${plural(st.n, 'solid shot')}`]), false));
       }
@@ -838,7 +838,7 @@
   }
   // ----- One club at a time: goals, "needs work" and plain-language numbers -----
   const PLAIN = {
-    solid_pct: ['Solid contact', 'Shots without a thin or topped miss'],
+    solid_pct: ['Solid contact', 'Shots that weren’t likely mis-hits'],
     carry_yds: ['Carry', 'How far it flies in the air'],
     total_yds: ['Total', 'Carry plus roll'],
     ball_speed_mph: ['Ball speed', 'How fast the ball leaves the club'],
@@ -878,11 +878,11 @@
   function yds(n) { return n === '1' ? n + ' yd' : n + ' yds'; }
   function goalRow(g) {
     let target, now;
-    if (g.id === 'carry') { target = `${g.lo}–${g.hi} yds`; now = `${g.n} of ${plural(g.of, 'shot')} landed in it`; }
+    if (g.id === 'carry') { target = `${g.lo}–${g.hi} yds`; now = `${g.n} of ${plural(g.of, 'shot')} landed in it (goal: 7 of 10)`; }
     else if (g.id === 'line') { target = 'Within 10 yds of your target'; now = `${g.n} of ${plural(g.of, 'shot')} (goal: 8 of 10)`; }
     else if (g.id === 'launch') { target = `${g.lo}–${g.hi}°`; now = `${C.fmtNum(g.avg, 1)}° average${g.status === 'high' ? ', a bit high' : g.status === 'low' ? ', a bit low' : ''}`; }
     else { target = '9 of 10 swings'; now = `${g.n} of ${g.of} solid`; }
-    const note = g.id === 'carry' ? `<span class="g-note">${g.pure ? `A pure strike carries about ${g.center} yds.` : `Your better shots already fly about ${g.center} yds.`}</span>` : '';
+    const note = g.id === 'carry' ? `<span class="g-note">The same distance every time: within ${Math.round((g.hi - g.lo) / 2)} yds of your typical ${g.typical}.${C.isNum(g.pureCarry) ? ` A pure strike carries about ${g.pureCarry}.` : ''}</span>` : '';
     return `<li class="goal${g.met ? ' met' : ''}"><div class="g-main"><span class="g-label">${esc(g.label)}</span><span class="g-target">${esc(target)}</span>${note}</div>
       <div class="g-now"><span class="g-state">${g.met ? '✓ On target' : 'Keep working'}</span><span>${esc(now)}</span></div></li>`;
   }
@@ -961,21 +961,30 @@
       <p class="wr-hint">Tap a club to see its goals.</p></div>`;
   }
 
-  // The session before this one that has shots, for "vs last time" changes.
+  // The session before this one that has shots, for "vs last time" changes. Each is
+  // judged club by club over the clubs hit both times (GolfCore.rateChange), so a day of
+  // mostly hybrids isn't set against a day of mostly wedges, and only a change bigger than
+  // the luck of a few shots gets an arrow.
   function prevShotSession(s) {
     if (!s) return null;
     const list = data.sessions.filter((x) => shotCount(x)).sort(C.compareSessions);
     const i = list.findIndex((x) => x.id === s.id);
     if (i < 1) return null;
-    const p = list[i - 1], shots = C.sessionShots(p), mis = C.sessionMishits([p]);
-    const solid = shots.filter((x) => !mis.has(x)), off = solid.filter((x) => C.isNum(x.offline_ft));
-    return { session: p, solidPct: solid.length / shots.length * 100,
-      linePct: off.length ? off.filter((x) => Math.abs(x.offline_ft) <= C.GOALS.lineFt).length / off.length * 100 : null };
+    return { session: list[i - 1] };
   }
-  function pctDelta(now, before, s) {
-    const d = C.roundHalfEven(now, 0) - C.roundHalfEven(before, 0), when = C.fmtDate(s.date, { short: true });
-    if (!d) return { cls: 'same', text: `Same as ${when}` };
-    return { cls: d > 0 ? 'up' : 'down', dir: d > 0 ? 'up' : 'down', text: `${Math.abs(d)} ${Math.abs(d) === 1 ? 'point' : 'points'} vs ${when}` };
+  // Each shot of a session as { club, ok } for a rate: solid contact, or on line (solid shots).
+  function rateShots(s, kind) {
+    const mis = C.sessionMishits([s]);
+    return C.sessionShots(s).map((x) => ({ club: x.club, ok: kind === 'solid' ? !mis.has(x)
+      : mis.has(x) || !C.isNum(x.offline_ft) ? null : Math.abs(x.offline_ft) <= C.GOALS.lineFt }));
+  }
+  function rateDelta(prev, cur, kind) {
+    const rc = C.rateChange(rateShots(prev.session, kind), rateShots(cur, kind)), when = C.fmtDate(prev.session.date, { short: true });
+    if (!rc) return null;
+    const same = rc.clubs.length < new Set(C.sessionShots(cur).map((x) => x.club)).size ? ', same clubs' : '';
+    if (!rc.sig) return { cls: 'same', text: `About the same as ${when}${same}` };
+    const d = Math.round(Math.abs(rc.d));
+    return { cls: rc.d > 0 ? 'up' : 'down', dir: rc.d > 0 ? 'up' : 'down', text: `${d} ${d === 1 ? 'point' : 'points'} vs ${when}${same}` };
   }
   // The session at a glance: big numbers, then what needs work, then the highlights.
   function sessionSummary(sc, hl, work) {
@@ -993,11 +1002,11 @@
       const clubs = new Set(shots.map((x) => x.club));
       tiles.push(kpi({ label: 'Shots', value: String(shots.length), sub: plural(clubs.size, 'club') + (isAll ? ` · ${plural(sc.sessions.length, 'session')}` : '') }));
       const sp = solid.length / shots.length * 100;
-      tiles.push(kpi({ label: 'Solid contact', value: C.roundHalfEven(sp, 0) + '%', meter: sp, sub: `${solid.length} of ${shots.length}`, delta: prev ? pctDelta(sp, prev.solidPct, prev.session) : null }));
+      tiles.push(kpi({ label: 'Solid contact', value: C.roundHalfEven(sp, 0) + '%', meter: sp, sub: `${solid.length} of ${shots.length}`, delta: prev ? rateDelta(prev, sc.session, 'solid') : null }));
       const off = solid.filter((x) => C.isNum(x.offline_ft));
       if (off.length) {
         const on = off.filter((x) => Math.abs(x.offline_ft) <= C.GOALS.lineFt).length, lp = on / off.length * 100;
-        tiles.push(kpi({ label: 'On line', value: C.roundHalfEven(lp, 0) + '%', meter: lp, sub: `${on} of ${off.length} within 10 yds`, delta: prev && prev.linePct != null ? pctDelta(lp, prev.linePct, prev.session) : null }));
+        tiles.push(kpi({ label: 'On line', value: C.roundHalfEven(lp, 0) + '%', meter: lp, sub: `${on} of ${off.length} within 10 yds`, delta: prev ? rateDelta(prev, sc.session, 'line') : null }));
       }
       const carried = solid.filter((x) => C.isNum(x.carry_yds) && !odd.has(x));
       if (carried.length) {
@@ -1317,7 +1326,7 @@
     const words = { launch: 'launch angle', apex: 'peak height', landing: 'landing angle', hang: 'time in the air', total: 'roll', curve: 'curve', offline: 'direction' };
     const est = tr.estimated.filter((k) => words[k]).map((k) => words[k]);
     const ref = best ? C.strikeReference(rp.entries[s.club], s.club, data.equipment) : null;
-    $('.rp-hint', rp.card).textContent = (best ? `Best ${it.of}: the solid shots that came closest to an ideal one, carrying at least as far as a pure strike${ref ? ` (${ref.carry} yds)` : ''} and finishing on line. ` : '') +
+    $('.rp-hint', rp.card).textContent = (best ? `Best ${it.of}: the solid shots that came closest to an ideal one, ranked by the yards each landed short of a pure strike${ref ? ` (${ref.carry} yds)` : ''} plus the yards it finished off line. ` : '') +
       `The pin is where a pure strike with your ${name.toLowerCase()} finishes: ${pin} yds, carry plus roll. ` +
       (est.length ? `Not on the screen, so estimated: ${est.join(', ')}.` : 'Everything is drawn from the screen’s numbers.');
     rpLabel();
@@ -1434,12 +1443,15 @@
     const d = ys.map((y) => (up ? `M2.5 ${y + 4.5}L7 ${y}L11.5 ${y + 4.5}` : `M2.5 ${y}L7 ${y + 4.5}L11.5 ${y}`)).join('');
     return `<svg class="tr-ico" viewBox="0 0 14 20" aria-hidden="true"><path d="${d}"/></svg>`;
   }
-  // Up arrows for better, down arrows for worse; more arrows for a bigger change.
+  // Solid contact as the trend wants it: the share, and the counts behind it.
+  function solidStat(e) { return { avg: C.solidPct(e), n: C.solidCount(e), of: e.shots.length }; }
+  // Up arrows for better, down arrows for worse; more arrows for a bigger change. A
+  // change within the luck of his shots is "about the same".
   function trendBadge(t) {
     if (!t) return '';
-    const full = t.dir === 'same' ? 'About the same' : TREND_WORDS[t.dir][t.level];
-    const note = [t.basis === 'best' ? 'comparing the longest shots' : '', t.few ? 'only a few shots' : ''].filter(Boolean).join(', ');
-    const word = t.dir === 'same' ? 'Same' : t.dir === 'better' ? 'Better' : 'Worse';
+    const full = t.basis === 'best' ? 'Can’t tell' : t.dir === 'same' ? 'About the same' : TREND_WORDS[t.dir][t.level];
+    const note = [t.basis === 'best' ? 'the baseline kept only ranges' : '', t.few ? 'only a few shots' : ''].filter(Boolean).join(', ');
+    const word = t.basis === 'best' ? 'Can’t tell' : t.dir === 'same' ? 'Same' : t.dir === 'better' ? 'Better' : 'Worse';
     return `<span class="trend ${t.dir} l${t.dir === 'same' ? 0 : t.level}" title="${esc(full + (note ? ` (${note})` : ''))}">${trendIcon(t)}<span aria-hidden="true">${word}</span><span class="sr">${esc(full + (note ? `, ${note}` : ''))}</span></span>`;
   }
   function progValue(m, st) {
@@ -1461,7 +1473,7 @@
     if (m.key === C.SOLID_METRIC.key) {
       const pa = C.solidPct(b.entry), pl = C.solidPct(l.entry);
       const v = (pc, e) => (pc == null ? { value: '—', sub: 'ranges only' } : { value: C.roundHalfEven(pc, 0) + '%', meter: pc, sub: `${C.solidCount(e)} of ${e.shots.length}` });
-      const t = pa != null && pl != null ? C.trend('solid_pct', { avg: pa }, { avg: pl }) : null;
+      const t = pa != null && pl != null ? C.trend('solid_pct', solidStat(b.entry), solidStat(l.entry)) : null;
       const extra = t ? trendBadge(t) + `<span class="kpi-s">${esc(C.fmtSigned(C.roundHalfEven(pl, 0) - C.roundHalfEven(pa, 0), 0))} points since the baseline</span>` : '';
       return `<div class="kpis">${kpi(Object.assign({ label: lb('Baseline', b) }, v(pa, b.entry)))}${kpi(Object.assign({ label: lb('Latest', l), html: extra }, v(pl, l.entry)))}</div>`;
     }
@@ -1499,7 +1511,7 @@
       </div>
       ${P.fallback && P.baseline ? `<p class="note" style="margin-bottom:14px">${base ? `The ${esc(C.fmtDate(base.date))} baseline has no ${esc(club)}, so` : 'No baseline session is set, so'} the first ${esc(club)} session (${esc(C.fmtDate(P.baseline.session.date))}) is its baseline.</p>` : ''}
       <div class="card"><h3 class="card-title">${esc(club)}: ${esc(m.label.toLowerCase())}${m.key === C.SOLID_METRIC.key ? ' %' : ''} by session</h3>${progKpis(P, m)}<div class="chart" id="progChart"></div>
-        <p class="hint">${m.key === C.SOLID_METRIC.key ? `Share of shots that weren’t likely mis-hits${P.rows.some((r) => r.entry.outliers.length) ? ' (outliers count as solid)' : ''}.` : `Bar: lowest to highest. Dot and number: average. Solid shots only${P.rows.some((r) => r.entry.outliers.length) ? ', leaving out outliers' : ''}.`}${m.dir ? ' Feet; L = left, R = right.' : ''}${rangeOnly.length ? ` ${esc(rangeOnly.join(', '))} recorded ranges only, so ${rangeOnly.length > 1 ? 'their' : 'its'} numbers include any topped shots and ${rangeOnly.length > 1 ? 'their' : 'its'} solid-contact rate is unknown.` : ''}</p></div>
+        <p class="hint">${m.key === C.SOLID_METRIC.key ? `Share of shots that weren’t likely mis-hits${P.rows.some((r) => r.entry.outliers.length) ? ' (outliers count as solid)' : ''}.` : `Bar: lowest to highest. Dot and number: average. Solid shots only${P.rows.some((r) => r.entry.outliers.length) ? ', leaving out outliers' : ''}.`}${m.dir ? ' Feet; L = left, R = right.' : ''}${rangeOnly.length ? ` ${esc(rangeOnly.join(', '))} recorded ranges only, so ${rangeOnly.length > 1 ? 'their' : 'its'} numbers include any mis-hits and ${rangeOnly.length > 1 ? 'their' : 'its'} solid-contact rate is unknown.` : ''}</p></div>
       ${P.rows.length < 2
         ? `<div class="card"><p class="note">Only one session with the ${esc(club)} so far. Progress shows up after the next one.</p></div>`
         : `<h2>Since the baseline</h2><div class="card">${progTable(P)}</div>`}
@@ -1515,7 +1527,7 @@
     const b = P.baseline, l = P.latest;
     const pa = C.solidPct(b.entry), pl = C.solidPct(l.entry);
     const pctCell = (p, e) => p == null ? '<span class="v">—</span><span class="n">unknown (ranges only)</span>' : `<span class="v">${C.roundHalfEven(p, 0)}%</span><span class="r">${C.solidCount(e)} of ${e.shots.length}</span>`;
-    const solidT = pa != null && pl != null ? C.trend('solid_pct', { avg: pa }, { avg: pl }) : null;
+    const solidT = pa != null && pl != null ? C.trend('solid_pct', solidStat(b.entry), solidStat(l.entry)) : null;
     const solidRow = (b.entry.shots.length || l.entry.shots.length)
       ? `<tr><th scope="row">Solid contact</th><td>${pctCell(pa, b.entry)}</td><td>${pctCell(pl, l.entry)}${trendBadge(solidT)}${pa != null && pl != null ? `<span class="chg">${esc(C.fmtSigned(pl - pa, 0))} points</span>` : ''}</td></tr>` : '';
     const win = C.launchWindow(P.club || ui.progClub, data.equipment);
@@ -1527,7 +1539,7 @@
       let change = '';
       if (d) {
         if (m.dir) {
-          if (t && t.basis === 'line') change = `${m.key === 'curve_ft' ? 'average bend' : 'average miss'} ${C.fmtNum(t.from, 1)} → ${C.fmtNum(t.to, 1)} ft`;
+          if (t && t.basis === 'line') change = `${m.key === 'curve_ft' ? 'average bend' : 'average distance off line'} ${C.fmtNum(t.from, 1)} → ${C.fmtNum(t.to, 1)} ft`;
           else if (C.isNum(d.spreadA) && C.isNum(d.spreadB)) change = `spread ${C.fmtRaw(d.spreadA)} → ${C.fmtRaw(d.spreadB)} ft`;
         } else {
           const parts = [];
@@ -1542,21 +1554,35 @@
     const head = (r, label) => `${label}<span class="u">${esc(C.fmtDate(r.session.date))} · ${esc(C.shortDevice(r.session.device))}</span>`;
     return `<div class="table-wrap"><table class="matrix cmp"><thead><tr><th scope="col">Metric</th><th scope="col">${head(b, 'Baseline')}</th><th scope="col">${head(l, 'Latest')}</th></tr></thead><tbody>${solidRow}${rows}</tbody></table></div>
       <p class="hint trend-key"><span class="trend better l2">${trendIcon({ dir: 'better', level: 2 })}<span aria-hidden="true">Better</span></span> <span class="trend worse l2">${trendIcon({ dir: 'worse', level: 2 })}<span aria-hidden="true">Worse</span></span>
-        Up arrows mean better since the baseline and down arrows worse: one arrow is a small change, three a big one. Launch is better when it moves toward the club’s target window; curve and offline when shots finish closer to the line on average. When the baseline only has ranges, the longest shots are compared. Peak height, landing and hang time get no arrow, since higher isn’t always better.</p>
+        Up arrows mean better since the baseline and down arrows worse: one arrow is a small change, three a big one. An arrow shows only when the change is bigger than the spread of his shots could make by luck, so a few more shots one way don’t count as better or worse. Launch is better when it moves toward the club’s target window; curve and offline when shots finish closer to the line on average. When the baseline kept only ranges, the longest shots are set side by side with no arrow, since a longer list of shots has a longer longest. Peak height, landing and hang time get no arrow, since higher isn’t always better.</p>
       <p class="hint">Each cell shows the average (when individual shots exist), then lowest–highest, from solid shots. Changes are latest minus baseline.</p>`;
   }
 
   // ----- Practice (the "tips" tab): numbers to aim for at the range, a live shot check, then tips -----
-  // Each club uses its most recent session with shots, so the numbers move as he improves.
+  // Each club: its most recent session with shots (what to work on now), and its last 3
+  // (PRACTICE_POOL) pooled for its yardages, so they move as he improves but one bad day
+  // doesn't move them. Mis-hits and outliers are judged within each session.
+  const PRACTICE_POOL = 3;
   function practiceClubs() {
-    const out = {};
+    const out = {}, recent = {};
     data.sessions.slice().sort(C.compareSessions).reverse().forEach((s) => {
       if (!C.sessionShots(s).length) return;
       const e = C.clubData([s]);
-      Object.keys(e).forEach((c) => { if (!out[c] && e[c].shots.length) out[c] = { entry: e[c], session: s }; });
+      Object.keys(e).forEach((c) => {
+        if (!e[c].shots.length) return;
+        if (!out[c]) out[c] = { entry: e[c], session: s };
+        const r = recent[c] || (recent[c] = []);
+        if (r.length < PRACTICE_POOL) r.push(s);
+      });
+    });
+    Object.keys(out).forEach((c) => {
+      const pooled = C.clubData(recent[c])[c], carries = pooled.solid.map((x) => x.carry_yds).filter(C.isNum);
+      Object.assign(out[c], { pooled, sessions: recent[c], typical: carries.length ? C.roundHalfEven(C.median(carries), 0) : null });
     });
     return out;
   }
+  // "your last 3 sessions" or "your Nov 12, 2026 session"
+  function poolWords(sel) { return sel.sessions.length > 1 ? `your last ${sel.sessions.length} sessions` : `your ${C.fmtDate(sel.session.date)} session`; }
   function numOrNull(id) { const el = $('#' + id); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : null; }
   function readCheckInputs() {
     ui.check = Object.assign({}, ui.check, { carry: numOrNull('ckCarry'), ball: numOrNull('ckBall'), launch: numOrNull('ckLaunch'), off: numOrNull('ckOff') });
@@ -1568,7 +1594,7 @@
     if (ck.carry == null && ck.ball == null && ck.launch == null && ck.off == null) { toast('Type at least one number from the screen'); const f = $('#ckCarry'); if (f) f.focus(); return; }
     if (ck.off && !ck.dir) { toast('Tap Left or Right for the offline number'); return; }
     const off = ck.off == null ? null : (ck.dir === 'L' ? -Math.abs(ck.off) : Math.abs(ck.off));
-    ck.result = C.checkShot(sel.entry, c, { carry_yds: ck.carry, ball_speed_mph: ck.ball, launch_deg: ck.launch, offline_ft: off }, data.equipment);
+    ck.result = C.checkShot(sel.pooled, c, { carry_yds: ck.carry, ball_speed_mph: ck.ball, launch_deg: ck.launch, offline_ft: off }, data.equipment);
     renderTips();
     const r = $('#checkResult'); if (r) r.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
@@ -1578,12 +1604,12 @@
       <ul class="check-lines">${r.lines.map((l) => `<li><span class="ck ${l.ok === true ? 'ok' : l.ok === false ? 'bad' : ''}" aria-hidden="true">${l.ok === true ? '✓' : l.ok === false ? '✗' : '~'}</span><span>${esc(l.text)}</span></li>`).join('')}</ul></div></div>`;
   }
   function practiceCard(c, sel, t) {
-    const e = sel.entry, G = C.clubGoals(e, c, data.equipment), r = G.ref, m = r ? r.metrics : {};
+    const e = sel.entry, G = C.clubGoals(e, c, data.equipment, { typical: sel.typical }), r = C.strikeReference(sel.pooled, c, data.equipment), m = r ? r.metrics : {};
     const zone = G.goals.find((g) => g.id === 'carry');
     const win = C.launchWindow(c, data.equipment);
     const flags = C.needsWork(e);
     const aim = [];
-    if (zone) aim.push(['flag', 'Distance', 'Carry in this zone', `${zone.lo}–${zone.hi} yds`, r ? `pure strike about ${r.carry} yds` : '']);
+    if (zone) aim.push(['flag', 'Distance', 'The same distance every time', `${zone.lo}–${zone.hi} yds`, `your typical ${zone.typical} yds${r ? ` · pure strike about ${r.carry}` : ''}`]);
     if (m.ball_speed_mph) aim.push(['bolt', 'Ball speed', 'Shows a centred strike', `${C.fmtRaw(m.ball_speed_mph.min)}+ mph`, `your pure strikes: ${C.fmtRange(m.ball_speed_mph.min, m.ball_speed_mph.max)} mph`]);
     if (win) aim.push(['launch', 'Launch', 'How steeply it starts', `${win[0]}–${win[1]}°`, m.launch_deg ? `your pure strikes: about ${C.fmtNum(m.launch_deg.avg, 0)}°` : '']);
     aim.push(['line', 'On line', 'Left or right of target', 'within 10 yds', '30 ft or less on the screen']);
@@ -1598,7 +1624,7 @@
     const val = (v) => (v == null ? '' : esc(String(v)));
     return `
       ${clubHead(c)}
-      <p class="cc-shots">From your ${esc(C.fmtDate(sel.session.date))} session${r ? `: ${plural(r.n, 'best-struck shot')} of ${plural(e.shots.length, 'shot')}` : ''}</p>
+      <p class="cc-shots">How it went in your ${esc(C.fmtDate(sel.session.date))} session; the numbers to aim for come from ${esc(poolWords(sel))}${r ? ` (${plural(r.n, 'best-struck shot')} of ${plural(sel.pooled.shots.length, 'shot')})` : ''}.</p>
       ${flags.length ? `<div class="work-box">${NW_PILL}<ul>${flags.map((f) => `<li>${esc(cap(f.text))}.</li>`).join('')}</ul></div>` : ''}
       <h4 class="cc-sub">Aim for</h4>
       <ul class="aim-list targets">${aim.map((a) => `<li><span class="aim-ico">${icon(a[0])}</span><span class="aim-k">${esc(a[1])}</span><span class="aim-v">${esc(a[3])}</span>
@@ -1741,16 +1767,17 @@
     const clubs = C.sortClubs(Object.keys(pc));
     if (clubs.length && (!ui.practiceClub || !pc[ui.practiceClub])) ui.practiceClub = clubs[0];
     const refs = {};
-    clubs.forEach((c) => { refs[c] = C.strikeReference(pc[c].entry, c, data.equipment); });
-    const longest = Math.max(1, ...clubs.map((c) => (refs[c] ? refs[c].carry : 0)));
+    clubs.forEach((c) => { refs[c] = C.strikeReference(pc[c].pooled, c, data.equipment); });
+    const longest = Math.max(1, ...clubs.map((c) => Math.max(refs[c] ? refs[c].carry : 0, pc[c].typical || 0)));
     const rows = clubs.map((c) => {
-      const e = pc[c].entry, r = refs[c], nw = C.needsWork(e).length;
-      const sub = [r && r.metrics.ball_speed_mph ? `${C.fmtRaw(r.metrics.ball_speed_mph.min)}+ mph ball speed` : '',
+      const e = pc[c].entry, r = refs[c], ty = pc[c].typical, nw = C.needsWork(e).length;
+      const sub = [r ? `pure strike\u00a0${r.carry}` : '', r && r.metrics.ball_speed_mph ? `${C.fmtRaw(r.metrics.ball_speed_mph.min)}+\u00a0mph ball\u00a0speed` : '',
         r && r.solid < 4 ? `only ${plural(r.solid, 'solid shot')} so far` : ''].filter(Boolean).join(' · ');
+      const big = C.isNum(ty) ? ty : r ? r.carry : null;
       return `<li><button class="yard-row" data-action="practice-club" data-club="${esc(c)}" aria-pressed="${c === ui.practiceClub}">
         ${clubBadge(c, true)}
-        <span class="yr-main"><span class="yr-top"><span class="yr-carry">${r ? `${r.carry} <span class="yr-u">yds</span>` : '—'}</span>${nw ? NW_PILL : ''}</span>
-          ${r ? `<span class="yr-bar" aria-hidden="true"><span style="width:${f1(r.carry / longest * 100)}%"></span></span>` : ''}
+        <span class="yr-main"><span class="yr-top"><span class="yr-carry">${big != null ? `${big} <span class="yr-u">yds</span>` : '—'}</span>${nw ? NW_PILL : ''}</span>
+          ${big != null ? `<span class="yr-bar" aria-hidden="true"><span style="width:${f1(big / longest * 100)}%"></span>${r && r.carry > big ? `<span class="yr-pure" style="left:${f1(big / longest * 100)}%;width:${f1((r.carry - big) / longest * 100)}%"></span>` : ''}</span>` : ''}
           ${sub ? `<span class="yr-sub">${esc(sub)}</span>` : ''}</span>
         ${icon('chevron', 'chev')}</button></li>`;
     }).join('');
@@ -1764,9 +1791,9 @@
     const rangeView = `${latest ? `<button class="setting-row rv-teaser" data-action="practice-view" data-view="swing"><span class="head-ico">${icon('play')}</span><span class="set-text"><span class="set-title">Swing review: ${esc(C.fmtDate(latest.date, { short: true }))}${latest.club ? ' · ' + esc(C.clubName(latest.club, data.clubs)) : ''}</span><span class="set-desc">${esc(reviewTeaser(latest))}</span></span>${icon('chevron', 'chev')}</button>` : ''}
       ${clubs.length ? `
         <div class="card"><div class="card-head"><span class="head-ico">${icon('flag')}</span><h3 class="card-title">Your yardages</h3></div>
-          <p class="note">How far a pure strike carries with each club. Tap a club for its numbers.</p>
+          <p class="note">How far each club usually carries: the middle of your solid shots, the number to play on the course. The lighter bar is how far a pure strike goes. Tap a club for its numbers.</p>
           <ul class="yard-list">${rows}</ul>
-          <p class="hint">A pure strike is one of your best-struck shots: solid contact with your highest ball speeds, launched at a normal height. Each club uses its most recent session, so these grow as you improve.</p></div>
+          <p class="hint">A pure strike is one of your best-struck shots: the top quarter by ball speed, launched at a normal height. Each club uses its last ${PRACTICE_POOL} sessions, so these grow as you improve, and one bad day doesn’t move them.</p></div>
         <div class="card" id="practiceCard">${practiceCard(ui.practiceClub, pc[ui.practiceClub], t)}</div>
         ${clubsCard(clubs)}`
       : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>`}`;
@@ -3684,7 +3711,7 @@
     const sum = s.summary || {};
     const clubs = C.sortClubs(Object.keys(sum));
     const keys = C.METRICS.map((m) => m.key).filter((k) => clubs.some((c) => sum[c] && sum[c][k]));
-    return `<div class="card"><h3>Recorded ranges</h3><p class="hint" style="margin:4px 0 8px">Only ranges were kept from this session, so they include any topped shots.</p>
+    return `<div class="card"><h3>Recorded ranges</h3><p class="hint" style="margin:4px 0 8px">Only ranges were kept from this session, so they include any mis-hits.</p>
       <div class="table-wrap"><table class="matrix"><thead><tr><th>Metric</th>${clubs.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
       ${keys.map((k) => `<tr><th scope="row">${esc(C.METRIC[k].label)}<span class="u">${esc(unitLabel(C.METRIC[k]))}</span></th>${clubs.map((c) => { const r = (sum[c] || {})[k]; return `<td>${r ? esc(C.fmtRange(r.min, r.max, C.METRIC[k].dir)) : '—'}</td>`; }).join('')}</tr>`).join('')}
       </tbody></table></div></div>`;

@@ -212,8 +212,17 @@
     return { PW: 'Pitching wedge', GW: 'Gap wedge', SW: 'Sand wedge', LW: 'Lob wedge' }[c] || String(c);
   }
   var STANDARD_CLUBS = ['Driver', '3w', '5w', '7w', '3hy', '4hy', '5hy', '6hy', '4i', '5i', '6i', '7i', '8i', '9i', 'PW', 'GW', 'SW', 'LW'];
-  // Mis-hit launch floor: under 5° for woods, hybrids and driver; under 10° for irons and wedges.
-  function launchFloor(club) { return /^(Driver|\d+w|\d+hy)$/.test(String(club)) ? 5 : 10; }
+  // Mis-hit launch floor: under 5° for woods, hybrids and driver and under 10° for irons
+  // and wedges, or under 60% of the low end of the club's usual launch window, whichever
+  // is higher (a pitching wedge that launches at 11°, or a 5 hybrid at 7°, came off thin
+  // even if it ran a long way).
+  function launchFloor(club) {
+    var base = /^(Driver|\d+w|\d+hy)$/.test(String(club)) ? 5 : 10, w = LAUNCH_WINDOWS[club];
+    return w ? Math.max(base, 0.6 * w[0]) : base;
+  }
+  // Why a likely mis-hit was flagged: 'thin' (it launched low: thin or topped) or 'fat'
+  // (a short carry at a normal height: fat, or a soft, mis-struck swing).
+  function misKind(m) { return m && m.reasons && m.reasons.indexOf('low launch') >= 0 ? 'thin' : 'fat'; }
 
   // ---------------------------------------------------------------------------
   // Sessions
@@ -286,7 +295,10 @@
   //   distance:  carry varies a lot: standard deviation over 15% of the average
   //              carry, judged only with 4+ solid shots
   // Each flag names the stat it belongs to (`key`) so the page can highlight it.
-  var NEEDS_WORK = { solidPct: 80, missYds: 10, carryCv: 0.15, minCvShots: 4 };
+  //   on line:   under half his solid shots within 10 yds of the line (5+ shots),
+  //              when the average miss alone doesn't say so (a miss both ways)
+  // The direction rules need 4+ solid shots, so one stray shot isn't a pattern.
+  var NEEDS_WORK = { solidPct: 80, missYds: 10, carryCv: 0.15, minCvShots: 4, minMissShots: 4, onLine: 0.5, minLineShots: 5 };
   function needsWork(entry) {
     var out = [];
     if (!entry || !entry.shots || !entry.shots.length) return out;
@@ -295,8 +307,15 @@
       out.push({ kind: 'contact', key: 'solid_pct', text: entry.mis.length + ' of ' + plural(entry.shots.length, 'shot') + ' were mis-hits' });
     }
     var off = summarize(entry.solid, 'offline_ft');
-    if (off.n && Math.abs(off.avg) / 3 >= NEEDS_WORK.missYds) {
+    if (off.n >= NEEDS_WORK.minMissShots && Math.abs(off.avg) / 3 >= NEEDS_WORK.missYds) {
       out.push({ kind: 'direction', key: 'offline_ft', text: 'misses about ' + fmtNum(Math.abs(off.avg) / 3, 0) + ' yds ' + (off.avg < 0 ? 'left' : 'right') + ' on average' });
+    } else if (off.n >= NEEDS_WORK.minLineShots) {
+      var on = off.values.filter(function (v) { return Math.abs(v) <= GOALS.lineFt; }).length;
+      if (on / off.n < NEEDS_WORK.onLine) {
+        var lefts = off.values.filter(function (v) { return v < -GOALS.lineFt; }).length, rights = off.values.filter(function (v) { return v > GOALS.lineFt; }).length;
+        var way = lefts && rights && Math.min(lefts, rights) >= 0.25 * (lefts + rights) ? ', missing both ways' : lefts > rights ? ', mostly left' : ', mostly right';
+        out.push({ kind: 'direction', key: 'offline_ft', text: 'only ' + on + ' of ' + off.n + ' finished within 10 yds of the line' + way });
+      }
     }
     var car = summarize(entry.solid, 'carry_yds');
     if (car.n >= NEEDS_WORK.minCvShots && car.avg > 0 && isNum(car.sd) && car.sd / car.avg > NEEDS_WORK.carryCv) {
@@ -390,14 +409,13 @@
   // ----- Pure strikes: what a well-struck shot does for this player -----
   // His best-struck shots with a club: solid shots that weren't launched more
   // than 4° below the club's launch window (those are usually thin), then the top
-  // quarter by ball speed, ties included and at least 2 shots. Ball speed is the
-  // best sign of a centred strike that Toptracer shows. Without ball speed the
-  // top quarter by carry is used instead.
+  // quarter by ball speed (at least 2 shots; equal speeds, as whole mph often are,
+  // go to the longer carry). Ball speed is the best sign of a centred strike that
+  // Toptracer shows. Without ball speed the top quarter by carry is used instead.
   function topQuarter(pool, key) {
-    var sorted = pool.slice().sort(function (a, b) { return b[key] - a[key]; });
+    var sorted = pool.slice().sort(function (a, b) { return b[key] - a[key] || (b.carry_yds || 0) - (a.carry_yds || 0); });
     var k = Math.max(Math.min(2, sorted.length), Math.ceil(sorted.length / 4));
-    var cut = sorted[k - 1][key];
-    return sorted.filter(function (s) { return s[key] >= cut; });
+    return sorted.slice(0, k);
   }
   function bestStrikes(entry, club, equip) {
     if (!entry || !entry.solid) return { shots: [], by: null };
@@ -462,31 +480,29 @@
   var GOALS = { inZone: 0.7, onLine: 0.8, lineFt: 30, solidPct: 90 };
 
   // Range goals for one club, built from the player's own shots:
-  //   distance:   a carry zone centred on the club's pure-strike carry (see
-  //               strikeReference), ± a window 25% tighter than his current
-  //               spread (never tighter than minCarryWindow); met when 7 of 10
-  //               shots land in it
+  //   distance:   the same distance every time: a carry zone centred on his typical
+  //               carry (the median of his solid shots), ± minCarryWindow (5 yds for
+  //               wedges, 6 for irons, 8 for the rest), whatever his spread, so a
+  //               scattered session can't widen it; met when 7 of 10 shots land in
+  //               it. The pure strike (strikeReference) is the stretch target beside it.
   //   on line:    8 of 10 shots finish within 10 yds (30 ft) of the target line
   //   launch:     average launch of solid shots inside LAUNCH_WINDOWS
   //   contact:    9 of 10 swings solid
   // `focus` picks the one thing to work on first: contact, then direction, then
-  // launch, then distance.
-  function clubGoals(entry, club, equip) {
+  // launch, then distance. opts: { typical: his typical carry from more sessions than this
+  // one, to centre the zone on (the Practice tab's, so it stays put from day to day) }.
+  function clubGoals(entry, club, equip, opts) {
     if (!entry || !entry.shots || !entry.shots.length) return null;
     var goals = [], g = {};
     function add(x) { goals.push(x); g[x.id] = x; }
     var ref = strikeReference(entry, club, equip);
     var solidCarry = entry.solid.map(function (s) { return s.carry_yds; }).filter(isNum);
     if (solidCarry.length) {
-      // Centred on the pure-strike carry (falls back to the upper-quartile carry).
-      var center = ref ? ref.carry : roundHalfEven(quantile(solidCarry, 0.75), 0);
-      var half = minCarryWindow(club);
-      var car = summarize(entry.solid, 'carry_yds');
-      if (car.n >= NEEDS_WORK.minCvShots && isNum(car.sd)) half = Math.max(half, roundHalfEven(0.75 * car.sd, 0));
+      var center = roundHalfEven(opts && isNum(opts.typical) ? opts.typical : median(solidCarry), 0), half = minCarryWindow(club);
       var withCarry = entry.shots.filter(function (s) { return isNum(s.carry_yds); });
       var inZone = withCarry.filter(function (s) { return s.carry_yds >= center - half && s.carry_yds <= center + half; }).length;
-      add({ id: 'carry', label: 'Distance', lo: center - half, hi: center + half, center: center, pure: !!ref, n: inZone, of: withCarry.length,
-        met: inZone / withCarry.length >= GOALS.inZone });
+      add({ id: 'carry', label: 'Distance', lo: center - half, hi: center + half, center: center, typical: center, pureCarry: ref ? ref.carry : null, pure: !!ref,
+        n: inZone, of: withCarry.length, met: inZone / withCarry.length >= GOALS.inZone });
     }
     var offShots = entry.shots.filter(function (s) { return isNum(s.offline_ft); });
     if (offShots.length) {
@@ -531,8 +547,12 @@
       else if (bs >= 0.95 * minBs) line('ball', null, 'Ball speed ' + fmtRaw(bs) + ' mph: close to a pure strike (' + fmtRaw(minBs) + '+).');
       else line('ball', false, 'Ball speed ' + fmtRaw(bs) + ' mph is low for a pure strike (' + fmtRaw(minBs) + '+), so it was likely off-centre.');
     }
+    // The zone is his typical carry; reaching his pure-strike carry (less a club's window) is
+    // pure-strike distance, even past the zone.
+    var pureCarry = zone && isNum(zone.pureCarry) ? zone.pureCarry : null, pureDist = isNum(carry) && isNum(pureCarry) && carry >= pureCarry - minCarryWindow(club);
     if (isNum(carry) && zone) {
-      if (carry >= zone.lo && carry <= zone.hi) line('carry', true, 'Carry ' + fmtRaw(carry) + ' yds: in your ' + zone.lo + '–' + zone.hi + ' yd zone.');
+      if (pureDist && carry > zone.hi) line('carry', true, 'Carry ' + fmtRaw(carry) + ' yds: pure-strike distance (' + fmtRaw(pureCarry) + ').');
+      else if (carry >= zone.lo && carry <= zone.hi) line('carry', true, 'Carry ' + fmtRaw(carry) + ' yds: in your ' + zone.lo + '–' + zone.hi + ' yd zone.');
       else if (carry < zone.lo) line('carry', false, 'Carry ' + fmtRaw(carry) + ' yds: ' + fmtRaw(roundHalfEven(zone.lo - carry, 1)) + ' short of your ' + zone.lo + '–' + zone.hi + ' yd zone.');
       else line('carry', null, 'Carry ' + fmtRaw(carry) + ' yds: ' + fmtRaw(roundHalfEven(carry - zone.hi, 1)) + ' past your ' + zone.lo + '–' + zone.hi + ' yd zone.');
     }
@@ -547,11 +567,12 @@
       if (Math.abs(off) <= GOALS.lineFt) line('line', true, 'On line: ' + fmtRaw(Math.abs(off)) + ' ft' + dir + '.');
       else line('line', false, fmtRaw(Math.abs(off)) + ' ft' + dir + ' (' + fmtNum(Math.abs(off) / 3, 0) + ' yds): outside the 10-yd target.');
     }
-    var mis = (isNum(la) && la < launchFloor(club)) || (isNum(carry) && ref && carry < 0.6 * ref.carry);
+    var thin = isNum(la) && la < launchFloor(club), fat = !thin && isNum(carry) && ref && carry < 0.6 * ref.carry;
+    var lowish = isNum(la) && win && la < win[0] - 4;  // low enough to be a little thin, as for pure strikes
     var ballOk = lines.some(function (l) { return l.key === 'ball' && l.ok === true; });
-    var carryOk = lines.some(function (l) { return l.key === 'carry' && l.ok === true; });
-    var verdict = mis ? 'mishit' : ballOk && carryOk ? 'pure' : good && !bad ? 'good' : 'keep';
-    var title = { mishit: 'Looks thin or topped', pure: 'Pure strike!', good: 'Good shot', keep: 'Keep working' }[verdict];
+    var carryOk = pureDist || (!isNum(pureCarry) && lines.some(function (l) { return l.key === 'carry' && l.ok === true; }));
+    var verdict = thin || fat ? 'mishit' : ballOk && carryOk && !lowish ? 'pure' : good && !bad ? 'good' : 'keep';
+    var title = { mishit: thin ? 'Looks thin or topped' : 'Looks fat or mis-struck', pure: 'Pure strike!', good: 'Good shot', keep: 'Keep working' }[verdict];
     return { verdict: verdict, title: title, lines: lines };
   }
 
@@ -575,10 +596,10 @@
     return null;
   }
 
-  // A likely thin, topped or fat shot: launch under 10° (5° for woods, hybrids
-  // and driver), or carry under 60% of that club's upper-quartile carry. The
-  // upper quartile stays sensible even when most of a club's shots were
-  // mis-hit, where the median would not.
+  // A likely thin, topped or fat shot: launch under the club's floor (launchFloor),
+  // or carry under 60% of that club's upper-quartile carry. The upper quartile
+  // stays sensible even when most of a club's shots were mis-hit, where the
+  // median would not.
   function mishits(shots) {
     var by = {};
     (shots || []).forEach(function (s) { if (s && s.club) (by[s.club] || (by[s.club] = [])).push(s); });
@@ -603,7 +624,9 @@
   // deviations from the median, i.e. 0.6745 × |carry − median| / MAD > 3.5, where
   // MAD is the median distance from the median. MAD is never taken below 3% of
   // the median, so a tight group can't turn ordinary shots into outliers: an
-  // outlier is always at least about 16% shorter or longer than usual.
+  // outlier is always at least about 16% shorter or longer than usual. A long one
+  // struck at least as fast as his top quarter of ball speeds isn't an outlier: it's
+  // his best strike of the day.
   var OUTLIER = { z: 3.5, minShots: 5, madFloor: 0.03 };
   function outliers(shots) {
     var bad = new Set(mishits(shots).map(function (m) { return m.shot; }));
@@ -614,11 +637,12 @@
       var list = by[c];
       if (list.length < OUTLIER.minShots) return;
       var carries = list.map(function (s) { return s.carry_yds; });
-      var med = median(carries);
+      var med = median(carries), fast = quantile(list.map(function (s) { return s.ball_speed_mph; }).filter(isNum), 0.75);
       var mad = Math.max(median(carries.map(function (v) { return Math.abs(v - med); })), OUTLIER.madFloor * Math.abs(med));
       if (!(mad > 0)) return;
       list.forEach(function (s) {
         var z = 0.6745 * (s.carry_yds - med) / mad;
+        if (z > 0 && isNum(fast) && isNum(s.ball_speed_mph) && s.ball_speed_mph >= fast) return;
         if (Math.abs(z) > OUTLIER.z) hit.set(s, { shot: s, side: z < 0 ? 'short' : 'long', usual: med });
       });
     });
@@ -646,18 +670,31 @@
   function minOf(arr) { var a = arr.filter(isNum); return a.length ? Math.min.apply(null, a) : null; }
   function pct(n, of) { return roundHalfEven(100 * n / of, 0) + '%'; }
 
+  // "4 likely thin or topped shots: PW ×1, 9i ×1 (launch as low as 5°, …)." Each mis-hit
+  // is named by what happened: a low launch is thin or topped; a short carry at a normal
+  // height is fat, or a soft, mis-struck swing.
   function contactText(bad) {
     var clubs = sortClubs(bad.map(function (b) { return b.shot.club; }).filter(function (c, i, a) { return a.indexOf(c) === i; }));
-    var many = bad.length > 1;
-    var low = minOf(bad.map(function (b) { return b.shot.launch_deg; }));
+    var many = bad.length > 1, thin = bad.filter(function (b) { return misKind(b) === 'thin'; }), fat = bad.filter(function (b) { return misKind(b) === 'fat'; });
+    var low = minOf(thin.map(function (b) { return b.shot.launch_deg; }));
     var short = minOf(bad.map(function (b) { return b.shot.carry_yds; }));
-    var detail = [];
-    if (low != null) detail.push((many ? 'launch as low as ' : 'launch ') + fmtRaw(low) + '°');
-    if (short != null) detail.push((many ? 'carry as short as ' : 'carry ') + fmtRaw(short) + ' yds');
     var who = clubs.length === 1
       ? (many ? ', all with the ' : ', with the ') + clubs[0]
       : ': ' + clubs.map(function (c) { return c + ' ×' + bad.filter(function (b) { return b.shot.club === c; }).length; }).join(', ');
-    return plural(bad.length, 'likely thin or topped shot') + who + (detail.length ? ' (' + detail.join(', ') + ')' : '') + '.';
+    var name, detail = [];
+    if (!fat.length) {
+      name = 'likely thin or topped shot';
+      if (low != null) detail.push((many ? 'launch as low as ' : 'launch ') + fmtRaw(low) + '°');
+      if (short != null) detail.push((many ? 'carry as short as ' : 'carry ') + fmtRaw(short) + ' yds');
+    } else if (!thin.length) {
+      name = 'likely fat or mis-struck shot';
+      if (short != null) detail.push((many ? 'carry as short as ' : 'carry ') + fmtRaw(short) + ' yds at a normal height');
+    } else {
+      name = 'likely mis-hit';
+      detail.push(thin.length + ' thin or topped' + (low != null ? ', launch as low as ' + fmtRaw(low) + '°' : ''));
+      detail.push(fat.length + ' fat or mis-struck, carry as short as ' + fmtRaw(minOf(fat.map(function (b) { return b.shot.carry_yds; }))) + ' yds at a normal height');
+    }
+    return plural(bad.length, name) + who + (detail.length ? ' (' + detail.join(thin.length && fat.length ? '; ' : ', ') + ')' : '') + '.';
   }
 
   // Plain-language highlights for the sessions in scope. Numbers use solid shots.
@@ -681,13 +718,15 @@
         var launch = summarize(shots, 'launch_deg');
         var lowClubs = [];
         if (launch.n) shots.forEach(function (s) { if (s.launch_deg === launch.min && lowClubs.indexOf(s.club) < 0) lowClubs.push(s.club); });
-        out.push({ id: 'contact', text: 'No thin or topped shots' + (launch.n ? ', lowest launch ' + fmtRaw(launch.min) + '° (' + sortClubs(lowClubs).join(', ') + ')' : '') + '.' });
+        out.push({ id: 'contact', text: 'No likely mis-hits' + (launch.n ? ', lowest launch ' + fmtRaw(launch.min) + '° (' + sortClubs(lowClubs).join(', ') + ')' : '') + '.' });
       } else {
         out.push({ id: 'contact', text: contactText(bad) });
       }
       if (odd.length) {
+        // what each was judged against: the club's usual carry in its own session
         var usual = {};
-        shotClubs.forEach(function (c) { usual[c] = median(data[c].solid.map(function (x) { return x.carry_yds; })); });
+        odd.forEach(function (o) { (usual[o.shot.club] || (usual[o.shot.club] = [])).push(o.usual); });
+        Object.keys(usual).forEach(function (c) { usual[c] = median(usual[c]); });
         out.push({ id: 'outliers', text: outlierText(odd, usual) });
       }
 
@@ -696,9 +735,10 @@
       if (miss.length >= 2) {
         var text = 'Average miss: ' + miss.map(function (x) { return x.club + ' ' + fmtDir(x.st.avg / 3, 1); }).join(' · ') + ' yds.';
         if (miss.length >= 3) {
+          // each club at least 2 yds (6 ft) farther the same way than the one before
           var a = miss.map(function (x) { return x.st.avg; });
-          if (a.every(function (v, i) { return !i || v > a[i - 1]; })) text += ' The miss moves farther right as the clubs get longer.';
-          else if (a.every(function (v, i) { return !i || v < a[i - 1]; })) text += ' The miss moves farther left as the clubs get longer.';
+          if (a.every(function (v, i) { return !i || v - a[i - 1] >= 6; })) text += ' The miss moves farther right as the clubs get longer.';
+          else if (a.every(function (v, i) { return !i || a[i - 1] - v >= 6; })) text += ' The miss moves farther left as the clubs get longer.';
         }
         text += leftOutNote(bad.length, odd.length);
         out.push({ id: 'miss', text: text });
@@ -724,7 +764,7 @@
         if (cr && isNum(cr.min)) seg.push('carry as short as ' + fmtRaw(cr.min) + ' yds');
         parts.push(c + ' ' + seg.join(', '));
       });
-      if (parts.length) out.push({ id: 'contact', text: 'Thin or topped contact: ' + parts.join('; ') + '.' });
+      if (parts.length) out.push({ id: 'contact', text: 'Likely mis-hits among them: ' + parts.join('; ') + '.' });
     }
 
     if (scope.length === 1 && baseline && baseline.id !== scope[0].id) {
@@ -733,13 +773,17 @@
       clubs.forEach(function (c) {
         if (!bd[c]) return;
         var seg = [];
-        var ac = metricStat(bd[c], 'carry_yds'), bc = metricStat(data[c], 'carry_yds');
+        // A baseline with ranges only kept every shot, mis-hits too, so the latest is
+        // taken over every shot as well; otherwise solid shots on both sides.
+        var rangesOnly = !bd[c].shots.length, now = function (key) { return rangesOnly ? summarize(data[c].shots, key) : metricStat(data[c], key); };
+        var ac = metricStat(bd[c], 'carry_yds'), bc = now('carry_yds');
         if (ac && bc && isNum(ac.min) && isNum(bc.min)) seg.push('shortest carry ' + fmtRaw(ac.min) + ' → ' + fmtRaw(bc.min) + ' yds');
-        var al = metricStat(bd[c], 'launch_deg'), bl = metricStat(data[c], 'launch_deg');
+        var al = metricStat(bd[c], 'launch_deg'), bl = now('launch_deg');
         if (al && bl && isNum(al.min) && isNum(bl.min)) seg.push('lowest launch ' + fmtRaw(al.min) + '° → ' + fmtRaw(bl.min) + '°');
         if (seg.length) bparts.push(c + ' ' + seg.join(', '));
       });
-      if (bparts.length) out.push({ id: 'baseline', text: 'Since ' + fmtDate(baseline.date) + ' (baseline): ' + bparts.join('; ') + '.' });
+      var other = baseline.device && scope[0].device && shortDevice(baseline.device) !== shortDevice(scope[0].device) ? ', on ' + shortDevice(baseline.device) : '';
+      if (bparts.length) out.push({ id: 'baseline', text: 'Since ' + fmtDate(baseline.date) + ' (baseline' + other + '): ' + bparts.join('; ') + '.' });
     } else if (scope.length === 1 && baseline && baseline.id === scope[0].id) {
       out.push({ id: 'baseline', text: 'This is the baseline session that progress is measured from.' });
     }
@@ -784,36 +828,75 @@
     curve_ft: { better: 'line', steps: [0.1, 0.25, 0.45] },
     offline_ft: { better: 'line', steps: [0.1, 0.25, 0.45] }
   };
-  // a, b: metricStat-style stats for the baseline and the latest session ({ avg } is enough for solid
-  // contact). opts.window: the launch window [lo, hi]. Returns null when there's no fair comparison, else
-  // { dir: 'better' | 'worse' | 'same', level: 0 (same) to 3 (a lot), basis, few }.
-  // basis 'best' means the baseline had ranges only, so the longest shots were compared.
+  // a, b: metricStat-style stats for the baseline and the latest session (for solid contact,
+  // { avg (%), n: solid shots, of: all shots }). opts.window: the launch window [lo, hi]. Returns null
+  // when there's no fair comparison, else { dir: 'better' | 'worse' | 'same', level: 0 (same) to 3
+  // (a lot), basis, few, sig, from, to }.
+  // A change counts only when it’s bigger than the noise: 1.65 standard errors of the
+  // difference (from each session's spread and number of shots; for solid contact, its odds),
+  // so a few more shots one way or the other don't show as better or worse. A session with fewer
+  // than 5 shots is `few`. basis 'best' means the baseline had ranges only (no spread and no count),
+  // so only the longest shots can be set side by side, and that gets no verdict: a longer list
+  // of shots has a longer longest.
+  var TREND_SIG = 1.65, TREND_FEW = 5;
   function trend(key, a, b, opts) {
     var t = TREND[key];
     if (!t || !a || !b || a.allMis || b.allMis) return null;
     var shots = !a.summaryOnly && !b.summaryOnly, both = shots && isNum(a.avg) && isNum(b.avg);
-    var gain = null, size = null, basis = null, from = null, to = null;
+    var gain = null, size = null, basis = null, from = null, to = null, se = null;
     function rel(d, base) { return t.rel ? Math.abs(d) / Math.max(Math.abs(base), 1e-9) : Math.abs(d); }
-    if (t.better === 'up') {
-      if (both) { gain = b.avg - a.avg; size = rel(gain, a.avg); basis = 'average'; from = a.avg; to = b.avg; }
+    function seOf(sa, na, sb, nb) { return isNum(sa) && isNum(sb) && na > 1 && nb > 1 ? Math.sqrt(sa * sa / na + sb * sb / nb) : null; }
+    if (key === 'solid_pct') {
+      if (isNum(a.avg) && isNum(b.avg)) {
+        gain = b.avg - a.avg; size = Math.abs(gain); basis = 'average'; from = a.avg; to = b.avg;
+        // the odds of a solid strike, with a shot's worth of doubt either way (so 15 of 15 isn't certainty)
+        if (a.of > 0 && b.of > 0) {
+          var pa = (a.n + 1) / (a.of + 2), pb = (b.n + 1) / (b.of + 2);
+          se = 100 * Math.sqrt(pa * (1 - pa) / a.of + pb * (1 - pb) / b.of);
+        }
+      }
+    } else if (t.better === 'up') {
+      if (both) { gain = b.avg - a.avg; size = rel(gain, a.avg); basis = 'average'; from = a.avg; to = b.avg; se = seOf(a.sd, a.n, b.sd, b.n); }
       else if (isNum(a.max) && isNum(b.max)) { gain = b.max - a.max; size = rel(gain, a.max); basis = 'best'; from = a.max; to = b.max; }
     } else if (t.better === 'line') {
-      var mean = function (v) { return v.reduce(function (x, y) { return x + Math.abs(y); }, 0) / v.length; };
+      var abs = function (v) { return v.map(Math.abs); }, mean = function (v) { return v.reduce(function (x, y) { return x + y; }, 0) / v.length; };
+      var sdOf = function (v) { if (v.length < 2) return null; var m = mean(v); return Math.sqrt(v.reduce(function (x, y) { return x + (y - m) * (y - m); }, 0) / (v.length - 1)); };
       if (shots && a.values && a.values.length && b.values && b.values.length) {
-        var ma = mean(a.values), mb = mean(b.values);
-        gain = ma - mb; size = Math.abs(gain) / Math.max(ma, 3); basis = 'line'; from = ma; to = mb;
+        var va = abs(a.values), vb = abs(b.values), ma = mean(va), mb = mean(vb);
+        gain = ma - mb; size = Math.abs(gain) / Math.max(ma, 3); basis = 'line'; from = ma; to = mb; se = seOf(sdOf(va), va.length, sdOf(vb), vb.length);
       }
     } else if (t.better === 'target') {
       var w = opts && opts.window;
       if (both && w) {
         var off = function (v) { return v < w[0] ? w[0] - v : v > w[1] ? v - w[1] : 0; };
-        from = off(a.avg); to = off(b.avg); gain = from - to; size = Math.abs(gain); basis = 'target';
+        from = off(a.avg); to = off(b.avg); gain = from - to; size = Math.abs(gain); basis = 'target'; se = seOf(a.sd, a.n, b.sd, b.n);
       }
     }
     if (gain == null) return null;
-    var level = size < t.steps[0] ? 0 : size < t.steps[1] ? 1 : size < t.steps[2] ? 2 : 3;
-    var few = shots && ((a.n != null && a.n < 3) || (b.n != null && b.n < 3));
-    return { dir: level === 0 ? 'same' : gain > 0 ? 'better' : 'worse', level: level, basis: basis, from: from, to: to, few: !!few };
+    var count = function (x) { return key === 'solid_pct' ? x.of : x.n; };
+    var few = basis !== 'best' && ((count(a) != null && count(a) < TREND_FEW) || (count(b) != null && count(b) < TREND_FEW));
+    var sig = basis !== 'best' && isNum(se) && se > 0 && Math.abs(gain) >= TREND_SIG * se;
+    var level = !sig ? 0 : size < t.steps[0] ? 0 : size < t.steps[1] ? 1 : size < t.steps[2] ? 2 : 3;
+    return { dir: level === 0 ? 'same' : gain > 0 ? 'better' : 'worse', level: level, basis: basis, from: from, to: to, few: !!few, sig: !!sig };
+  }
+
+  // The change in a rate (solid contact, or on line) from one session to the next, judged
+  // only on the clubs he hit in both, each weighted by the fewer of its two counts, so a
+  // session of mostly hybrids isn't set against one of mostly wedges. a, b: [{ club, ok }]
+  // (ok: true or false; anything else isn't counted). → { d (points), se, sig, clubs } or null
+  // when no club was hit both times. sig: bigger than 1.65 standard errors and 3 points.
+  function rateChange(a, b) {
+    function by(list) { var o = {}; (list || []).forEach(function (x) { if (!x || (x.ok !== true && x.ok !== false)) return; var e = o[x.club] || (o[x.club] = { n: 0, k: 0 }); e.n++; if (x.ok) e.k++; }); return o; }
+    var A = by(a), B = by(b), clubs = Object.keys(A).filter(function (c) { return B[c]; });
+    if (!clubs.length) return null;
+    var W = 0, d = 0, v = 0;
+    clubs.forEach(function (c) {
+      var w = Math.min(A[c].n, B[c].n), pa = A[c].k / A[c].n, pb = B[c].k / B[c].n;
+      var qa = (A[c].k + 1) / (A[c].n + 2), qb = (B[c].k + 1) / (B[c].n + 2);
+      W += w; d += w * (pb - pa); v += w * w * (qa * (1 - qa) / A[c].n + qb * (1 - qb) / B[c].n);
+    });
+    var diff = 100 * d / W, se = 100 * Math.sqrt(v) / W;
+    return { d: diff, se: se, sig: Math.abs(diff) >= Math.max(3, TREND_SIG * se), clubs: sortClubs(clubs) };
   }
 
   // ---------------------------------------------------------------------------
@@ -840,7 +923,7 @@
     if (kind === 'mishits') {
       text = bad.length
         ? contactText(bad) + ' Solid contact: ' + (shots.length - bad.length) + ' of ' + plural(shots.length, 'shot') + ' (' + pct(shots.length - bad.length, shots.length) + ').'
-        : 'No thin or topped shots in ' + plural(shots.length, 'shot') + '.';
+        : 'No likely mis-hits in ' + plural(shots.length, 'shot') + '.';
     } else if (kind === 'launch') {
       list = per('launch_deg', function (v) { return fmtNum(v, 1) + '°'; });
       if (list.length) text = 'Average launch: ' + list.join(' · ') + '.' + note;
@@ -1108,7 +1191,7 @@
     var st = stripTimeClub(line);
     var toks = st.rest.replace(ARROW_RE, function (a) { return ' ' + a.charAt(0) + ' '; }).split(/\s+/).filter(Boolean);
     var cells = [], dirs = [], pending = null;
-    toks.forEach(function (t) {
+    toks.forEach(function (t, k) {
       var n = cells.length;
       if (t.length === 1 && LEFT_ARROWS.indexOf(t) >= 0) { pending = 'L'; return; }   // ◀ belongs to the next number
       if (t.length === 1 && RIGHT_ARROWS.indexOf(t) >= 0) {                            // ▶ belongs to the one before
@@ -1119,7 +1202,11 @@
       if (DIR_WORD.test(t)) {
         // Suffix style ("24 R"): the letter belongs to the value before it,
         // unless that value already has a direction; prefix style ("R 24"): the next.
-        if (style === 'suffix' && n && cells[n - 1] !== '' && !dirs[n - 1]) { cells[n - 1] += ' ' + t; dirs[n - 1] = true; }
+        // Either way, a letter with exactly two numbers still to come in a row of Toptracer's
+        // columns sits before the curve: the value before it is the landing angle, which has
+        // no direction, so it's the curve's ("42 L 8 4": curve 8 left).
+        var later = toks.slice(toks.indexOf(t, k) + 1).filter(function (x) { return /\d/.test(x) && !DIR_WORD.test(x); }).length;
+        if (style === 'suffix' && n && cells[n - 1] !== '' && !dirs[n - 1] && !(later === 2 && n >= 6)) { cells[n - 1] += ' ' + t; dirs[n - 1] = true; }
         else pending = t;
         return;
       }
@@ -1256,10 +1343,17 @@
     opts = opts || {};
     columns = columns || parsed.columns;
     var lateral = opts.lateralUnit || 'ft', apexU = opts.apexUnit || 'ft';
+    // the mapping as parsed (the page passes a copy), not one he's changed by hand
+    var asParsed = columns.length === parsed.columns.length && columns.every(function (c, i) { return c === parsed.columns[i]; });
     return parsed.rows.map(function (row) {
       var shot = { club: row.club || null, time: row.time || null };
-      var warn = [], bad = {};
-      columns.forEach(function (field, j) {
+      var warn = [], bad = {}, cols = columns;
+      // Without a header, a row of all nine Toptracer columns among rows of eight (or the other
+      // way round) is mapped by its own count, so its hang time doesn't shift curve and offline.
+      var own = !parsed.hasHeader && asParsed && row.cells.length !== parsed.nCols && Math.abs(row.cells.length - parsed.nCols) === 1 &&
+        (row.cells.length === TOPTRACER_ORDER.length || row.cells.length === TOPTRACER_ORDER.length - 1);
+      if (own) cols = defaultColumns(row.cells.length);
+      cols.forEach(function (field, j) {
         if (!field || field === 'ignore') return;
         var cell = row.cells[j];
         if (field === 'club') {
@@ -1286,7 +1380,7 @@
       if (!shot.club && opts.defaultClub) shot.club = opts.defaultClub;
       if (!shot.club) warn.push('No club');
       if (!isNum(shot.carry_yds)) warn.push('No carry');
-      if (parsed.nCols && row.cells.length !== parsed.nCols) warn.push(row.cells.length + ' values, expected ' + parsed.nCols);
+      if (parsed.nCols && row.cells.length !== parsed.nCols) warn.push(row.cells.length + ' values, expected ' + parsed.nCols + (own ? (row.cells.length > parsed.nCols ? ' (read with hang time)' : ' (read without hang time)') : ''));
       if (isNum(shot.total_yds) && isNum(shot.carry_yds) && shot.total_yds < shot.carry_yds - 0.5) warn.push('Total is shorter than carry');
       var numeric = METRICS.filter(function (m) { return isNum(shot[m.key]); }).length;
       var include = !!shot.club && numeric > 0 && !(parsed.nCols >= 4 && row.cells.length < parsed.nCols / 2);
@@ -1301,7 +1395,7 @@
     fmtNum: fmtNum, fmtDir: fmtDir, fmtRaw: fmtRaw, fmtRawDir: fmtRawDir, fmtRange: fmtRange,
     fmtAvg: fmtAvg, fmtSigned: fmtSigned, fmtDate: fmtDate, shortDevice: shortDevice, plural: plural,
     summarize: summarize, median: median,
-    normClub: normClub, clubRank: clubRank, sortClubs: sortClubs, clubName: clubName, launchFloor: launchFloor,
+    normClub: normClub, clubRank: clubRank, sortClubs: sortClubs, clubName: clubName, launchFloor: launchFloor, misKind: misKind, rateChange: rateChange,
     sessionShots: sessionShots, hasSummary: hasSummary, isSummaryOnly: isSummaryOnly, compareSessions: compareSessions,
     asList: asList, clubData: clubData, entryHasData: entryHasData, metricStat: metricStat, mishits: mishits,
     sessionMishits: sessionMishits, outliers: outliers, sessionOutliers: sessionOutliers, OUTLIER: OUTLIER,

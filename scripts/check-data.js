@@ -88,6 +88,41 @@ function checkPlayerFile(file, playerId) {
         warnings.push(`${w}: total (${shot.total_yds}) is well short of carry (${shot.carry_yds}); check the photo`);
       }
     });
+
+    // Two rows with every number the same are probably one shot entered twice (rows that
+    // only share time, club, carry, total and ball speed can be two real shots).
+    const seen = new Map();
+    s.shots.forEach((shot) => {
+      const key = JSON.stringify([shot.time, shot.club].concat(Object.keys(RANGES).map((k) => shot[k])));
+      if (seen.has(key)) warnings.push(`${where}: shot ${shot.id} repeats ${seen.get(key)} in every column; check it isn't the same shot twice`);
+      else seen.set(key, shot.id);
+    });
+    // The screen's own averages, when the session kept them: each club's average over every
+    // shot in the file should round to the screen's. One that doesn't usually means a misread
+    // row. (Curve and offline are left out: the screen may average them without their sides.)
+    if (s.screen_averages && typeof s.screen_averages === 'object') {
+      for (const [club, avgs] of Object.entries(s.screen_averages)) {
+        const mine = s.shots.filter((x) => x.club === club);
+        if (!mine.length || !avgs || typeof avgs !== 'object') continue;
+        for (const [k, want] of Object.entries(avgs)) {
+          if (typeof want !== 'number' || !(k in RANGES) || k === 'curve_ft' || k === 'offline_ft') continue;
+          const vals = mine.map((x) => x[k]).filter((v) => typeof v === 'number');
+          if (vals.length < mine.length) continue;
+          const avg = vals.reduce((a2, b2) => a2 + b2, 0) / vals.length, step = Number.isInteger(want) ? 0.5 : 0.05;
+          if (Math.abs(avg - want) > step + 1e-9) warnings.push(`${where}: ${club} ${k} averages ${+avg.toFixed(2)} over the file's ${vals.length} shots but ${want} on the screen; check a row against the photo`);
+        }
+      }
+    }
+  });
+  // Two sessions on one day with the same device are usually one session (add to it instead),
+  // unless both name their venue and the venues differ.
+  const byDay = new Map();
+  (data.sessions || []).forEach((s) => {
+    const k = `${s.date}|${String(s.device || '').toLowerCase()}`;
+    const other = byDay.get(k);
+    if (other && !(other.location && s.location && other.location !== s.location)) {
+      warnings.push(`sessions ${other.id} and ${s.id} are on the same day with the same device; add the shots to one session`);
+    } else if (!other) byDay.set(k, s);
   });
 
   if (data.baseline_session_id && !sessionIds.has(data.baseline_session_id)) {

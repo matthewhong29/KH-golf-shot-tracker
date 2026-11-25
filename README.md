@@ -29,20 +29,20 @@ Under them, **goals** stay pinned on every tab as a constant reminder: personal 
 The five tabs are:
 
 - **Stats** for one session, or all sessions pooled:
-  - Session summary: big-number tiles for shots, solid contact and on line (within 10 yds), each with the change from the previous session, and the longest carry. Then a "Needs work" box listing clubs to practise (tap one to jump to it) and highlights: thin or topped shots, average miss per club, and change since the baseline.
+  - Session summary: big-number tiles for shots, solid contact and on line (within 10 yds), each with the change from the previous session, and the longest carry. The change is judged only on the clubs hit both times ("same clubs"), each weighted by the fewer of its two shot counts, so a day of hybrids isn't set against a day of wedges, and it reads "About the same" unless it's bigger than chance would make it (`GolfCore.rateChange`). Then a "Needs work" box listing clubs to practise (tap one to jump to it) and highlights: likely mis-hits (thin or topped, or fat), outliers, average miss per club, and change since the baseline.
   - **Shot replay:** watch each shot fly on a course, drawn from its numbers (see "Shot replay" below). Pick a club or all of them and a camera: **Tee box**, **Side** or **Green**. Step through the shots, **Play all** to run the session in order, and change the speed (1×, 2×, 4×). **Best 10** shows each club's best shots flying together, a picture of his ideal flight, with their average carry, total, height and landing angle. Under the picture: the carry, total, distance to the pin and peak height.
-  - Club by club, one club at a time: tiles for its average carry, pure-strike carry, solid contact and average miss, its "Needs work" notes, **Goals** for the range (a focus, a distance zone around its pure-strike carry, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
+  - Club by club, one club at a time: tiles for its average carry, pure-strike carry, solid contact and average miss, its "Needs work" notes, **Goals** for the range (a focus, a distance zone around its typical carry, on-line target, launch window and solid contact, each marked "On target" or "Keep working", with a link to the matching drills), then every number in plain words. A table comparing all clubs is folded underneath.
   - A carry gapping chart.
   - Dispersion: offline vs. carry. All clubs show as one panel each on the same scale, or pick one club.
   - Average miss by club.
   - The session's coaching notes.
-- **Progress**: pick a club and a metric to see the baseline and latest side by side with the change, each session's range and average, then a baseline-vs-latest table. Arrows mark each change: up for better, down for worse, and one to three arrows for a small to big change (`GolfCore.trend` in `js/core.js`). More carry and speed is better; launch is better when it moves toward the club's target window; curve and offline when shots finish closer to the line on average. Peak height, landing angle and hang time get no arrow, since higher isn't always better. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
+- **Progress**: pick a club and a metric to see the baseline and latest side by side with the change, each session's range and average, then a baseline-vs-latest table. Arrows mark each change: up for better, down for worse, and one to three arrows for a small to big change (`GolfCore.trend` in `js/core.js`). An arrow shows only when the change is bigger than the spread of his shots could make by luck (1.65 standard errors of the difference, from each session's spread and number of shots; for solid contact, from its odds), so a few shots one way or the other read "About the same". A session with fewer than 5 shots is marked "only a few shots". When the baseline kept only ranges, like Dad's Aug 2026 Rapsodo session, only the longest shots can be set side by side, and they get "Can't tell" instead of an arrow, since a longer list of shots has a longer longest. More carry and speed is better; launch is better when it moves toward the club's target window; curve and offline when shots finish closer to the line on average. Peak height, landing angle and hang time get no arrow, since higher isn't always better. "Solid contact %" is one of the metrics. Dad's baseline is the Aug 2026 Rapsodo session (`baseline_session_id`). A club that session doesn't include uses its own first session.
 - **Practice** has three sections. **Range**, for use during a range session:
-  - **Your yardages:** each club's pure-strike carry and ball speed at a glance. Tap a club to pick it.
+  - **Your yardages:** each club's typical carry, the middle of its solid shots over its last 3 sessions and the number to play on the course, with a lighter bar out to its pure-strike carry and the ball speed of a pure strike. One bad day doesn't move them. Tap a club to pick it.
   - **Your clubs and launch targets:** every club in his bag with its model, loft and the launch a solid strike should have.
-  - **Aim for:** the club's numbers to hit: a distance zone, the ball speed of a pure strike, the launch window and on line (within 10 yds). It also shows what his pure strikes look like (peak height, landing angle, total) and the club's "Needs work" notes.
+  - **Aim for:** the club's numbers to hit: a distance zone around his typical carry (the pure strike is the stretch target), the ball speed of a pure strike, the launch window and on line (within 10 yds). It also shows what his pure strikes look like (peak height, landing angle, total) and the club's "Needs work" notes.
   - **Focus:** one thing to work on with that club, with the matching drill: its animation, steps and coach's video.
-  - **Check a shot:** type the carry, ball speed, launch and offline from the range screen to get "Pure strike!", "Good shot", "Keep working" or "Looks thin or topped", with a line on each number.
+  - **Check a shot:** type the carry, ball speed, launch and offline from the range screen to get "Pure strike!", "Good shot", "Keep working", "Looks thin or topped" or "Looks fat or mis-struck", with a line on each number.
   - **Swing**: swing reviews. Matthew sends a swing video; Claude pulls out the key frames (setup, top, impact, finish), draws on them (orange for problems, green for fixes, blue for good, white guide lines), numbers each mark with a note, and lists what's working and what to fix, linked to the drills. Swipe or tap through the frames, and hide the lines to see the plain frame. A filming guide shows where to put the phone for the two views (face-on, and down the line from behind the hands) and what to get in the picture; until the first review there's also an example drawn with the drill figure.
   - **Drills**: focus areas for that player, each with why it matters, a "from your last session" line, and drills. Each drill plays its steps as an animation (a strip of 2–4 frames you can tap; it pauses for phones set to reduce motion), then the steps, reps, and a coach's video that loads when tapped (23 of the 30 drills so far, from long-running instruction channels such as Titleist, Rick Shiels, Danny Maude, Golf Monthly and Golf Channel; the rest link to a YouTube search). It ends with a suggestion to check things with a coach. The content is in `js/tips.js`, the drawings in `js/drillart.js`.
 - **Game**: play TPC Harding Park with his own shots: a real swing on the phone (drag back and swipe through, or swing the phone itself like a club; the tempo, the swipe or the phone set the clubface and the path, and the ball flies by the ball-flight laws), the swing meter, or typing in the shots he hits at the range to play a hole live. He picks the shot as well as the club (a draw or a fade, high or low, a spinner, a chip, a flop, a splash), with the one a golfer would play suggested (see [Game](#game) below).
@@ -139,9 +139,9 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
 
 ## How numbers are worked out
 
-- A **likely mis-hit** (thin, topped or fat) has either of these, judged within its own session:
-  - launch under 5° for woods, hybrids and driver, or under 10° for irons and wedges;
-  - carry under 60% of that club's upper-quartile carry. The upper quartile still works when most of a club's shots were mis-hit.
+- A **likely mis-hit** has either of these, judged within its own session:
+  - **thin or topped:** launch under the club's floor: 5° for woods, hybrids and driver and 10° for irons and wedges, or 60% of the low end of the club's usual launch window when that's higher (`launchFloor`: PW 16°, 9 iron 14°, 7 iron 11°, 5 hybrid 9°, driver 8°, to the nearest degree). A pitching wedge launched at 11° came off thin even if it ran a long way;
+  - **fat or mis-struck:** carry under 60% of that club's upper-quartile carry at a normal height. The upper quartile still works when most of a club's shots were mis-hit. The screen can't tell a fat shot from a deliberate half swing, so warm-up and drill balls count here too.
 - **Mis-hits are left out of every number:** averages, ranges, gaps, the dispersion averages, miss by club, progress and the highlights' numbers. They stay on the charts as hollow dots, outside the range bars, so contact and consistency are still visible.
   - The Stats table shows each club's shot count with its mis-hits under it. "3 of 9" counts only solid shots.
   - A club whose shots were all mis-hits shows "—" with "all N were mis-hits".
@@ -152,21 +152,23 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
   - MAD is never taken below 3% of the median, so a tight group can't turn ordinary shots into outliers. An outlier is always at least about 16% shorter or longer than usual.
 - **Outliers are left out of the numbers too** (averages, ranges, pure strike, gaps, longest carry, dispersion averages, miss by club, progress), **but they still count as solid contact**. They also count in the hit rates: on line, shots landing in the carry zone, and the solid-contact goal.
   - They show as ringed dots on the charts and are marked "outlier" in the shot list, the shot table and the CSV export.
-  - The highlights list them with the club's usual carry, e.g. "1 outlier, far off the usual carry: Driver 132 yds (usually 162)".
+  - A long one struck at least as fast as his top quarter of ball speeds for the club isn't an outlier: it's his best strike of the day.
+  - The highlights list them with the club's usual carry, e.g. "2 outliers, far off the usual carry: 9i 67 yds (usually 95); 7i 73 yds (usually 109)" (Dad, Nov 22).
 - Averages are rounded half to even. An exact 147.25 shows as 147.2, matching the numbers checked from the Toptracer screen.
 - The dispersion plots convert offline from feet to yards, so both axes share one scale.
 - **Needs work** (a soft yellow highlight, always labelled) marks a club when any of these is true (`needsWork` in `js/core.js`):
   - fewer than 80% of its shots were solid;
   - its average solid shot finishes 10 yds or more left or right of the target, a third of a 30-yard fairway;
-  - its carry varies a lot: the standard deviation is over 15% of the average carry, with at least 4 solid shots.
+  - its carry varies a lot: the standard deviation is over 15% of the average carry, with at least 4 solid shots;
+  - fewer than half of its solid shots (at least 5) finish within 10 yds of the line, when the average miss alone doesn't show it, as with misses both ways ("only 6 of 30 finished within 10 yds of the line, missing both ways").
 - A **pure strike** is one of his best-struck shots with a club (`strikeReference`):
   - Take the club's solid shots.
   - Leave out any launched more than 4° below the club's launch window; those are usually thin, like a skulled wedge that flies low and long.
-  - Of the rest, take the top quarter by ball speed (at least 2 shots, ties included). Ball speed is the best sign of a centred strike that Toptracer shows. Without ball speed, the top quarter by carry is used.
-  - Their average carry is the **pure-strike carry**, the club's distance goal. Their lowest ball speed is the speed a pure strike needs.
-  - On Practice, each club uses its most recent session, so the numbers grow as he improves. On Stats, they come from the session shown.
+  - Of the rest, take the top quarter by ball speed (at least 2 shots; equal speeds, as whole mph often are, go to the longer carry). Ball speed is the best sign of a centred strike that Toptracer shows. Without ball speed, the top quarter by carry is used.
+  - Their average carry is the **pure-strike carry**, what a pure strike does: the stretch target. Their lowest ball speed is the speed a pure strike needs.
+  - On Practice, each club uses its last 3 sessions pooled, so the numbers grow as he improves but one bad day doesn't move them. On Stats, they come from the session shown.
 - **Goals** for each club come from the player's own shots, so they move as he improves (`clubGoals`):
-  - **Distance:** a zone centred on the club's pure-strike carry. The window is 25% tighter than his current spread, but never under ±5 yds for wedges, ±6 for irons or ±8 for hybrids, woods and driver. Met when 7 of 10 shots land in it.
+  - **Distance:** the same distance every time: a zone centred on the club's typical carry (the median of his solid shots; on Practice, over the club's last 3 sessions), ±5 yds for wedges, ±6 for irons and ±8 for hybrids, woods and driver, however scattered the session. Met when 7 of 10 shots land in it. The pure-strike carry is shown beside it as the stretch target. Pick clubs on the course by the typical carry: most shots aren't pure.
   - **On line:** met when 8 of 10 shots finish within 10 yds (30 ft) of the target line.
   - **Launch:** the solid shots' average launch sits inside the club's launch window (`launchWindow`).
     - When the data file gives the club's loft under `equipment.bag`, the window is ±2° around what a solid strike at a modest swing speed usually launches at: 64% of the loft for irons and wedges, 68% for hybrids, 75% for fairway woods, and the loft plus 3° for a driver off a tee. Dad's Black Cats give 3 iron 11–15°, 4 iron 13–17°, 5 iron 15–19°, 6 iron 17–21°, 7 iron 19–23°, 8 iron 22–26°, 9 iron 24–28° and PW 27–31°. His 10.5° Callaway Edge driver gives 12–16°.
@@ -176,7 +178,8 @@ The preview works from parsed rows (`GolfCore.parsedFromRows`), so a future impo
 - **Check a shot** (`checkShot`) compares the numbers typed from the screen with that club's references:
   - Ball speed at or above the pure-strike speed is a pure strike's speed. Within 5% is "close"; lower is likely an off-centre hit.
   - Carry is checked against the distance zone, launch against the launch window, and offline against the 10-yd (30 ft) target.
-  - The verdict is "Pure strike!" when the ball speed and the carry both match. It's "Looks thin or topped" when the shot would count as a mis-hit: launch under the floor, or carry under 60% of the pure-strike carry.
+  - Carry in the zone is on target; carrying to within a club's window of the pure-strike carry is pure-strike distance, even past the zone.
+  - The verdict is "Pure strike!" when the ball speed and the carry both match and the launch isn't low. It's "Looks thin or topped" when the launch is under the floor and "Looks fat or mis-struck" when the carry is under 60% of the pure-strike carry, as for a mis-hit.
 
 ## Shot replay
 
