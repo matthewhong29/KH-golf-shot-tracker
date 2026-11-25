@@ -33,7 +33,15 @@
   },
   "baseline_session_id": null,
   "rounds_reset": "2026-11-25",
-  "personal_goals": [],
+  "personal_goals": [
+    {
+      "id": "goal-2026-11-25-isen",
+      "text": "Hit 10 consistent shots in a row",
+      "source": "me",
+      "added": "2026-11-25",
+      "done": false
+    }
+  ],
   "sessions": [
     {
       "id": "2026-11-12-toptracer",
