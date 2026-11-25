@@ -38,7 +38,7 @@
       { n: 15, par: 4, yds: { blue: 405, white: 375 }, note: 'A dogleg left past a bunker to aim at on the right, with the lake to the left.' },
       { n: 16, par: 4, yds: { blue: 330, white: 310 }, note: 'A short par 4 that bends right along Lake Merced, with bunkers short left of the green.' },
       { n: 17, par: 3, yds: { blue: 175, white: 165 }, note: 'A par 3 along the lake, which runs down the left, with bunkers on both sides of the green.' },
-      { n: 18, par: 4, yds: { blue: 440, white: 420 }, note: 'A long, gentle dogleg left around Lake Merced. The tee shot carries the water, bunkers wait on the right, and the green sits above the fairway.' }
+      { n: 18, par: 4, yds: { blue: 440, white: 420 }, note: 'A long, gentle dogleg left around Lake Merced. The drive carries the water, bunkers wait on the right, and the green sits above the fairway.' }
     ],
     // Blue yardages from Offcourse's scorecard, White from GolfPass's; the notes from the
     // course guides and hole-by-hole write-ups; the map from OpenStreetMap.
