@@ -2295,44 +2295,30 @@
     if (gm.targetKey !== k) Object.assign(gm, { targetKey: k, target: GM.aimFor(gm.H, gm.ball, gm.pin, gmReach(gm.club), gm.pools[gm.club] ? gm.pools[gm.club].landing : GM.landingOf(gm.club)) });
     return gm.target;
   }
-  // What a golfer weighs before choosing the shot (GolfGame.suggestShot): the lie, how far
-  // to the pin and to the green's edge, how much green there is between its near edge and
-  // the pin, a bunker short of the pin, trees in the way of a normal flight but not a low
-  // or a high one, the trouble either side of where he's aiming, and which way the hole
-  // bends over this shot and a little past it (when the pin is out of reach).
+  // What the shots on offer depend on: the lie, how far it is to the pin and to the green's
+  // edge, and how far the green is above the ball (for a chip's club).
   function gmShotCtx() {
     const H = gm.H, b = gm.ball, pin = gm.pin, d = GM.dist(b, pin), hd = GM.headingTo(b, pin);
-    let toGreen = d, room = 0, overSand = false;
+    let toGreen = d;
     for (let s = 0; s < d; s += 1) { const q = FL.offsetPoint(b.x, b.z, hd, s, 0), l = GM.lieAt(H, q.x, q.z); if (l === 'green' || l === 'fringe') { toGreen = s; break; } }
-    for (let s = 0; s < 45; s += 0.5) { const q = FL.offsetPoint(pin.x, pin.z, hd + Math.PI, s, 0); room = s; if (GM.lieAt(H, q.x, q.z) !== 'green') break; }
-    for (let s = Math.max(3, d - 40); s < d - 1; s += 1) { const q = FL.offsetPoint(b.x, b.z, hd, s, 0); if (GM.lieAt(H, q.x, q.z) === 'bunker') { overSand = true; break; } }
-    const reach = gmReach(gm.club), t = GM.toHole(H, b.x, b.z), a0 = H.at(t.s + 15).h, a1 = H.at(Math.min(H.L, t.s + reach + 40)).h;
-    let turn = a1 - a0;
-    while (turn > Math.PI) turn -= 2 * Math.PI;
-    while (turn < -Math.PI) turn += 2 * Math.PI;
-    const bend = Math.abs(turn) > 14 * Math.PI / 180 && d > reach + 10 ? (turn < 0 ? -1 : 1) : 0, tg = gmTarget();
-    const inWay = GM.treesInWay(H, b, tg, reach, gmLie() === 'trees');
-    const treesLow = inWay > 0 && GM.treesInWay(H, b, tg, reach, GM.SHOTS.low.apex) === 0;
-    const treesHigh = inWay > 0 && !treesLow && GM.treesInWay(H, b, tg, reach, GM.SHOTS.high.apex) === 0;
-    const rise = gmRise(pin);
-    return { lie: gmLie(), d, toGreen, room, overSand, bend, treesLow, treesHigh, beside: GM.troubleBeside(H, b, tg), hand: gmHand(), club: gm.club, reach, rise, chipClub: GM.chipClub(gm.pools, d, toGreen, rise),
-      spinSpeed: gm.pools[gm.club] ? gm.pools[gm.club].pureSpeed : null, ownCurve: gm.pools[gm.club] ? gm.pools[gm.club].curve : null };
+    return { lie: gmLie(), d, toGreen, rise: gmRise(pin), hand: gmHand(), club: gm.club };
   }
-  // The shots on offer from here, the suggested one (with why), and the one in play.
-  function gmShotSugg() {
+  // The shots on offer from here (GolfGame.shotTypes), worked out once for each club and spot.
+  function gmShotOptions() {
     const k = gm.club + '@' + gm.ball.x.toFixed(2) + ',' + gm.ball.z.toFixed(2);
-    if (gm.suggKey !== k) {
-      const ctx = gmShotCtx(), types = gmPutting() || gm.round.mode === 'live' ? [] : GM.shotTypes(ctx);
-      Object.assign(gm, { suggKey: k, shotCtx: ctx, shotTypes: types, shotSugg: types.length ? GM.suggestShot(Object.assign(ctx, { types })) : null });
+    if (gm.optKey !== k) {
+      const ctx = gmShotCtx();
+      Object.assign(gm, { optKey: k, shotCtx: ctx, shotTypes: gmPutting() || gm.round.mode === 'live' ? [] : GM.shotTypes(ctx) });
     }
-    return gm.shotSugg;
+    return gm.shotTypes;
   }
+  // The shot in play: the one he picked, or else his plain shot (normal; a pitch round the
+  // green, a punch from under the trees). The game never suggests a shape: reading the shot
+  // is his to do (Matthew's call).
   function gmShotType() {
-    gmShotSugg();
-    const types = (gm.shotTypes || []).filter((t) => GM.shotFits(t, gm.club));
+    const types = gmShotOptions().filter((t) => GM.shotFits(t, gm.club));
     if (gm.shot && types.indexOf(gm.shot) >= 0) return gm.shot;
-    if (gm.shotSugg && types.indexOf(gm.shotSugg.type) >= 0) return gm.shotSugg.type;
-    return types[0] || 'normal';
+    return types.filter((t) => GM.plainShot(t))[0] || types[0] || 'normal';
   }
   // His aim, or the default for this club from this spot (worked out once for each).
   // With the real swing, the default allows for his usual shape: if a perfect swing with
@@ -2365,14 +2351,8 @@
     gm.rollPos = null;
     const lie = gmLie(), ft = GM.dist(gm.ball, gm.pin) * 3;
     gm.club = lie === 'green' || (lie === 'fringe' && ft < 90) ? 'Putter' : gmSuggest();
-    gm.shot = null;
+    gm.shot = null;   // every shot starts as his plain one
     gm.suggClub = gm.club;
-    // The suggested shot can want another club: a chip wants one that runs, a flop or a
-    // splash his most lofted wedge.
-    if (!gmPutting() && gm.round.mode !== 'live') {
-      const sg = gmShotSugg(), want = sg ? GM.clubForShot(sg.type, gm.pools, gm.club, gm.shotCtx) : gm.club;
-      if (want !== gm.club && gm.pools[want]) { gm.club = gm.suggClub = want; gmShotSugg(); }
-    }
     gm.phase = gmPutting() ? 'putt' : 'aim';
     gmView();
     gmControls();
@@ -2540,15 +2520,14 @@
       return `<button type="button" class="chip" data-action="gm-club" data-club="${esc(c)}" aria-pressed="${c === gm.club}">${esc(c)}${p ? `<span class="cd">${Math.round(p.full)}</span>` : ''}</button>`;
     }).join('')}</div>`;
   }
-  // The shot to hit: the ones that make sense from here, the suggested one and why, and
-  // what the one picked does.
+  // The shot to hit: the ones that make sense from here, and what the one picked does. It
+  // starts as his plain shot; a shape is his to choose, with nothing suggested.
   function gmShotChips() {
-    const sg = gmShotSugg(), types = gm.shotTypes || [], cur = gmShotType();
+    const types = gmShotOptions(), cur = gmShotType();
     if (types.length < 2) return '';
-    const why = sg && sg.type === cur && sg.why ? `Suggested: ${sg.why}. ` : '';
-    return `<div class="gm-label"><span>Shot</span>${sg && sg.why ? `<span class="sg">Suggested: ${esc(GM.SHOTS[sg.type].name.toLowerCase())}</span>` : ''}</div>
+    return `<div class="gm-label"><span>Shot</span></div>
       <div class="chips gm-shots" role="group" aria-label="Shot">${types.map((ty) => `<button type="button" class="chip" data-action="gm-shot" data-type="${ty}" aria-pressed="${ty === cur}">${esc(GM.SHOTS[ty].name)}</button>`).join('')}</div>
-      <p class="hint gm-shot-say">${esc(why + GM.shotSay(cur, gmHand()))}</p>`;
+      <p class="hint gm-shot-say">${esc(GM.shotSay(cur, gmHand()))}</p>`;
   }
   function gmMeterHtml(kind) {
     return `<div class="gm-meter" id="gmMeter" role="button" tabindex="0" data-kind="${kind}">
@@ -4702,7 +4681,7 @@
     'gm-skip'() { if (gm && gm.fl) gm.fl.end(); },
     'gm-shot'(b) {
       if (!gm || gm.busy || gmSwinging()) return;
-      gmShotSugg();
+      gmShotOptions();
       const type = b.dataset.type, want = GM.clubForShot(type, gm.pools, gm.club, gm.shotCtx);
       gm.shot = type;
       gm.aim = null;
