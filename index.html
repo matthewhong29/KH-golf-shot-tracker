@@ -334,6 +334,11 @@ details.more[open]>summary::after{transform:rotate(-135deg) translate(-2px,-2px)
 .gm-mo-ask ul{margin:0 0 10px 18px;font-size:15px;line-height:1.4}
 .gm-mo-ask li{margin:4px 0}
 .gm-mo-btns{display:flex;flex-wrap:wrap;gap:8px}
+.gm-mo-ask.each{padding:10px 12px}
+.gm-mo-ask.each ul{list-style:none;margin:0 0 10px;padding:0}
+.gm-mo-ask.each li{position:relative;padding-left:24px;margin:3px 0}
+.gm-mo-ask.each li::before{content:"✓";position:absolute;left:3px;top:0;color:#9be3b9;font-weight:800}
+.gm-pad.off .gm-mo{opacity:.6;pointer-events:none}
 /* After a real swing: what it did, with a picture of the face and path at impact */
 .gm-rep{display:grid;grid-template-columns:96px minmax(0,1fr);gap:4px 12px;align-items:start;margin-top:8px}
 .gm-rep svg{width:96px;height:96px;display:block;background:#fff;border-radius:12px;border:1px solid var(--g200)}
@@ -878,6 +883,6 @@ nav.tabs.compact button:not([aria-selected="true"]) .tl{position:absolute;width:
 <script src="js/course-elev.js?v=585b592a"></script>
 <script src="js/courses.js?v=cb03643b"></script>
 <script src="js/game.js?v=fbc4702b"></script>
-<script src="js/app.js?v=2f27334b"></script>
+<script src="js/app.js?v=933a7a1f"></script>
 </body>
 </html>

@@ -2756,39 +2756,58 @@
     return typeof window !== 'undefined' && typeof window.DeviceMotionEvent !== 'undefined'
       && ((navigator.maxTouchPoints || 0) > 0 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches));
   }
+  // Before every shot with the phone, a ready check: his grip and the screen, the space round
+  // him, a smooth swing. Its "I'm ready" starts watching for the swing (the first time, the
+  // fuller check also asks the phone for its motion), so it's one tap a shot. While it's
+  // watching, Cancel stops it; after the shot, a miss or a cancel, the check comes back.
   function gmMotionHtml(kind) {
     if (!gmMotionAvail()) return '';
-    if (gmMo && gmMo.ask) {
-      return `<div class="gm-mo-ask" role="group" aria-label="Before you swing the phone">
-        <p class="t">Before you swing the phone</p>
-        <ul>
-          <li>Hold it in both hands like the grip of a club, the screen facing the target like the clubface, and hold on tight. A case with a wrist strap helps.</li>
-          <li>Make sure no one is near you and there’s nothing you could hit.</li>
-          <li>Swing smoothly, not hard. It reads how far back you go, your tempo and where the screen faces at impact, not your speed: a half-speed swing is plenty.</li>
-        </ul>
-        <div class="gm-mo-btns"><button type="button" class="gm-practice on" data-action="gm-motion-go">I’m ready</button>
-          <button type="button" class="gm-practice" data-action="gm-motion-no">Not now</button></div>
-      </div>`;
+    const putt = kind === 'putt', first = !!(gmMo && gmMo.ask);
+    if (first || (gmMo && gmMo.on && !gmMotionArmed())) {
+      const items = first
+        ? ['Hold it in both hands like the grip of a club, the screen facing the target like the clubface, and hold on tight. A case with a wrist strap helps.',
+          'Make sure no one is near you and there’s nothing you could hit.',
+          'Swing smoothly, not hard. It reads how far back you go, your tempo and where the screen faces at impact, not your speed: a half-speed swing is plenty.']
+        : ['Both hands on it, the screen to the target, holding tight', 'No one near you, nothing you could hit', putt ? 'A smooth stroke' : 'Smooth, not hard'];
+      const title = first ? 'Before you swing the phone' : putt ? 'Before you putt' : 'Before you swing';
+      return `<div class="gm-mo" id="gmMo"><div class="gm-mo-ask${first ? '' : ' each'}" role="group" aria-label="${title}">
+        <p class="t">${title}</p>
+        <ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul>
+        <div class="gm-mo-btns"><button type="button" class="gm-practice on gm-mo-arm" data-action="${first ? 'gm-motion-go' : 'gm-motion-arm'}">I’m ready</button>
+          <button type="button" class="gm-practice" data-action="${first ? 'gm-motion-no' : 'gm-motion'}">${first ? 'Not now' : 'Use the pad'}</button></div>
+      </div></div>`;
     }
     return gmMo && gmMo.on
-      ? `<div class="gm-mo-row"><button type="button" class="gm-practice on gm-mo-arm" data-action="gm-motion-arm" aria-pressed="${gmMotionArmed()}">${gmMotionArmLabel(kind)}</button>
-          <button type="button" class="gm-practice" data-action="gm-motion">Use the pad</button></div>
-        <p class="gm-mo-safe gm-mo-note">Grip it tight, keep clear of people and things, and swing smoothly.</p>`
-      : '<div class="gm-mo-row"><p class="gm-mo-safe">Or hold your phone like a club and swing it.</p><button type="button" class="gm-practice" data-action="gm-motion">Swing the phone</button></div>';
+      ? `<div class="gm-mo" id="gmMo"><div class="gm-mo-row"><button type="button" class="gm-practice on gm-mo-arm" data-action="gm-motion-arm" aria-pressed="true">Cancel</button>
+          <button type="button" class="gm-practice" data-action="gm-motion">Use the pad</button></div></div>`
+      : '<div class="gm-mo" id="gmMo"><div class="gm-mo-row"><p class="gm-mo-safe">Or hold your phone like a club and swing it.</p><button type="button" class="gm-practice" data-action="gm-motion">Swing the phone</button></div></div>';
   }
-  // Nothing he does with the phone counts until he's set up and taps Ready: then it lets
-  // him get set (GM_MO.set s, turning the screen to the target and taking his grip),
-  // waits for him to keep still, and beeps (and buzzes, where the phone can) for him to
-  // swing, as he can't see the screen at address. One swing a tap: after it, a miss, or
-  // GM_MO.timeout s without a swing, he taps Ready again.
+  // Nothing he does with the phone counts until he's set up and taps I'm ready on the ready
+  // check: then it lets him get set (GM_MO.set s, turning the screen to the target and
+  // taking his grip), waits for him to keep still, and beeps (and buzzes, where the phone
+  // can) for him to swing, as he can't see the screen at address. One swing a tap: after
+  // it, a miss, or GM_MO.timeout s without a swing, the ready check comes back.
   const GM_MO = { set: 1.5, timeout: 30 };
   function gmMotionArmed() { return !!gmMo && gmMo.on && /^(set|wait|ready|swing)$/.test(gmMo.phase || ''); }
-  function gmMotionArmLabel(kind) { return gmMotionArmed() ? 'Cancel' : kind === 'putt' ? 'Ready to putt' : 'Ready to swing'; }
+  // The ready check, or Cancel while it's watching, drawn again under the pad.
   function gmMotionButtons() {
-    const p = gm && gm.pad, b = p && $('[data-action="gm-motion-arm"]', p.el);
-    if (!b) return;
-    b.textContent = gmMotionArmLabel(p.kind);
-    b.setAttribute('aria-pressed', String(gmMotionArmed()));
+    const p = gm && gm.pad, box = p && $('#gmMo', p.el);
+    if (!box) return;
+    const had = box.contains(document.activeElement), tmp = document.createElement('div');
+    tmp.innerHTML = gmMotionHtml(p.kind);
+    if (!tmp.firstElementChild) return;
+    box.replaceWith(tmp.firstElementChild);
+    if (had) { const b = $('#gmMo .gm-mo-arm', p.el); if (b) b.focus({ preventScroll: true }); }
+  }
+  // He's ready: watch for the swing (get set, keep still, the beep, then the swing).
+  function gmMotionArm() {
+    if (!gm || gm.busy || !gmMo || !gmMo.on) return;
+    if (gm.pad && gm.pad.kind === 'swing' && !gm.pools[gm.club]) { toast('No range shots with this club yet. Play it from the range.'); return; }
+    gmBeepInit();
+    Object.assign(gmMo, { phase: 'set', setUntil: null, armedAt: null, buf: [], samples: [], stillSince: null, movingSince: null, word: '', miss: '' });
+    gmMotionButtons();
+    gmMotionText();
+    gmPadDraw();
   }
   // Back to waiting for a tap on Ready, saying why if there's a reason.
   function gmMotionIdle(miss) {
@@ -2834,7 +2853,8 @@
     idle: 'No swing for a while, so it stopped watching.'
   };
   // Asking for the motion has to happen right in the tap (iPhones ask the player first).
-  function gmMotionStart() {
+  // arm: he's just said he's ready, so start watching for the swing straight away.
+  function gmMotionStart(arm) {
     const go = () => {
       gmMo = { on: true, phase: 'idle', buf: [], samples: [], stillSince: null, theta: 0, got: false, word: '' };
       window.addEventListener('devicemotion', gmMotionEvent);
@@ -2842,6 +2862,7 @@
         if (gmMo && gmMo.on && !gmMo.got) { gmMotionStop(); toast('This phone isn’t sharing its motion with the page. Swipe on the pad instead.'); }
       }, 2000);
       if (gm) gmControls();
+      if (arm) gmMotionArm();
     };
     const DM = window.DeviceMotionEvent;
     if (DM && typeof DM.requestPermission === 'function') {
@@ -2860,7 +2881,7 @@
     const p = gm && gm.pad;
     if (!p || !gmMo || !gmMo.on) return;
     if (word != null) gmMo.word = word;
-    const putt = p.kind === 'putt', cue = GM.motionCue(Math.min(1, p.target), putt), ph = gmMo.phase, go = putt ? 'Ready to putt' : 'Ready to swing';
+    const putt = p.kind === 'putt', cue = GM.motionCue(Math.min(1, p.target), putt), ph = gmMo.phase, go = 'I’m ready';
     const txt = ph === 'swing' ? '…'
       : ph === 'set' ? 'Get set: grip it, the screen facing the target, then keep still.'
         : ph === 'wait' ? 'Keep still…'
@@ -4241,16 +4262,13 @@
     'gm-motion-arm'() {
       if (!gm || gm.busy || !gmMo || !gmMo.on) return;
       if (gmMotionArmed()) { gmMo.word = ''; gmMotionIdle(''); return; }  // Cancel
-      if (gm.pad && gm.pad.kind === 'swing' && !gm.pools[gm.club]) { toast('No range shots with this club yet. Play it from the range.'); return; }
-      gmBeepInit();
-      Object.assign(gmMo, { phase: 'set', setUntil: null, armedAt: null, buf: [], samples: [], stillSince: null, movingSince: null, word: '', miss: '' });
-      gmMotionButtons();
-      gmMotionText();
-      gmPadDraw();
+      gmMotionArm();
     },
     'gm-motion-go'() {
+      if (!gm || gm.busy || gmSwinging()) return;
+      gmBeepInit();  // sound has to be switched on in the tap itself
       ui.game.motionOk = true;
-      gmMotionStart();
+      gmMotionStart(true);
     },
     'gm-motion-no'() {
       gmMo = null;
