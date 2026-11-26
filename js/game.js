@@ -45,9 +45,37 @@
   var AIR_K = 0.0000116;
 
   function inPoly(poly, x, z) {
+    if (poly.length > 48) return inBands(bandsOf(poly), poly, x, z);
     var inside = false;
     for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
       var a = poly[i], b = poly[j];
+      if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+    }
+    return inside;
+  }
+  // A big outline's sides filed by height (z) in bands, worked out once and kept with it, so
+  // the same test looks only at the sides that reach the spot's band. The answer is the same.
+  function bandsOf(poly) {
+    if (poly.bands) return poly.bands;
+    var n = poly.length, z0 = Infinity, z1 = -Infinity, i;
+    for (i = 0; i < n; i++) { z0 = Math.min(z0, poly[i][1]); z1 = Math.max(z1, poly[i][1]); }
+    var nb = Math.max(1, Math.min(256, Math.ceil(n / 6))), step = (z1 - z0) / nb || 1, bands = [];
+    for (i = 0; i < nb; i++) bands.push([]);
+    for (i = 0; i < n; i++) {
+      var a = poly[i], b = poly[i === 0 ? n - 1 : i - 1];
+      var k0 = clamp(Math.floor((Math.min(a[1], b[1]) - z0) / step), 0, nb - 1), k1 = clamp(Math.floor((Math.max(a[1], b[1]) - z0) / step), 0, nb - 1);
+      for (var k = k0; k <= k1; k++) bands[k].push(i);
+    }
+    var out = { z0: z0, step: step, nb: nb, bands: bands };
+    Object.defineProperty(poly, 'bands', { value: out });
+    return out;
+  }
+  function inBands(B, poly, x, z) {
+    var k = Math.floor((z - B.z0) / B.step);
+    if (k < 0 || k >= B.nb) return false;
+    var list = B.bands[k], n = poly.length, inside = false;
+    for (var m = 0; m < list.length; m++) {
+      var i = list[m], a = poly[i], b = poly[i === 0 ? n - 1 : i - 1];
       if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
     }
     return inside;
@@ -74,7 +102,9 @@
     var out = a > 0 ? 1 : -1;   // outwards is to the right of each side when the points run anticlockwise
     function nrm(p, q) { var dx = q[0] - p[0], dz = q[1] - p[1], d = Math.hypot(dx, dz) || 1; return [out * dz / d, -out * dx / d]; }
     return poly.map(function (p, i) {
-      var n1 = nrm(poly[(i - 1 + n) % n], p), n2 = nrm(p, poly[(i + 1) % n]), mx = n1[0] + n2[0], mz = n1[1] + n2[1], m = Math.hypot(mx, mz);
+      var n1 = nrm(poly[(i - 1 + n) % n], p), n2 = nrm(p, poly[(i + 1) % n]);
+      if (!n1[0] && !n1[1]) n1 = n2; else if (!n2[0] && !n2[1]) n2 = n1;   // a side of no length: use the other
+      var mx = n1[0] + n2[0], mz = n1[1] + n2[1], m = Math.hypot(mx, mz);
       if (m < 1e-9) return [p[0] + n1[0] * by, p[1] + n1[1] * by];
       mx /= m; mz /= m;
       var k = by / Math.max(0.4, mx * n1[0] + mz * n1[1]);
@@ -84,8 +114,11 @@
   // An outline with its corners rounded off (Chaikin's corner cutting, `times` over): each
   // side keeps its middle, and a share `cut` of it at each end (`most` yds at most) gives
   // way to a cut across the corner. OSM's outlines are polygons with a point every few yds;
-  // the real greens, bunkers and fairways' edges are curves.
+  // the real greens, bunkers and fairways' edges are curves. One with 100 points or more
+  // (Edgewood's big pond) is one already, and is left as it is.
   function rounded(poly, times, cut, most) {
+    poly = poly.filter(function (q, i) { var r = poly[(i + 1) % poly.length]; return poly.length < 4 || q[0] !== r[0] || q[1] !== r[1]; });   // no point twice
+    if (poly.length >= 100) return poly;   // already a curve: a point every yard or two
     var p = poly;
     for (var k = 0; k < times; k++) {
       var q = [];
@@ -335,15 +368,29 @@
   // Where a point is along the hole: s yds from the start of the line of play, g yds back
   // from the middle of the green, lat yds right (+) or left (−) of the line, and h, the
   // line's heading there.
+  // (The line is looked at in blocks of 16 points: the block whose middle is nearest first,
+  // then any other that could hold a nearer point, since none of its points is further from
+  // its middle than half its length. The answer is the same as looking at every point.)
+  var TH_K = 16;
   function toHole(H, x, z) {
-    var best = null, p = H.path;
-    for (var i = 0; i < p.length - 1; i++) {
-      var a = p[i], b = p[i + 1], dx = b.x - a.x, dz = b.z - a.z, len2 = dx * dx + dz * dz;
-      var u = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
-      var qx = a.x + dx * u, qz = a.z + dz * u, d = Math.hypot(x - qx, z - qz);
-      if (!best || d < best.d) best = { d: d, s: a.s + STEP * u, lat: ((x - a.x) * dz - (z - a.z) * dx) / Math.sqrt(len2), h: a.h };
+    var p = H.path, n = p.length - 1, half = TH_K * STEP / 2, nb = Math.ceil(n / TH_K), lbs = [], first = 0, bd = Infinity, bi = -1, bu = 0, b;
+    for (b = 0; b < nb; b++) {
+      var m = p[Math.min(n, b * TH_K + TH_K / 2)];
+      lbs.push(Math.hypot(x - m.x, z - m.z) - half);
+      if (lbs[b] < lbs[first]) first = b;
     }
-    return { s: best.s, g: H.L - best.s, lat: best.lat, h: best.h };
+    function block(k) {
+      for (var i = k * TH_K, e = Math.min(n, k * TH_K + TH_K); i < e; i++) {
+        var a = p[i], c = p[i + 1], dx = c.x - a.x, dz = c.z - a.z, len2 = dx * dx + dz * dz;
+        var u = clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0, 1);
+        var qx = a.x + dx * u, qz = a.z + dz * u, d = Math.hypot(x - qx, z - qz);
+        if (d < bd || (d === bd && i < bi)) { bd = d; bi = i; bu = u; }
+      }
+    }
+    block(first);
+    for (b = 0; b < nb; b++) if (b !== first && lbs[b] <= bd) block(b);
+    var a0 = p[bi], c0 = p[bi + 1], ddx = c0.x - a0.x, ddz = c0.z - a0.z, s = a0.s + STEP * bu;
+    return { s: s, g: H.L - s, lat: ((x - a0.x) * ddz - (z - a0.z) * ddx) / Math.sqrt(ddx * ddx + ddz * ddz), h: a0.h };
   }
 
   // What the ball is lying on: 'green' (this hole's), 'fringe', 'fairway' (any fairway, tee
@@ -351,17 +398,67 @@
   // 'bunker', 'trees' (under a tree), 'water' (the lake beyond the boundary, or a pond) or
   // 'ob' (beyond the boundary).
   function lieAt(H, x, z) {
-    var G = H.ground, i, o, lists = [G.greens, G.tees, G.fairways, G.ranges];
+    var G = H.ground, I = G.index || (G.index = indexOf(G)), ck = Math.floor(x / IDX) + ',' + Math.floor(z / IDX), c = I.cells[ck], i, o;
     if (inBox(H.green.bb, x, z) && inPoly(H.green.poly, x, z)) return 'green';
-    for (i = 0; i < G.bunkers.length; i++) { o = G.bunkers[i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'bunker'; }
-    for (i = 0; i < G.ponds.length; i++) { o = G.ponds[i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'water'; }
-    if (!inBox(G.bb, x, z) || !inPoly(G.boundary, x, z)) return inPoly(G.lake, x, z) ? 'water' : 'ob';
+    if (c) {
+      for (i = 0; i < c.bunkers.length; i++) { o = c.bunkers[i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'bunker'; }
+      for (i = 0; i < c.ponds.length; i++) { o = c.ponds[i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'water'; }
+    }
+    if (!onCourse(G, I, c, ck, x, z)) return inPoly(G.lake, x, z) ? 'water' : 'ob';
     if (inBox(H.green.bb, x, z) && inPoly(H.green.fringePoly, x, z)) return 'fringe';
     if (H.teeBox && inPoly(H.teeBox, x, z)) return 'fairway';
-    for (var k = 0; k < lists.length; k++) for (i = 0; i < lists[k].length; i++) { o = lists[k][i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'fairway'; }
+    if (c) for (i = 0; i < c.fair.length; i++) { o = c.fair[i]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return 'fairway'; }
     var near = treesNear(G, x, z);
     for (i = 0; i < near.length; i++) if (Math.hypot(x - near[i].x, z - near[i].z) < near[i].r) return 'trees';
     return 'rough';
+  }
+  // Whether a spot is water or out of bounds (a pond, the lake, or past the boundary): what
+  // lieAt would say, without the rest of its work.
+  function wetAt(H, x, z) {
+    var G = H.ground, I = G.index || (G.index = indexOf(G)), ck = Math.floor(x / IDX) + ',' + Math.floor(z / IDX), c = I.cells[ck];
+    if (inBox(H.green.bb, x, z) && inPoly(H.green.poly, x, z)) return false;
+    if (c) {
+      for (var i = 0; i < c.bunkers.length; i++) { var b = c.bunkers[i]; if (inBox(b.bb, x, z) && inPoly(b.poly, x, z)) return false; }
+      for (var j = 0; j < c.ponds.length; j++) { var o = c.ponds[j]; if (inBox(o.bb, x, z) && inPoly(o.poly, x, z)) return true; }
+    }
+    return !onCourse(G, I, c, ck, x, z);
+  }
+  // The course in squares IDX yds across, so a spot's lie looks only at the shapes near it:
+  // each square lists the bunkers, ponds and fairway-like shapes (greens, tee boxes,
+  // fairways, practice ground) whose box reaches into it, and whether the boundary runs
+  // through it (or next to it). A square it doesn't is all inside or all outside, which one
+  // found once from its middle.
+  var IDX = 24;
+  function indexOf(G) {
+    var cells = {};
+    function cell(i, j) { var k = i + ',' + j; return cells[k] || (cells[k] = { bunkers: [], ponds: [], fair: [], edge: false }); }
+    function add(list, o) {
+      var b = o.bb;
+      for (var i = Math.floor(b[0] / IDX); i <= Math.floor(b[2] / IDX); i++) for (var j = Math.floor(b[1] / IDX); j <= Math.floor(b[3] / IDX); j++) cell(i, j)[list].push(o);
+    }
+    G.bunkers.forEach(function (o) { add('bunkers', o); });
+    G.ponds.forEach(function (o) { add('ponds', o); });
+    [G.greens, G.tees, G.fairways, G.ranges].forEach(function (l) { l.forEach(function (o) { add('fair', o); }); });
+    var B = G.boundary;
+    for (var n = 0; n < B.length; n++) {
+      var a = B[n], c = B[(n + 1) % B.length], k = Math.ceil(Math.hypot(c[0] - a[0], c[1] - a[1]) / (IDX / 4));
+      for (var t = 0; t <= k; t++) {
+        var ci = Math.floor((a[0] + (c[0] - a[0]) * t / k) / IDX), cj = Math.floor((a[1] + (c[1] - a[1]) * t / k) / IDX);
+        for (var di = -1; di <= 1; di++) for (var dj = -1; dj <= 1; dj++) cell(ci + di, cj + dj).edge = true;
+      }
+    }
+    return { cells: cells, inside: {} };
+  }
+  // Inside the boundary? Exactly near it; elsewhere from the square's middle, found once.
+  function onCourse(G, I, c, ck, x, z) {
+    if (!inBox(G.bb, x, z)) return false;
+    if (c && c.edge) return inPoly(G.boundary, x, z);
+    var v = I.inside[ck];
+    if (v === undefined) {
+      var i = Math.floor(x / IDX), j = Math.floor(z / IDX);
+      v = I.inside[ck] = inPoly(G.boundary, (i + 0.5) * IDX, (j + 0.5) * IDX);
+    }
+    return v;
   }
   var LIE_WORDS = { tee: 'Tee', green: 'Green', fringe: 'Fringe', fairway: 'Fairway', rough: 'Rough', bunker: 'Bunker', trees: 'Trees', water: 'Water', penalty: 'Penalty area', ob: 'Out of bounds' };
 
@@ -436,10 +533,11 @@
     return out;
   }
   // A yardage chart (GolfCore.yardageChart) as clubs he can play before his range sessions
-  // have them: one clean shot each, at the chart's carry and total (the middle of a range),
-  // with no mis-hits and no miss of its own. The swing still sends it left or right, the way
-  // a club with only a shot or two does (it leans on an ordinary golfer's scatter, PRIOR),
-  // and the oval on the map is that scatter at the chart's distance, 4% long or short.
+  // have them: one shot each, at the chart's carry and total (the middle of a range), with
+  // no mis-hits or miss of its own on record. The swing still sends it left or right, the
+  // way a club with only a shot or two does (it leans on an ordinary golfer's scatter,
+  // PRIOR; the meter's timing turns it, pickShot), a badly timed one is a mis-hit, and
+  // the oval on the map is that scatter at the chart's distance, 4% long or short.
   function chartPools(chart) {
     var out = {};
     if (!chart || !chart.clubs) return out;
@@ -501,16 +599,28 @@
   // Which of his shots a swing hits. On the line (|e| near 0) it's one of his best; the
   // further off, the further down his list (|e|^0.7 of the way, so the timing most taps
   // get, about a third of the window off, hits one from the middle: his usual shot),
-  // leaning to the shots that went left when early and right when late. Off the line there's a chance of a mis-hit that grows
-  // with how often he mis-hits the club; outside the window it's a mis-hit (his worst
-  // solid shots, for a club he's never mis-hit).
-  var RANK_CURVE = 0.7;
-  function pickShot(pool, e, rnd) {
-    var q = Math.abs(e), n = pool.ranked.length, side = q < 0.12 ? 0 : e < 0 ? -1 : 1, band, grade;
-    var mis = q > 1 || (pool.mis.length && rnd() < pool.misRate * q * q);
+  // leaning to the shots that went left when early and right when late (the other way
+  // round for a left-hander). Off the line there's a chance of a mis-hit that grows
+  // with how often he mis-hits the club; outside the window it's a mis-hit: one of his
+  // own on the timing's side when he has one, else his worst solid shots.
+  //   A club with only a few shots (fewer than THIN_POOL, like a yardage chart's one clean
+  // shot) has too few to pick from, so the timing turns the shot itself (timed): early
+  // pulls it and late pushes it, and outside the window it's a mis-hit made from it
+  // (madeMis), thin, fat or off the toe.
+  //   → { shot: the real shot it's built on, play: the shot to fly, grade, rank, of, made
+  //   (the kind of a made mis-hit, or null), turned (yds the timing moved it, + right) }.
+  var RANK_CURVE = 0.7, THIN_POOL = 5;
+  function pickShot(pool, e, rnd, hand) {
+    var h = hand === 'L' ? -1 : 1, q = Math.abs(e), n = pool.ranked.length, side = q < 0.12 ? 0 : (e < 0 ? -1 : 1) * h, band, grade;
+    var thin = n < THIN_POOL, mis = q > 1 || (pool.mis.length && rnd() < pool.misRate * q * q);
+    var sameSide = function (list) { var l = side ? list.filter(function (s) { return isNum(s.offline_ft) && s.offline_ft * side > 0; }) : []; return l.length ? l : list; };
     if (mis && pool.mis.length) {
-      var m = pool.mis[Math.floor(rnd() * pool.mis.length)];
-      return { shot: m, grade: 'mishit', rank: null, of: n };
+      var ms = sameSide(pool.mis), m = ms[Math.floor(rnd() * ms.length)];
+      return { shot: m, play: m, grade: 'mishit', rank: null, of: n, made: null, turned: 0 };
+    }
+    if (mis && thin) {
+      var base = pool.ranked[Math.floor(rnd() * n)], r = rnd(), kind = r < 0.45 ? 'thin' : r < 0.8 ? 'fat' : 'toe';
+      return timed(pool, { shot: base, play: madeMis(base, kind), grade: 'mishit', rank: null, of: n, made: kind, turned: 0 }, e, rnd, h);
     }
     if (mis) {
       band = pool.ranked.slice(Math.max(0, n - Math.max(1, Math.round(n * 0.15))));
@@ -520,12 +630,27 @@
       band = pool.ranked.slice(clamp(i - k, 0, n - 1), clamp(i + k, 0, n - 1) + 1);
       grade = q < 0.12 ? 'perfect' : q < 0.4 ? 'good' : 'off';
     }
-    if (side) {
-      var same = band.filter(function (s) { return isNum(s.offline_ft) && s.offline_ft * side > 0; });
-      if (same.length) band = same;
-    }
-    var shot = band[Math.floor(rnd() * band.length)];
-    return { shot: shot, grade: grade, rank: pool.ranked.indexOf(shot) + 1, of: n };
+    if (!thin) band = sameSide(band);
+    var shot = band[Math.floor(rnd() * band.length)], out = { shot: shot, play: shot, grade: grade, rank: pool.ranked.indexOf(shot) + 1, of: n, made: null, turned: 0 };
+    return thin ? timed(pool, out, e, rnd, h) : out;
+  }
+  // The timing's turn on a shot from a club with too few to pick from: the start line moves
+  // by an ordinary golfer's scatter (his club's, leaning on PRIOR) for each window's width
+  // of timing, 1.2 of it (twice that at most, way off), plus a little scatter of its own;
+  // off the middle it also goes up to 5% shorter (a made mis-hit has its own distance).
+  function timed(pool, pick, e, rnd, h) {
+    var prof = swingProfile(pool), q = Math.min(2, Math.abs(e)), s = pick.play, out = {};
+    Object.keys(s).forEach(function (k) { out[k] = s[k]; });
+    var dStart = (Math.abs(e) < 0.12 ? 0 : (e < 0 ? -1 : 1) * h * q * prof.sdStart * 1.2) + gauss(rnd) * prof.sdStart * (Math.abs(e) < 0.12 ? 0.25 : 0.35);
+    var C0 = s.carry_yds, R0 = totalOf(s) - C0, f = pick.made ? 1 : 1 - 0.05 * Math.pow(Math.min(1, q), 1.5);
+    out.carry_yds = C0 * f;
+    out.total_yds = out.carry_yds + R0 * f;
+    if (isNum(out.ball_speed_mph)) out.ball_speed_mph *= Math.sqrt(f);
+    var turn = Math.tan(dStart * RAD) * (out.carry_yds + 0.6 * R0 * f);
+    out.offline_ft = (isNum(s.offline_ft) ? s.offline_ft * f : 0) + 3 * turn;
+    pick.play = out;
+    pick.turned = turn;
+    return pick;
   }
 
   // How a lie changes a shot hit from it: distance, spray (sideways), and, for a punch
@@ -1032,9 +1157,12 @@
   var LOFT = { Driver: 10.5, '2w': 13, '3w': 15, '4w': 16.5, '5w': 18, '7w': 21, '9w': 24, '2hy': 17, '3hy': 19, '4hy': 22, '5hy': 25, '6hy': 28, '7hy': 31,
     '2i': 18, '3i': 20, '4i': 22, '5i': 25, '6i': 28, '7i': 32, '8i': 36, '9i': 40, PW: 45, GW: 50, AW: 50, SW: 56, LW: 60 };
   function loftOf(club, equip) { var l = C.clubLoft(club, equip); return isNum(l) ? l : LOFT[club] || (isWedge(club) ? 56 : 30); }
+  // A stance steeper than STANCE_MAX degrees either way counts as that steep: past it, the
+  // 6-yd heights are mostly a bank or a bunker's face, and a golfer finds a flatter footing.
+  var STANCE_MAX = 15;
   function lieSlope(slope, club, hand, equip) {
     if (!slope) return null;
-    var h = hand === 'L' ? -1 : 1, above = Math.atan(h * slope.side) / RAD, up = Math.atan(slope.along) / RAD;
+    var h = hand === 'L' ? -1 : 1, above = clamp(Math.atan(h * slope.side) / RAD, -STANCE_MAX, STANCE_MAX), up = clamp(Math.atan(slope.along) / RAD, -STANCE_MAX, STANCE_MAX);
     if (Math.abs(above) < 1 && Math.abs(up) < 1) return null;
     var loft = loftOf(club, equip);
     return {
@@ -1719,19 +1847,43 @@
     if (isNum(out.total_yds)) out.total_yds *= air;
     return out;
   }
-  // Where to drop after going into water or a penalty area: back along the ball's path to
-  // where it went in, then 2 yds further back (no nearer the hole).
-  function dropPoint(H, track) {
-    for (var i = track.length - 1; i >= 0; i--) {
-      var p = track[i], l = lieAt(H, p.x, p.z);
-      if (!STOPS[l]) {
-        var prev = track[Math.max(0, i - 1)], d = Math.hypot(p.x - prev.x, p.z - prev.z) || 1;
-        var q = i > 0 ? { x: p.x + (prev.x - p.x) * Math.min(1, 2 / d), z: p.z + (prev.z - p.z) * Math.min(1, 2 / d) } : p;
-        if (STOPS[lieAt(H, q.x, q.z)]) q = p;
-        return { x: q.x, z: q.z };
-      }
+  // Where to drop after going into water or a penalty area. The reference point is where it
+  // went in, 2 yds back along its path. The map's water is the water's surface, and the
+  // penalty area's edge is at the top of the bank above it (Lake Merced's banks run 12–15 yds
+  // from its edge), so relief is taken from there: within 18 yds of the reference point (two
+  // club-lengths from the top of the bank) or back
+  // on the line from the hole through it (up to 15 yds), never nearer the hole and never in
+  // the water or out of bounds. He picks a level stance first (on the bank, where the 6-yd
+  // heights also run down to the water's surface, a wedge's face would point 30° off line),
+  // then a spot out of the sand and the trees, then the nearest one. When every spot he may
+  // drop on is steeper than `steep` (15°), it's { steep: true }: stroke and distance instead.
+  var DROP = { rings: [1.25, 2.5, 4, 6, 8, 10, 12, 15, 18], ways: 16, back: [2, 4, 6, 8, 10, 12, 15, 18], level: 0.1, steep: 0.27 };
+  function dropPoint(H, track, pin) {
+    var ref = null;
+    for (var i = track.length - 1; i >= 0 && !ref; i--) {
+      var p = track[i];
+      if (STOPS[lieAt(H, p.x, p.z)]) continue;
+      var prev = track[Math.max(0, i - 1)], d = Math.hypot(p.x - prev.x, p.z - prev.z) || 1;
+      var q = i > 0 ? { x: p.x + (prev.x - p.x) * Math.min(1, 2 / d), z: p.z + (prev.z - p.z) * Math.min(1, 2 / d) } : p;
+      ref = STOPS[lieAt(H, q.x, q.z)] ? { x: p.x, z: p.z } : { x: q.x, z: q.z };
     }
-    return { x: track[0].x, z: track[0].z };
+    if (!ref) return { x: track[0].x, z: track[0].z };
+    if (!pin || !H.ground || !H.ground.elev) return ref;
+    var d0 = dist(ref, pin), ux = (ref.x - pin.x) / (d0 || 1), uz = (ref.z - pin.z) / (d0 || 1), spots = [{ x: ref.x, z: ref.z, r: 0 }], best = null;
+    for (var k = 0; k < DROP.ways; k++) {
+      var a = 2 * Math.PI * k / DROP.ways;
+      DROP.rings.forEach(function (r) { spots.push({ x: ref.x + r * Math.cos(a), z: ref.z + r * Math.sin(a), r: r }); });
+    }
+    DROP.back.forEach(function (t) { spots.push({ x: ref.x + ux * t, z: ref.z + uz * t, r: t }); });
+    spots.forEach(function (c) {
+      if (dist(c, pin) < d0 - 0.01) return;
+      var l = lieAt(H, c.x, c.z);
+      if (STOPS[l]) return;
+      var sl = slopeAt(H.ground, c.x, c.z, 0), m = Math.hypot(sl.along, sl.side);
+      var score = 200 * Math.max(0, m - DROP.level) + (l === 'bunker' ? 15 : l === 'trees' ? 10 : 0) + 0.5 * c.r;
+      if (!best || score < best.score) best = { x: c.x, z: c.z, score: score, m: m };
+    });
+    return best ? { x: best.x, z: best.z, steep: best.m > DROP.steep } : ref;
   }
   // The ball's path along the ground, every couple of yds: under its flight, then its roll.
   function groundTrack(tr) {
@@ -1809,8 +1961,10 @@
       track: track.filter(function (p, i) { return i % 2 === 0 || i === track.length - 1; }).map(function (p) { return [Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10]; })
     };
     if (lie === 'water' || lie === 'penalty') {
-      var dp = dropPoint(H, track);
-      Object.assign(out, { result: lie, penalty: 1, next: { x: dp.x, z: dp.z, lie: lieAt(H, dp.x, dp.z) } });
+      var dp = dropPoint(H, track, opts.pin);
+      // Nowhere level enough to drop: stroke and distance, from where he played it (rehit).
+      if (dp.steep) Object.assign(out, { result: lie, penalty: 1, rehit: true, next: { x: from.x, z: from.z, lie: from.lie } });
+      else Object.assign(out, { result: lie, penalty: 1, next: { x: dp.x, z: dp.z, lie: lieAt(H, dp.x, dp.z) } });
     } else if (lie === 'ob') {
       Object.assign(out, { result: 'ob', penalty: 1, next: { x: from.x, z: from.z, lie: from.lie } });
     } else if (!holed) {
@@ -1911,15 +2065,12 @@
     // less the carry it needs: 3 yds for every yard under 45), and the trees in the way.
     function costOf(q, l, da, dq) {
       var wet = 0;
-      for (var k = 1; k < 12; k++) {
-        var w = lieAt(H, ball.x + (q.x - ball.x) * k / 12, ball.z + (q.z - ball.z) * k / 12);
-        if (w === 'water' || w === 'ob') wet = k / 12;
-      }
+      for (var k = 1; k < 12; k++) if (wetAt(H, ball.x + (q.x - ball.x) * k / 12, ball.z + (q.z - ball.z) * k / 12)) wet = k / 12;
       var left = Math.max(toHole(H, q.x, q.z).g, dist(q, pin));
-      return left + AIM_COST[l] + Math.abs(da) * 0.15 + (wet ? Math.max(0, 45 - (0.93 * reach - wet * dq)) * 3 : 0) + TREE_COST * treesInWay(H, ball, q, reach, low);
+      return left + AIM_COST[l] + Math.abs(da) * 0.15 + (wet ? Math.max(0, 45 - (0.93 * reach * (H.air || 1) - wet * dq)) * 3 : 0) + TREE_COST * treesInWay(H, ball, q, reach, low);
     }
     if (dPin <= reach + 5) {
-      cost = costOf(pin, 'green', 0, dPin);
+      cost = costOf(pin, 'green', 0, dPin * (H.air || 1));
       best = { x: pin.x, z: pin.z, pin: true };
       if (cost < 45) return best; // a clear shot at the pin
     }
@@ -1980,9 +2131,9 @@
 
   return {
     buildHole: buildHole, groundOf: groundOf, treesNear: treesNear, elevOf: elevOf, heightAt: heightAt, slopeAt: slopeAt, playsLike: playsLike, landingOf: landingOf,
-    groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf, grow: grow, rounded: rounded, PATH_W: PATH_W, AIR_K: AIR_K, thinAir: thinAir, treeHit: treeHit,
+    groundMeet: groundMeet, landedAt: landedAt, rollOnLanding: rollOnLanding, localOf: localOf, ROLL_MU: ROLL_MU, toHole: toHole, lieAt: lieAt, pinFor: pinFor, LIE_WORDS: LIE_WORDS, FRINGE: FRINGE, inPoly: inPoly, centroidOf: centroidOf, grow: grow, rounded: rounded, PATH_W: PATH_W, AIR_K: AIR_K, thinAir: thinAir, treeHit: treeHit, wetAt: wetAt,
     rankShots: rankShots, clubPools: clubPools, chartPools: chartPools, playPools: playPools, clubList: clubList, totalOf: totalOf,
-    METER: METER, timingOf: timingOf, meterBackTime: meterBackTime, meterDownSpeed: meterDownSpeed, timingWord: timingWord, pickShot: pickShot, LIE: LIE, adjustShot: adjustShot,
+    METER: METER, timingOf: timingOf, meterBackTime: meterBackTime, meterDownSpeed: meterDownSpeed, timingWord: timingWord, pickShot: pickShot, dropPoint: dropPoint, LIE: LIE, adjustShot: adjustShot,
     LAW: LAW, clubLaw: clubLaw, facePathOf: facePathOf, swingProfile: swingProfile, SWIPE: SWIPE, tempoTarget: tempoTarget, powerOfDepth: powerOfDepth,
     readSwing: readSwing, SWING: SWING, strikeOf: strikeOf, swingShot: swingShot, shapeOf: shapeOf, MIS_SHANK: MIS_SHANK,
     PUTT_SWING: PUTT_SWING, puttLength: puttLength, puttDepth: puttDepth, puttSwing: puttSwing, shapeAllowance: shapeAllowance,

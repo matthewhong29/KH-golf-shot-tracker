@@ -224,6 +224,18 @@ eq(C.sortClubs(Object.keys(novE)).map((c) => [c, C.needsWork(novE[c]).map((f) =>
 eq(C.needsWork(novE['9i'])[0].text, 'only 7 of 15 finished within 10 yds of the line, missing both ways', '9i: a two-way miss');
 eq(C.needsWork(novE['5hy'])[0].text, 'misses about 28 yds right on average', '5hy direction text');
 eq(C.needsWork(novE['5w']).map((f) => f.key), ['solid_pct'], '5w flags point at solid contact');
+eq(C.needsWork(novE['9i']).map((f) => f.key), ['offline_spread'], 'a two-way miss points at the spread, not the average offline');
+{
+  // goals judged on fewer than 3 shots aren't judged: "too few", never "on target"
+  const two = C.clubData([{ id: 'g2', date: '2026-11-30', shots: [
+    { id: 'g2-1', club: '8i', carry_yds: 140, total_yds: 146, ball_speed_mph: 105, launch_deg: 19, offline_ft: 6 },
+    { id: 'g2-2', club: '8i', carry_yds: 141, total_yds: 147, ball_speed_mph: 106, launch_deg: 19, offline_ft: -3 }] }])['8i'];
+  const G2 = C.clubGoals(two, '8i', null);
+  ok(G2.goals.length && G2.goals.every((g) => g.few && !g.met), 'two shots: every goal is too few to judge, and none shows as met');
+  eq(G2.focus.text, 'Too few shots with this club to judge yet: hit at least 3.', 'the focus asks for a few more shots');
+  const three = C.clubData([{ id: 'g3', date: '2026-11-30', shots: [1, 2, 3].map((i) => ({ id: 'g3-' + i, club: '8i', carry_yds: 140 + i, total_yds: 146 + i, ball_speed_mph: 105, launch_deg: 19, offline_ft: 3 * i })) }])['8i'];
+  ok(C.clubGoals(three, '8i', null).goals.every((g) => !g.few), 'three shots are enough to judge');
+}
 eq(C.needsWork(novE.SW)[0].key, 'carry_yds', 'SW flag points at carry');
 eq(C.needsWork(null), [], 'no entry, no flags');
 const goalsOf = (c) => {
@@ -948,6 +960,8 @@ ok(GG.pinFor(H4, 1).x !== GG.pinFor(H4, 2).x, 'the pin moves from round to round
 
 section('Game: Edgewood Tahoe');
 const EW = CO.get('edgewood-tahoe'), EM = EW.map;
+ok(CO.list.every((c) => CO.FILES[c.id] && CO.FILES[c.id].length === 2 && CO.FILES[c.id].every((f) => fs.existsSync(path.join(__dirname, '..', f.split('?')[0])))) && CO.list.every((c) => CO.loaded(c.id)), 'every course lists its two files (map and heights), and they’re there');
+
 eq([CO.list.map((c) => c.id), EW.holes.map((h) => h.n)], [['harding-park', 'edgewood-tahoe'], Array.from({ length: 18 }, (_, i) => i + 1)], 'two courses; Edgewood’s holes 1–18 in order');
 eq(EW.holes.map((h) => h.par), [4, 4, 5, 5, 3, 4, 3, 4, 4, 4, 4, 3, 4, 4, 4, 5, 3, 5], 'pars from the scorecard (OSM has the 17th, a par 3, as a par 4)');
 eq([CO.par(EW), CO.par(EW, [1, 2, 3, 4, 5, 6, 7, 8, 9])], [72, 36], 'par 72: 36 out, 36 in');
@@ -996,6 +1010,24 @@ eq([Math.round(E1.air * 1000) / 1000, GG.buildHole(HP, 1, 'white').air, GG.thinA
 const pine = { x: 0, z: 0, h: 30, r: 5 }, Gp = { trees: [pine], grid: { '0,0': [pine] }, treeKind: 'pine' };
 const hitAt = (side, y) => { const samples = [{ x: side, y: 0, z: -10, t: 0 }, { x: side, y, z: 0, t: 1 }, { x: side, y, z: 10, t: 2 }]; return !!GG.treeHit({ ground: Gp }, { samples, local: { samples: samples.map((q) => ({ z: q.z + 20 })) } }, { lie: 'fairway' }, null, 0); };
 eq([hitAt(3, 6), hitAt(3, 27), hitAt(0.2, 27)], [true, false, true], 'a pine: 3 yds from its trunk the low branches catch a ball, near the top they don’t, its spire does');
+
+// The quick ways of finding a spot's lie and its place along the hole give the same answers
+// as the slow ones: a big outline's sides filed in bands, and the line looked at in blocks.
+{
+  const plainIn = (poly, x, z) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
+  const H4e = GG.buildHole(EW, 4, 'blue'), pond = H4e.ground.ponds.reduce((a, o) => (o.poly.length > a.poly.length ? o : a)).poly, r = FL.rng(77);
+  const bb4 = H4e.ground.bb;
+  let inDiff = 0, holeDiff = 0;
+  for (let k = 0; k < 4000; k++) {
+    const x = bb4[0] + r() * (bb4[2] - bb4[0]), z = bb4[1] + r() * (bb4[3] - bb4[1]);
+    if (GG.inPoly(pond, x, z) !== plainIn(pond, x, z)) inDiff++;
+    let best = null;
+    for (let i = 0; i < H4e.path.length - 1; i++) { const a = H4e.path[i], b = H4e.path[i + 1], dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz, u = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2)), d = Math.hypot(x - (a.x + dx * u), z - (a.z + dz * u)); if (!best || d < best.d) best = { d, s: a.s + 2 * u }; }
+    if (Math.abs(GG.toHole(H4e, x, z).s - best.s) > 1e-9) holeDiff++;
+  }
+  eq([pond.length > 300, inDiff, holeDiff], [true, 0, 0], 'Edgewood’s big pond (a point every yard or so) and the 4th’s line: the quick look-ups agree with looking at every side and every point');
+  ok(GG.wetAt(H4e, pond[0][0] * 0.999 + pond[5][0] * 0.001, pond[0][1]) === (GG.lieAt(H4e, pond[0][0] * 0.999 + pond[5][0] * 0.001, pond[0][1]) === 'water') && GG.wetAt(H4e, H4e.start.x, H4e.start.z) === false, 'wetAt says water or out of bounds exactly where lieAt does');
+}
 
 section('Game: his own shots');
 const dadPools = GG.clubPools(fileData.sessions, fileData.equipment);
@@ -1062,6 +1094,25 @@ ok(GG.lieAt(H1, rollRough.land.x, rollRough.land.z) === 'rough' && GG.dist(rollR
 const H17 = GG.buildHole(HP, 17, 'white'), tee17 = { x: H17.start.x, z: H17.start.z, lie: 'tee' };
 const wet = GG.playShot(H17, tee17, H17.spot(20, -70), { club: '7i', carry_yds: 150, total_yds: 158, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H17, 3), rnd: FL.rng(1) });
 ok(wet.result === 'water' && wet.penalty === 1 && !/water|ob/.test(wet.next.lie) && GG.dist(tee17, wet.next) < GG.dist(tee17, wet.land), 'into Lake Merced on 17: a penalty stroke, and a drop where it went in');
+{
+  // Relief is taken from the top of the bank, on a level stance, no nearer the hole: Lake
+  // Merced's banks are steep for 12-15 yds from the water's edge
+  const pin17 = GG.pinFor(H17, 3), slopeOf = (H, p) => { const q = GG.slopeAt(H.ground, p.x, p.z, 0); return Math.hypot(q.along, q.side); };
+  ok(!wet.rehit && wet.next.lie !== 'tee' && slopeOf(H17, wet.next) <= 0.15, `into Lake Merced on 17: dropped at the top of the bank on a level stance (${(Math.atan(slopeOf(H17, wet.next)) * 180 / Math.PI).toFixed(0)}°)`);
+  // the far bank of the 18th's inlet, where it went in after rolling back off the bank
+  const H18 = GG.buildHole(HP, 18, 'white'), pin18 = GG.pinFor(H18, 398839888), a = { x: -322.4, z: 231.4 }, b = { x: -271.5, z: 318.9 };
+  const track = Array.from({ length: 61 }, (_, i) => ({ x: a.x + (b.x - a.x) * i / 60, z: a.z + (b.z - a.z) * i / 60 }));
+  const old = GG.dropPoint(H18, track, null), dp = GG.dropPoint(H18, track, pin18);
+  ok(GG.lieAt(H18, b.x, b.z) === 'water' && slopeOf(H18, old) > 0.45 && !dp.steep && slopeOf(H18, dp) < 0.15 && GG.dist(dp, pin18) >= GG.dist(old, pin18) - 0.01 && GG.dist(dp, old) <= 18.01,
+    `the 18th's inlet: not on the ${(Math.atan(slopeOf(H18, old)) * 180 / Math.PI).toFixed(0)}° bank where it went in but ${GG.dist(dp, old).toFixed(0)} yds away on a ${(Math.atan(slopeOf(H18, dp)) * 180 / Math.PI).toFixed(0)}° stance, no nearer the hole`);
+  // where every spot he may drop on is steep (here, the whole ground tilted 27°), stroke and distance
+  const e0 = H18.ground.elev, tilt = Object.assign({}, e0, { h: Array.from({ length: e0.nx * e0.nz }, (_, k) => 3 * 0.5 * (e0.x0 + (k % e0.nx) * e0.step)) });
+  const H18t = Object.assign({}, H18, { ground: Object.assign({}, H18.ground, { elev: tilt }) });
+  ok(GG.dropPoint(H18t, track, pin18).steep, 'with nowhere level enough to drop, it’s stroke and distance');
+  // a stance steeper than 15° plays as 15°: the 6-yd heights at a bank aren't a lie
+  const steepLie = GG.lieSlope({ along: 0.1, side: 0.65 }, 'SW', 'R', null), lie15 = GG.lieSlope({ along: 0.1, side: Math.tan(15 * Math.PI / 180) }, 'SW', 'R', null);
+  ok(Math.abs(steepLie.above - 15) < 1e-9 && Math.abs(steepLie.face - lie15.face) < 1e-9 && steepLie.face < -15, 'a 33° bank plays as a 15° stance: still well left with a wedge, ball above the feet');
+}
 const H12 = GG.buildHole(HP, 12, 'white'), tee12 = { x: H12.start.x, z: H12.start.z, lie: 'tee' };
 const ob = GG.playShot(H12, tee12, H12.spot(300, -60), { club: '7i', carry_yds: 150, total_yds: 155, apex_ft: 160, offline_ft: 0, curve_ft: 0 }, { pin: GG.pinFor(H12, 3), rnd: FL.rng(1) });
 eq([ob.result, ob.penalty, ob.next], ['ob', 1, tee12], 'out of bounds left of 12: a penalty stroke and hit again from the same spot');
@@ -1619,6 +1670,23 @@ section('Game: a yardage chart (M2’s), until range sessions replace it');
   // the meter plays the chart shot too: on the line, and off it the same clean strike
   const pk = GG.pickShot(pools['7i'], 0, FL.rng(3)), pk2 = GG.pickShot(pools['7i'], 0.8, FL.rng(3));
   ok(pk.shot.chart && pk.shot.carry_yds === 153 && pk2.shot.chart && pk2.grade !== 'mishit', 'the swing meter plays the chart’s shot, and a timing a little off doesn’t make it a mis-hit');
+  // ...but the timing turns it: early pulls it, late pushes it, way off is a mis-hit made from it
+  const r7 = FL.rng(11), many = (e, hand) => Array.from({ length: 80 }, () => GG.pickShot(pools['7i'], e, r7, hand));
+  const on = many(0), erl = many(-0.8), lat = many(0.8), wayE = many(-1.5), wayL = many(1.5), lefty = many(-0.8, 'L');
+  const offY = (l) => l.map((x) => x.play.offline_ft / 3), mean = (v) => v.reduce((a, b) => a + b, 0) / v.length;
+  ok(on.every((x) => Math.abs(x.play.offline_ft) / 3 < 6 && Math.abs(x.play.carry_yds - 153) < 0.01 && x.grade === 'perfect'), 'perfect timing: the chart’s 153 yds, within a few yards of the line');
+  ok(mean(offY(erl)) < -5 && offY(erl).filter((v) => v < 0).length >= 72 && mean(offY(lat)) > 5 && offY(lat).filter((v) => v > 0).length >= 72,
+    `a little early pulls it left (${mean(offY(erl)).toFixed(1)} yds), a little late pushes it right (${mean(offY(lat)).toFixed(1)})`);
+  ok(erl.every((x) => x.play.carry_yds < 153 && x.play.carry_yds > 153 * 0.94 && x.grade === 'off'), 'off the middle it goes a little shorter');
+  ok(wayE.concat(wayL).every((x) => x.grade === 'mishit' && /^(thin|fat|toe)$/.test(x.made) && x.play.carry_yds < 153 * 0.75 && x.shot.chart),
+    'way off: a mis-hit made from the chart’s shot, thin, fat or off the toe, well short');
+  ok(mean(offY(wayE)) < mean(offY(erl)) && mean(offY(wayL)) > mean(offY(lat)), 'way early goes further left than a little early, way late further right');
+  ok(mean(offY(lefty)) > 5, 'for a left-hander, early pulls it right');
+  // a club with enough shots picks a real one, mis-hits too: the one that went the timing's way
+  const dad5hy = GG.clubPools(JSON.parse(fs.readFileSync(path.join(root, 'data', 'dad_golf_data.json'), 'utf8')).sessions)['5hy'];
+  const lefts = dad5hy.mis.filter((x) => x.offline_ft < 0), rights = dad5hy.mis.filter((x) => x.offline_ft > 0), rr = FL.rng(4);
+  ok(lefts.length && rights.length && Array.from({ length: 30 }, () => GG.pickShot(dad5hy, -1.5, rr)).every((x) => x.shot.offline_ft < 0 && x.play === x.shot && !x.made)
+    && Array.from({ length: 30 }, () => GG.pickShot(dad5hy, 1.5, rr)).every((x) => x.shot.offline_ft > 0), 'Dad’s 5 hybrid: way early is one of his mis-hits that went left, way late one that went right');
 }
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

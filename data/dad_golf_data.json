@@ -119,7 +119,7 @@
         "spin_rpm"
       ],
       "notes": [
-        "hang_time_s was only visible for the last three PW shots; it is null elsewhere.",
+        "Hang time was only visible for the last three PW shots, so the other shots don’t have it.",
         "The 7i list was cut off at the bottom of a screenshot at 12:21, so one or two earlier 7i shots may be missing.",
         "Shots 037–048 (5w and SW, 12:52–13:00) come from a second 'All shots' screenshot that has no hang time column. That list is cut off at the bottom, so earlier 5w shots may be missing."
       ],
@@ -830,7 +830,7 @@
       ],
       "notes": [
         "From seven “All shots” screenshots covering 3:57–4:32 PM, with the overlapping rows removed. The earliest list is cut off at the bottom, so any shots before 3:57 PM may be missing.",
-        "This screen has no hang time column, so hang_time_s is null.",
+        "This screen has no hang time column, so hang time isn’t recorded.",
         "The column headers in these photos look shifted one column to the right, but every row has the usual eight numbers in the usual order: carry, total, ball speed, launch, apex, landing, curve, offline."
       ],
       "coaching_notes": [],
@@ -1901,7 +1901,7 @@
       "notes": [
         "From four “All shots” photos covering 3:42–4:10 PM, with the overlapping rows removed.",
         "No photo shows 3:52–3:54 PM, between the 9 iron rows at 3:51 and 3:55 PM, so any shots hit then are missing. The earliest photo starts at 3:42 PM.",
-        "This screen has no hang time column, so hang_time_s is null.",
+        "This screen has no hang time column, so hang time isn’t recorded.",
         "The column headers in these photos look shifted one column to the right, but every row has the usual eight numbers in the usual order: carry, total, ball speed, launch, apex, landing, curve, offline."
       ],
       "coaching_notes": [],
@@ -2525,7 +2525,7 @@
         "From eight “All shots” photos covering 2:05–2:50 PM, with the overlapping rows removed.",
         "The bottom row of the earliest photo (a 2:05 PM pitching wedge) is cut off by the edge of the screen and can’t be read, so it’s left out. That photo starts at 2:05 PM, so any earlier shots aren’t here either.",
         "Six joins between photos don’t share a row (at 2:11 PM, 2:15–2:16, 2:21–2:22, 2:30, 2:34 and 2:40 PM), so a shot could be missing at any of them; the photos look like one full screen each, scrolled a screen at a time.",
-        "This screen has no hang time column, so hang_time_s is null.",
+        "This screen has no hang time column, so hang time isn’t recorded.",
         "The column headers in these photos look shifted one column to the right, but every row has the usual eight numbers in the usual order: carry, total, ball speed, launch, apex, landing, curve, offline."
       ],
       "coaching_notes": [],

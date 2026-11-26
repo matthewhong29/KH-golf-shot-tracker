@@ -57,7 +57,7 @@
       "notes": [
         "From nine “All shots” photos covering 3:26–4:17 PM, with the overlapping rows removed.",
         "No row shows up in two photos at 3:42 PM (7 iron) or 4:01 PM (3 wood), so a shot from either minute could be missing. The earliest photo starts at 3:26 PM.",
-        "This screen has no hang time column, so hang_time_s is null.",
+        "This screen has no hang time column, so hang time isn’t recorded.",
         "The column headers in these photos look shifted one column to the right, but every row has the usual eight numbers in the usual order: carry, total, ball speed, launch, apex, landing, curve, offline."
       ],
       "coaching_notes": [],

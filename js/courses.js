@@ -116,32 +116,47 @@
   function attach(course, d) { if (d && d.map) { course.map = d.map; course.elev = d.elev || null; } return course; }
   if (req) LIST.forEach(function (c) { attach(c, { map: req('./courses/' + c.id + '.js'), elev: req('./courses/' + c.id + '-elev.js') }); });
   else LIST.forEach(function (c) { attach(c, (self.GolfCourseData || {})[c.id]); });   // any a page already has
-  // Whether a course's map is here yet, and load(id): a promise of the course, its files
-  // fetched (once) as scripts.
-  function loaded(id) { var c = get(id); return !!(c && c.map); }
-  var pending = {};
+  // Whether a course's map and heights are here yet, and load(id): a promise of the course,
+  // its files fetched (once) as scripts. A file that hasn't come in within TIMEOUT counts as
+  // failed, so does one that came in cut short (it ran, but left no map or no heights), and
+  // a try after a failure fetches the files afresh. prefetch(id) loads one quietly ahead of
+  // time, so a round can start with no signal later (at the range, say).
+  var TIMEOUT = 20000, pending = {}, tries = {};
+  function loaded(id) { var c = get(id); return !!(c && c.map && c.elev); }
   function load(id) {
     var c = get(id);
     if (!c) return Promise.reject(new Error('No such course: ' + id));
-    if (c.map) return Promise.resolve(c);
+    if (loaded(id)) return Promise.resolve(c);
+    if (!FILES[id]) return Promise.reject(new Error('The files of ' + c.name + ' aren’t listed'));
     if (pending[id]) return pending[id];
+    var n = tries[id] = (tries[id] || 0) + 1;
     pending[id] = FILES[id].reduce(function (p, src) {
       return p.then(function () {
         return new Promise(function (ok, fail) {
-          var el = document.createElement('script');
-          el.src = src;
-          el.onload = function () { ok(); };
-          el.onerror = function () { fail(new Error('Couldn’t load ' + src.split('?')[0])); };
+          var el = document.createElement('script'), done = false, timer = 0;
+          function end(err) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            if (el.parentNode) el.parentNode.removeChild(el);
+            if (err) fail(err); else ok();
+          }
+          timer = setTimeout(function () { end(new Error('Loading ' + c.name + ' took too long')); }, TIMEOUT);
+          el.onload = function () { end(); };
+          el.onerror = function () { end(new Error('Couldn’t load ' + c.name)); };
+          el.src = src + (n > 1 ? '&try=' + n : '');
           document.head.appendChild(el);
         });
       });
     }, Promise.resolve()).then(function () {
-      attach(c, (self.GolfCourseData || {})[id]);
-      if (!c.map) throw new Error('The map of ' + c.name + ' didn’t load');
+      var all = self.GolfCourseData || {}, d = all[id] || {};
+      if (!d.map || !d.elev) { delete all[id]; throw new Error('Part of ' + c.name + ' didn’t load'); }
+      attach(c, d);
       return c;
     });
     pending[id].catch(function () { delete pending[id]; });
     return pending[id];
   }
-  return { list: LIST, get: get, par: par, load: load, loaded: loaded, FILES: FILES, HARDING: HARDING, EDGEWOOD: EDGEWOOD };
+  function prefetch(id) { if (get(id) && !loaded(id)) load(id).catch(function () {}); }
+  return { list: LIST, get: get, par: par, load: load, loaded: loaded, prefetch: prefetch, FILES: FILES, HARDING: HARDING, EDGEWOOD: EDGEWOOD };
 });

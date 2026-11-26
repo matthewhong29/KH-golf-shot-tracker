@@ -215,11 +215,11 @@
         "From the Toptracer Range app’s Game details screens, sent Nov 25: three games that day, a pitching wedge game (8 shots), a 7 iron game (9) and a 7 iron and 9 iron game (5 and 23).",
         "Matthew: from very early in the summer, and he has got better since, so take it with a grain of salt.",
         "These screens show no times, and number each club’s shots within a game, so the shots are in order within each club in a game, but the order of the games (and of the clubs within one) isn’t known.",
-        "The column after Flat carry is headed “Distance trend”: it’s the total distance (the chart’s Total Distance), so it’s stored as total_yds.",
+        "The column after Flat carry is headed “Distance trend”: it’s the total distance (the chart’s Total Distance), so it’s stored as the total.",
         "Offline is shown in yards on these screens; it’s stored here in feet (× 3).",
-        "In the first 7 iron game, shot 8’s curve shows as a bare “1 ft”, with no L or R, so its curve_ft is null.",
+        "In the first 7 iron game, shot 8’s curve shows as a bare “1 ft”, with no L or R, so its curve isn’t recorded.",
         "The 9 iron’s shots 1 and 20 match in every number but offline (R 1 and R 16 yd). Both are on the screen, so both are kept.",
-        "screen_averages has the screen’s averages for the pitching wedge and the 9 iron. The two 7 iron games had their own: 114 yds carry over 9 shots and 113 over 5."
+        "The Screen averages card has the screen’s averages for the pitching wedge and the 9 iron. The two 7 iron games had their own: 114 yds carry over 9 shots and 113 over 5."
       ],
       "coaching_notes": [],
       "screen_averages": {
@@ -893,11 +893,11 @@
         "From the Toptracer Range app’s Game details screens, sent Nov 25: two games that day, a driver game (30 shots) and a 3 wood, 5 hybrid and 7 iron game (16, 29 and 16 shots in the app’s count).",
         "Matthew: from very early in the summer, and he has got better since, so take it with a grain of salt.",
         "These screens show no times, and number each club’s shots within a game, so the shots are in order within each club in a game, but the order of the games (and of the clubs within one) isn’t known.",
-        "The column after Flat carry is headed “Distance trend”: it’s the total distance (the chart’s Total Distance), so it’s stored as total_yds.",
+        "The column after Flat carry is headed “Distance trend”: it’s the total distance (the chart’s Total Distance), so it’s stored as the total.",
         "Offline is shown in yards on these screens; it’s stored here in feet (× 3).",
         "The second game’s 3 wood and 5 hybrid tables came in a second batch of screenshots the same day; their shots come after the 7 iron’s here.",
         "The app greys out some shots and leaves them out of its averages: driver shots 1, 2 and 6 (27 drivers averaging 192 yds carry), 7 iron shots 2, 7 and 15 (16 averaging 125), 3 wood shots 1, 17 and 18 (16 averaging 107) and 5 hybrid shots 5, 12, 15 and 29 (29 averaging 114). They’re kept here like every other shot, and the page makes its own call on mis-hits.",
-        "These curves show as a bare “1 ft”, with no L or R, so their curve_ft is null: driver shot 6, 7 iron shot 12, 3 wood shot 17 and 5 hybrid shots 11, 27 and 29."
+        "These curves show as a bare “1 ft”, with no L or R, so they aren’t recorded: driver shot 6, 7 iron shot 12, 3 wood shot 17 and 5 hybrid shots 11, 27 and 29."
       ],
       "coaching_notes": [],
       "shots": [
@@ -2331,10 +2331,10 @@
         "From the Toptracer Range app’s Game details screens, sent Nov 25: one game that day, 9 irons and pitching wedges (22 and 11 shots in the app’s count).",
         "Matthew: from very early in the summer, and he has got better since, so take it with a grain of salt.",
         "These screens show no times, and number each club’s shots within a game, so the shots are in order within each club in a game, but the order of the games (and of the clubs within one) isn’t known.",
-        "The column after Flat carry is headed “Distance trend”: it’s the total distance (the chart’s Total Distance), so it’s stored as total_yds.",
+        "The column after Flat carry is headed “Distance trend”: it’s the total distance (the chart’s Total Distance), so it’s stored as the total.",
         "Offline is shown in yards on these screens; it’s stored here in feet (× 3).",
         "The app greys out pitching wedge shots 1 and 2 and 9 iron shots 10, 13 and 19, and leaves them out of its averages (11 wedges averaging 114 yds carry, 22 9 irons averaging 128). They’re kept here like every other shot, and the page makes its own call on mis-hits.",
-        "Pitching wedge shots 5 and 13 show their curve as a bare “1 ft”, with no L or R, so their curve_ft is null."
+        "Pitching wedge shots 5 and 13 show their curve as a bare “1 ft”, with no L or R, so their curves aren’t recorded."
       ],
       "coaching_notes": [],
       "shots": [
@@ -2875,7 +2875,7 @@
     {
       "id": "2026-08-05-rapsodo-7i",
       "date": "2026-08-05",
-      "date_note": "date of the chat",
+      "date_note": "The date of the chat it came from.",
       "device": "Rapsodo MLM2PRO (free tier)",
       "equipment": "Callaway Edge 7-iron, standard shaft, regular flex",
       "shot_level_data": "partial",
@@ -2890,7 +2890,7 @@
         "Shot data: partial.",
         "Screenshot of the best totals: shots #39-44 of the session.",
         "Every shot started right. The two pushes (R) had the lowest smash factors.",
-        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing."
       ],
       "coaching_notes": [],
       "summary": {
@@ -3053,7 +3053,7 @@
       "notes": [
         "First session after moving the ball forward and shifting weight.",
         "Shot data: best shot only.",
-        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing."
       ],
       "coaching_notes": [],
       "estimated": {
@@ -3090,7 +3090,7 @@
       "shot_level_data": "partial",
       "notes": [
         "Shot data: best ball speed only.",
-        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing."
       ],
       "coaching_notes": [],
       "estimated": {
@@ -3125,7 +3125,7 @@
       "shot_level_data": "partial",
       "notes": [
         "Shot data: one shot, recalled from memory.",
-        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing."
       ],
       "coaching_notes": [],
       "shots": [
@@ -3158,7 +3158,7 @@
       "shot_level_data": "partial",
       "notes": [
         "Shot data: partial: carry for every shot, other metrics only as groups.",
-        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing."
       ],
       "coaching_notes": [],
       "summary": {
@@ -3485,7 +3485,7 @@
       "shot_level_data": "partial",
       "notes": [
         "Shot data: one shot.",
-        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing (null)."
+        "Transcribed from Claude’s written readouts of screenshots in past chats, so many per-shot numbers are missing."
       ],
       "coaching_notes": [],
       "shots": [

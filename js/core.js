@@ -384,7 +384,7 @@
       if (on / off.n < NEEDS_WORK.onLine) {
         var lefts = off.values.filter(function (v) { return v < -GOALS.lineFt; }).length, rights = off.values.filter(function (v) { return v > GOALS.lineFt; }).length;
         var way = lefts && rights && Math.min(lefts, rights) >= 0.25 * (lefts + rights) ? ', missing both ways' : lefts > rights ? ', mostly left' : ', mostly right';
-        out.push({ kind: 'direction', key: 'offline_ft', text: 'only ' + on + ' of ' + off.n + ' finished within 10 yds of the line' + way });
+        out.push({ kind: 'direction', key: 'offline_spread', text: 'only ' + on + ' of ' + off.n + ' finished within 10 yds of the line' + way });
       }
     }
     var car = summarize(entry.solid, 'carry_yds');
@@ -522,6 +522,13 @@
     if (!isNum(v) && entry) v = median(entry.shots.map(function (s) { return isNum(s.total_yds) ? s.total_yds : s.carry_yds; }));
     return Math.max(25, Math.round(isNum(v) ? v : 100));
   }
+  // What pinFor went by: 'total' (a pure strike's carry plus roll), 'carry' (a pure strike's
+  // carry, when the screen gave no totals) or 'middle' (the middle of his shots).
+  function pinBasis(entry, club, equip) {
+    var ref = entry ? strikeReference(entry, club, equip) : null;
+    if (ref) return ref.metrics.total_yds && isNum(ref.metrics.total_yds.avg) ? 'total' : 'carry';
+    return 'middle';
+  }
   // His best shots with a club, to picture an ideal flight: solid shots (no mis-hits or
   // outliers) launched at a normal height, as for pure strikes, ranked by how close each
   // came to an ideal shot: carrying at least as far as his pure strike, and on line. The
@@ -551,7 +558,7 @@
     if (/^\d+i$/.test(c)) return 6;
     return 8;
   }
-  var GOALS = { inZone: 0.7, onLine: 0.8, lineFt: 30, solidPct: 90 };
+  var GOALS = { inZone: 0.7, onLine: 0.8, lineFt: 30, solidPct: 90, minShots: 3 };
 
   // Range goals for one club, built from the player's own shots:
   //   distance:   the same distance every time: a carry zone centred on his typical
@@ -576,31 +583,36 @@
       var withCarry = entry.shots.filter(function (s) { return isNum(s.carry_yds); });
       var inZone = withCarry.filter(function (s) { return s.carry_yds >= center - half && s.carry_yds <= center + half; }).length;
       add({ id: 'carry', label: 'Distance', lo: center - half, hi: center + half, center: center, typical: center, pureCarry: ref ? ref.carry : null, pure: !!ref,
-        n: inZone, of: withCarry.length, met: inZone / withCarry.length >= GOALS.inZone });
+        n: inZone, of: withCarry.length, met: inZone / withCarry.length >= GOALS.inZone, few: withCarry.length < GOALS.minShots });
     }
     var offShots = entry.shots.filter(function (s) { return isNum(s.offline_ft); });
     if (offShots.length) {
       var within = offShots.filter(function (s) { return Math.abs(s.offline_ft) <= GOALS.lineFt; }).length;
-      add({ id: 'line', label: 'On line', n: within, of: offShots.length, met: within / offShots.length >= GOALS.onLine });
+      add({ id: 'line', label: 'On line', n: within, of: offShots.length, met: within / offShots.length >= GOALS.onLine, few: offShots.length < GOALS.minShots });
     }
     var win = launchWindow(club, equip), la = summarize(entry.solid, 'launch_deg');
     if (win && la.n) {
       var status = la.avg > win[1] ? 'high' : la.avg < win[0] ? 'low' : 'ok';
-      add({ id: 'launch', label: 'Launch', lo: win[0], hi: win[1], avg: la.avg, status: status, met: status === 'ok' });
+      add({ id: 'launch', label: 'Launch', lo: win[0], hi: win[1], avg: la.avg, status: status, met: status === 'ok', few: la.n < GOALS.minShots });
     }
-    add({ id: 'contact', label: 'Solid contact', n: solidCount(entry), of: entry.shots.length, met: solidPct(entry) >= GOALS.solidPct });
+    add({ id: 'contact', label: 'Solid contact', n: solidCount(entry), of: entry.shots.length, met: solidPct(entry) >= GOALS.solidPct, few: entry.shots.length < GOALS.minShots });
+    // A goal judged on fewer than GOALS.minShots shots isn't judged at all (few): one shot
+    // landing in the zone says nothing yet.
+    goals.forEach(function (x) { if (x.few) x.met = false; });
 
     var flags = needsWork(entry), kind = clubKind(club);
     var lineText = 'Start it on line: pick a spot a few feet ahead on your target line and start the ball over it.';
-    var lf = g.launch ? launchFocus(club, g.launch) : null;
+    var judged = function (x) { return !!x && !x.few; }, some = goals.some(function (x) { return x.few; });
+    var lf = judged(g.launch) ? launchFocus(club, g.launch) : null;
     var focus;
-    if (!g.contact.met) focus = { kind: 'contact', text: CONTACT_FOCUS[kind] };
-    else if (g.line && !g.line.met && (g.line.n / g.line.of < 0.5 || flags.some(function (f) { return f.kind === 'direction'; }))) {
+    if (goals.every(function (x) { return x.few; })) focus = { kind: null, few: true, text: 'Too few shots with this club to judge yet: hit at least ' + GOALS.minShots + '.' };
+    else if (judged(g.contact) && !g.contact.met) focus = { kind: 'contact', text: CONTACT_FOCUS[kind] };
+    else if (judged(g.line) && !g.line.met && (g.line.n / g.line.of < 0.5 || flags.some(function (f) { return f.kind === 'direction'; }))) {
       focus = { kind: 'direction', text: lineText };
     } else if (lf) focus = { kind: 'launch', status: g.launch.status, text: lf };
-    else if (g.carry && !g.carry.met) focus = { kind: 'distance', text: 'Same distance every time: pick one target and land it in your carry zone.' };
-    else if (g.line && !g.line.met) focus = { kind: 'direction', text: lineText };
-    else focus = { kind: null, text: 'Keep it going: every goal here is on target.' };
+    else if (judged(g.carry) && !g.carry.met) focus = { kind: 'distance', text: 'Same distance every time: pick one target and land it in your carry zone.' };
+    else if (judged(g.line) && !g.line.met) focus = { kind: 'direction', text: lineText };
+    else focus = { kind: null, text: some ? 'On target so far: a few more shots will tell the rest.' : 'Keep it going: every goal here is on target.' };
     return { focus: focus, goals: goals, ref: ref };
   }
   // Solid contact means something different off the turf with an iron than with a long club.
@@ -1514,7 +1526,7 @@
     solidCount: solidCount, solidPct: solidPct, SOLID_METRIC: SOLID_METRIC, latestShotSession: latestShotSession,
     needsWork: needsWork, NEEDS_WORK: NEEDS_WORK, clubGoals: clubGoals, GOALS: GOALS, LAUNCH_WINDOWS: LAUNCH_WINDOWS,
     mergeGoals: mergeGoals, applyGoals: applyGoals,
-    bestStrikes: bestStrikes, strikeReference: strikeReference, pinFor: pinFor, bestShots: bestShots, checkShot: checkShot,
+    bestStrikes: bestStrikes, strikeReference: strikeReference, pinFor: pinFor, pinBasis: pinBasis, bestShots: bestShots, checkShot: checkShot,
     launchWindow: launchWindow, launchFocus: launchFocus, clubLoft: clubLoft, clubSpec: clubSpec, clubKind: clubKind, LAUNCH_PER_LOFT: LAUNCH_PER_LOFT,
     sessionCallout: sessionCallout, resolvePlayer: resolvePlayer, fmtHeight: fmtHeight, youtubeSearchUrl: youtubeSearchUrl,
     buildHighlights: buildHighlights, progressFor: progressFor, compareStats: compareStats, trend: trend, TREND: TREND,

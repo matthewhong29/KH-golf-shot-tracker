@@ -45,11 +45,15 @@
   let bundleStatus = 'loading'; // loading | fresh | offline | missing
   let local = null;             // this player's edits on this device
   let data = null;              // merged view
+  // The tab open before a reload, kept for this browser tab only (a new visit opens on Stats).
+  const TAB_KEY = LS + '.tab', TAB_IDS = ['stats', 'progress', 'tips', 'game', 'sessions'];
+  function savedTab() { try { const t = sessionStorage.getItem(TAB_KEY); return TAB_IDS.indexOf(t) >= 0 ? t : 'stats'; } catch (e) { return 'stats'; } }
+  function saveTab(t) { try { sessionStorage.setItem(TAB_KEY, t); } catch (e) { /* private mode: it just opens on Stats */ } }
   const ui = freshUI();
 
   function freshUI() {
     return {
-      tab: 'stats', scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
+      tab: savedTab(), scope: null, dispClub: 'All', progClub: null, progMetric: 'carry_yds', statClub: null, openTip: null,
       rp: { club: 'All', idx: 0, speed: 1, view: 'tee', best: false },
       game: { setup: false, card: false, dir: null },
       goalsEdit: false, goalsAll: false, goalSrc: 'me', practiceClub: null, check: {}, practiceView: 'range', rvFrame: {}, rvMarks: true,
@@ -113,6 +117,7 @@
     render();
     window.scrollTo(0, 0);
     fetchBundle();
+    setTimeout(gmPrefetch, 1500);
   }
 
   function fileSessions() { return bundle && Array.isArray(bundle.sessions) ? bundle.sessions : []; }
@@ -238,8 +243,15 @@
     const spec = C.clubSpec(c, data.equipment), loft = C.clubLoft(c, data.equipment);
     return [spec && spec.model, loft != null ? `${C.fmtRaw(loft)}° loft` : ''].filter(Boolean).join(' · ');
   }
-  function clubHead(c) {
-    const spec = clubSpecLine(c);
+  // A session hit with other clubs than today's bag (its `equipment` names them, like Dad's Aug 9
+  // baseline with Callaway Edge irons): those clubs, shown instead of the bag's, with the general
+  // launch targets. '' when the session used the bag (or names no clubs).
+  function otherClubs(sess, club) {
+    const spec = C.clubSpec(club, data.equipment), was = sess && typeof sess.equipment === 'string' ? sess.equipment.trim() : '';
+    return was && spec && spec.model && was.toLowerCase().indexOf(String(spec.model).toLowerCase()) < 0 ? was : '';
+  }
+  function clubHead(c, other) {
+    const spec = other || clubSpecLine(c);
     return `<div class="cc-head">${clubBadge(c, false, true)}<span class="cc-titles"><span class="cc-name">${esc(C.clubName(c, data.clubs))}</span>${spec ? `<span class="cc-full">${esc(spec)}</span>` : ''}</span></div>`;
   }
   // A stat tile: label, a big number with a small unit, then an optional meter, note and change.
@@ -266,7 +278,29 @@
   function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'session'; }
   function cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
   function deviceLine(s) { return [s.device || 'Session', s.bay != null ? 'Bay ' + s.bay : s.location].filter(Boolean).join(' · '); }
+  // Sessions that share a date and device are told apart by their clubs, then by number:
+  // "Aug 16, 2026 · Toptracer · 7i #2". Among `list` (all the sessions when left out).
+  function sessClubs(s) {
+    const set = new Set(C.sessionShots(s).map((x) => x.club).filter(Boolean));
+    if (C.hasSummary(s)) Object.keys(s.summary).forEach((c) => set.add(c));
+    return C.sortClubs(Array.from(set)).join(', ');
+  }
+  function sessTag(s, list) {
+    const dev = C.shortDevice(s.device), same = (list || data.sessions).filter((x) => x.date === s.date && C.shortDevice(x.device) === dev);
+    if (same.length < 2) return '';
+    const c = sessClubs(s), twins = same.filter((x) => sessClubs(x) === c);
+    return (c || 'no shots') + (twins.length > 1 ? ' #' + (twins.findIndex((x) => x.id === s.id) + 1) : '');
+  }
+  function sessName(s, list) { return [C.fmtDate(s.date), C.shortDevice(s.device), sessTag(s, list)].filter(Boolean).join(' · '); }
   function unitLabel(m) { return m.dir ? 'ft, L/R' : m.unit; }
+  // Plain names for numbers the stats don't use, so no raw key ("spin_axis") shows on the page.
+  const KEY_NAMES = { spin_axis: 'Spin axis', attack_angle_deg: 'Attack angle', club_path_deg: 'Club path', face_angle_deg: 'Face angle',
+    face_to_path_deg: 'Face to path', launch_dir_deg: 'Launch direction', dynamic_loft_deg: 'Dynamic loft', consistency_pct: 'Consistency' };
+  function keyName(k) {
+    if (C.METRIC[k]) return C.METRIC[k].label;
+    const t = KEY_NAMES[k] || String(k).replace(/_(deg|mph|rpm|ft|yds|pct|in|s)$/, '').replace(/_/g, ' ');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
   function shotCount(s) { return C.sessionShots(s).length; }
   function plural(n, w) { return C.plural(n, w); }
   // Direction with its unit, golf style: "27 ft R", "9.0 yds L".
@@ -317,9 +351,10 @@
     const n = raw / p;
     return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * p;
   }
-  function ticksFor(lo, hi, target) {
+  // minStep: 1 for yards, feet and mph, so a tight spread doesn't get half-yard ticks.
+  function ticksFor(lo, hi, target, minStep) {
     if (lo === hi) { lo -= 5; hi += 5; }
-    const step = niceStep(hi - lo, target);
+    const step = Math.max(minStep || 0, niceStep(hi - lo, target));
     const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step;
     const ticks = [];
     for (let v = a; v <= b + step / 1000; v += step) ticks.push(Math.round(v * 1000) / 1000);
@@ -391,7 +426,7 @@
     const H = top + rows.length * rowH + axisH;
     const vals = [];
     rows.forEach((r) => { r.pts.forEach((s) => vals.push(s.carry_yds)); if (r.st && C.isNum(r.st.min)) vals.push(r.st.min, r.st.max); });
-    const t = ticksFor(Math.min(...vals), Math.max(...vals), W < 420 ? 4 : 6);
+    const t = ticksFor(Math.min(...vals), Math.max(...vals), W < 420 ? 4 : 6, 1);
     const x = lin(t.lo, t.hi, padL, W - padR);
     const g = [];
     t.ticks.forEach((v) => { g.push(line('grid', x(v), top, x(v), H - axisH)); g.push(text('tick', x(v), H - 10, C.fmtRaw(v), 'middle')); });
@@ -423,6 +458,20 @@
     if (!twoLine && labelsCollide(el)) drawGap(el, entries, clubs, true);
   }
 
+  // The gapping chart's key, naming only what it draws: no dots for ranges, no gap with one average.
+  function gapHint(entries, clubs, hasMis, hasOut) {
+    const st = clubs.map((c) => ({ e: entries[c], st: C.metricStat(entries[c], 'carry_yds') }));
+    const dots = st.some((r) => r.e.shots.some((x) => C.isNum(x.carry_yds))), ranges = st.filter((r) => r.st && r.st.summaryOnly && C.isNum(r.st.min));
+    const avgs = st.filter((r) => r.st && C.isNum(r.st.avg)).length;
+    if (!dots && !ranges.length) return '';
+    const bar = dots ? 'Bar: shortest to longest solid shot' + (ranges.length ? ', or the recorded range (it includes any mis-hits) for a club with ranges only.' : '.')
+      : 'Bar: the recorded range, which includes any mis-hits.';
+    const key = hasMis && hasOut ? ' (hollow = likely mis-hit; ringed = outlier, solid but far off the usual carry; both are left out of the numbers)'
+      : hasMis ? ' (hollow = likely mis-hit, left out of the numbers)'
+        : hasOut ? ' (ringed = outlier, solid but far off the usual carry, left out of the numbers)' : '';
+    return `<p class="hint">Carry in yards. ${bar}${avgs ? ' Black line and number: average of solid shots.' : ''}${dots ? ` Dots: every shot${key}.` : ''}${avgs > 1 ? ' “Gap” is the change from the next-shorter club.' : ''}</p>`;
+  }
+
   // Dispersion. Offline is converted from feet to yards so both axes share one scale.
   function dispPoints(entry) {
     return entry.shots.filter((s) => C.isNum(s.offline_ft) && C.isNum(s.carry_yds)).map((s) => ({ s, x: s.offline_ft / 3, y: s.carry_yds, kind: shotKind(entry, s) }));
@@ -434,7 +483,12 @@
     const g = [];
     const half = Math.min(15, o.xMax);
     g.push(`<rect class="fair" x="${f1(sx(-half))}" y="${f1(o.padT)}" width="${f1(sx(half) - sx(-half))}" height="${f1(plotB - o.padT)}"/>`);
-    const tx = ticksFor(-o.xMax, o.xMax, o.small ? 2 : 4);
+    // Left and right of the line, a step that fits inside the chart (a nice step rounded up
+    // can be wider than its half, which left only the 0 labelled): 100 → 50 → 20 → 10 → 5.
+    let xs = niceStep(2 * o.xMax, o.small ? 2 : 4);
+    while (xs > o.xMax * 0.95 && xs > 1) xs /= String(xs)[0] === '5' ? 2.5 : 2;
+    const tx = { ticks: [] };
+    for (let v = -Math.floor(o.xMax / xs) * xs; v <= o.xMax + 1e-6; v += xs) tx.ticks.push(Math.round(v * 1000) / 1000);
     tx.ticks.filter((v) => v >= -o.xMax - 1e-6 && v <= o.xMax + 1e-6).forEach((v) => {
       if (v !== 0) g.push(line('grid', sx(v), o.padT, sx(v), plotB));
       g.push(text('tick', sx(v), plotB + 22, C.fmtRawDir(v), 'middle'));
@@ -555,7 +609,7 @@
       const vals = [];
       rows.forEach((x) => [x.st.min, x.st.max, x.st.avg].forEach((v) => { if (C.isNum(v)) vals.push(v); }));
       if (m.dir) vals.push(0);
-      t = vals.length ? ticksFor(Math.min(...vals), Math.max(...vals), W < 420 ? 4 : 6) : { lo: 0, hi: 1, ticks: [] };
+      t = vals.length ? ticksFor(Math.min(...vals), Math.max(...vals), W < 420 ? 4 : 6, /^(yds|ft|mph)$/.test(m.unit || '') || m.dir ? 1 : 0) : { lo: 0, hi: 1, ticks: [] };
     }
     const x = lin(t.lo, t.hi, padL, W - padR);
     const fmtT = solidMode ? (v) => v + '%' : m.dir ? C.fmtRawDir : C.fmtRaw;
@@ -566,7 +620,8 @@
       const y0 = top + i * rowH, ty1 = y0 + 22, ty2 = y0 + 44, ty3 = narrow ? y0 + 66 : ty2, cy = narrow ? y0 + 94 : y0 + 74;
       const isBase = P.baseline && P.baseline.session.id === s.id;
       g.push(text('rowlbl', padL, ty1, C.fmtDate(s.date)));
-      g.push(text('rowsub', padL, ty2, C.shortDevice(s.device) + (isBase ? ' · baseline' : '')));
+      const tag = sessTag(s, P.rows.map((x) => x.session));
+      g.push(text('rowsub', padL, ty2, C.shortDevice(s.device) + (tag ? ' · ' + tag : '') + (isBase ? ' · baseline' : '')));
       let value, sub;
       if (solidMode) {
         value = row.p == null ? 'unknown' : C.roundHalfEven(row.p, 0) + '%';
@@ -595,6 +650,7 @@
   // Rendering
   // ---------------------------------------------------------------------------
   function render() {
+    saveTab(ui.tab);
     artStop();
     rpStop();
     gmStop();
@@ -829,8 +885,10 @@
       <div class="card"><span class="sk sk-title"></span><div class="sk-tiles"><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span></div><span class="sk sk-line"></span><span class="sk sk-line short"></span></div>
       <div class="card"><span class="sk sk-title"></span><span class="sk sk-line"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span></div></div>`;
   }
-  // Photos and videos go to Matthew, who adds them with Claude; on his own page, straight to Claude.
-  function isMatthew() { return /^matthew\b/i.test(String((data.player && data.player.relationship) || '')); }
+  // Photos and videos go to Matthew, who adds them with Claude; on his own page, straight to
+  // Claude. (His page is the player id matthew: the others' relationship reads "Matthew's
+  // father" and "Matthew's brother", which a word match on Matthew would catch.)
+  function isMatthew() { return playerId === 'matthew'; }
   function sendTo(what) { return isMatthew() ? `send the ${what} to Claude` : `text the ${what} to Matthew`; }
   function emptyState(onSessionsTab) {
     if (bundleStatus === 'loading' && !data.sessions.length) return skeleton();
@@ -845,7 +903,10 @@
     let id = ui.scope;
     if (id !== 'all' && !getSession(id)) id = null;
     if (id === 'all' && !withShots.length) id = null;
-    if (!id) id = withShots.length ? withShots[withShots.length - 1].id : (data.sessions.length ? data.sessions[data.sessions.length - 1].id : null);
+    // By default the latest session with enough shots to say something (5 or more), or else
+    // the latest with any.
+    const enough = withShots.filter((s) => shotCount(s) >= 5);
+    if (!id) id = enough.length ? enough[enough.length - 1].id : withShots.length ? withShots[withShots.length - 1].id : (data.sessions.length ? data.sessions[data.sessions.length - 1].id : null);
     ui.scope = id;
     if (id === 'all') return { id, sessions: withShots };
     const s = getSession(id);
@@ -854,7 +915,7 @@
   function scopeOptions(cur) {
     const opts = data.sessions.slice().reverse().map((s) => {
       const n = shotCount(s);
-      return `<option value="${esc(s.id)}"${s.id === cur ? ' selected' : ''}>${esc(C.fmtDate(s.date))} · ${esc(C.shortDevice(s.device))} (${n ? plural(n, 'shot') : 'ranges only'})</option>`;
+      return `<option value="${esc(s.id)}"${s.id === cur ? ' selected' : ''}>${esc(sessName(s))} (${n ? plural(n, 'shot') : 'ranges only'})</option>`;
     });
     const total = data.sessions.reduce((a, s) => a + shotCount(s), 0);
     if (total) opts.push(`<option value="all"${cur === 'all' ? ' selected' : ''}>All sessions (${plural(total, 'shot')})</option>`);
@@ -929,7 +990,7 @@
       return `<li>${clubBadge(c, true, true)}<span class="aim-k">${esc(C.clubName(c, data.clubs))}<small>${esc(what)}</small></span><span class="aim-v">${win ? `${win[0]}–${win[1]}°` : '—'}<small>${loft != null ? 'from its loft' : 'general target'}</small></span></li>`;
     }).join('');
     return `<div class="card"><div class="card-head"><span class="head-ico">${icon('launch')}</span><h3 class="card-title">Your clubs and launch targets</h3></div>
-      <p class="note">The launch a solid strike should have with each club, worked out from its loft.</p>
+      <p class="note">${list.some((c) => C.clubLoft(c, data.equipment) != null) ? 'The launch a solid strike should have with each club, worked out from its loft.' : 'The launch a solid strike should have with each club. These are general targets for now: once your clubs’ lofts are listed, each is worked out from its loft.'}</p>
       <ul class="aim-list">${rows}</ul>
       ${data.equipment && data.equipment.note ? `<p class="hint">${esc(data.equipment.note)}</p>` : ''}</div>`;
   }
@@ -942,17 +1003,17 @@
     else { target = '9 of 10 swings'; now = `${g.n} of ${g.of} solid`; }
     const note = g.id === 'carry' ? `<span class="g-note">The same distance every time: within ${Math.round((g.hi - g.lo) / 2)} yds of your typical ${g.typical}.${C.isNum(g.pureCarry) ? ` A pure strike carries about ${g.pureCarry}.` : ''}</span>` : '';
     return `<li class="goal${g.met ? ' met' : ''}"><div class="g-main"><span class="g-label">${esc(g.label)}</span><span class="g-target">${esc(target)}</span>${note}</div>
-      <div class="g-now"><span class="g-state">${g.met ? '✓ On target' : 'Keep working'}</span><span>${esc(now)}</span></div></li>`;
+      <div class="g-now"><span class="g-state">${g.few ? 'Too few shots to judge' : g.met ? '✓ On target' : 'Keep working'}</span><span>${esc(now)}</span></div></li>`;
   }
   function statRow(label, desc, value, sub, flagged) {
     return `<div class="stat-row${flagged ? ' work' : ''}"><dt><span class="sl">${esc(label)}</span><span class="sd">${esc(desc)}</span>${flagged ? NW_PILL : ''}</dt>
       <dd><span class="sv">${esc(value)}</span>${sub ? `<span class="sv-sub">${esc(sub)}</span>` : ''}</dd></div>`;
   }
-  function clubCard(entries, club, scopeAll) {
-    const e = entries[club];
+  function clubCard(entries, club, scopeAll, sess) {
+    const e = entries[club], other = otherClubs(sess, club), eq = other ? null : data.equipment;
     const flags = C.needsWork(e);
     const flagKeys = new Set(flags.map((f) => f.key));
-    const G = C.clubGoals(e, club, data.equipment);
+    const G = C.clubGoals(e, club, eq);
     const nMis = e.mis.length, nOut = e.outliers.length;
     const shotsLine = !e.shots.length ? 'Ranges only; individual shots weren’t recorded.'
       : (nMis ? `${plural(e.shots.length, 'shot')}: ${C.solidCount(e)} solid, ${plural(nMis, 'likely mis-hit')}` : `${plural(e.shots.length, 'shot')}, all solid`)
@@ -1003,7 +1064,7 @@
         <p class="hint">Goals come from ${scopeAll ? 'all of your sessions' : 'your shots in this session'} and move as you improve. Launch windows are ballpark targets for a modest swing speed.</p>
       </div>` : '';
     return `<div class="club-card">
-      ${clubHead(club)}
+      ${clubHead(club, other)}
       <p class="cc-shots">${esc(shotsLine)}</p>
       ${tiles}
       ${flags.length ? `<div class="work-box">${NW_PILL}<ul>${flags.map((f) => `<li>${esc(cap(f.text))}.</li>`).join('')}</ul></div>` : ''}
@@ -1038,7 +1099,11 @@
       : mis.has(x) || !C.isNum(x.offline_ft) ? null : Math.abs(x.offline_ft) <= C.GOALS.lineFt }));
   }
   function rateDelta(prev, cur, kind) {
-    const rc = C.rateChange(rateShots(prev.session, kind), rateShots(cur, kind)), when = C.fmtDate(prev.session.date, { short: true });
+    const rc = C.rateChange(rateShots(prev.session, kind), rateShots(cur, kind)), ps = prev.session;
+    // Another session the same day is "your earlier session that day"; a day with several gets its device and clubs.
+    const sameDay = data.sessions.filter((x) => x.date === ps.date).length > 1;
+    const when = ps.date === cur.date ? 'your earlier session that day'
+      : C.fmtDate(ps.date, { short: true }) + (sameDay ? ` (${[C.shortDevice(ps.device), sessTag(ps)].filter(Boolean).join(' ')})` : '');
     if (!rc) return null;
     const same = rc.clubs.length < new Set(C.sessionShots(cur).map((x) => x.club)).size ? ', same clubs' : '';
     if (!rc.sig) return { cls: 'same', text: `About the same as ${when}${same}` };
@@ -1371,7 +1436,8 @@
     const dz = tr.rest.z - pin, dx = tr.rest.x, d = Math.hypot(dx, dz);
     const onGreen = (dx / 11) * (dx / 11) + (dz / 13) * (dz / 13) <= 1;
     const away = [Math.abs(dz) >= 1 ? `${Math.round(Math.abs(dz))} ${dz < 0 ? 'short' : 'long'}` : '', Math.abs(dx) >= 1 ? `${Math.round(Math.abs(dx))} ${dx < 0 ? 'left' : 'right'}` : ''].filter(Boolean).join(' · ');
-    const rolled = C.isNum(s.total_yds) ? (tr.roll >= 0.5 ? `rolled ${Math.round(tr.roll)} yds` : tr.roll <= -0.5 ? `spun back ${Math.round(-tr.roll)} yds` : 'stopped where it landed') : 'total not on the screen';
+    const yd = (v) => `${v} ${v === 1 ? 'yd' : 'yds'}`;
+    const rolled = C.isNum(s.total_yds) ? (tr.roll >= 0.5 ? `rolled ${yd(Math.round(tr.roll))}` : tr.roll <= -0.5 ? `spun back ${yd(Math.round(-tr.roll))}` : 'stopped where it landed') : 'total not on the screen';
     $('.rp-nums', rp.card).innerHTML = [
       kpi({ label: 'Carry', value: C.fmtRaw(s.carry_yds), unit: 'yds', sub: C.isNum(s.ball_speed_mph) ? `${C.fmtRaw(s.ball_speed_mph)} mph ball speed` : '' }),
       kpi({ label: 'Total', value: C.isNum(s.total_yds) ? C.fmtRaw(s.total_yds) : '—', unit: C.isNum(s.total_yds) ? 'yds' : '', sub: rolled }),
@@ -1387,7 +1453,9 @@
     const est = tr.estimated.filter((k) => words[k]).map((k) => words[k]);
     const ref = best ? C.strikeReference(rp.entries[s.club], s.club, data.equipment) : null;
     $('.rp-hint', rp.card).textContent = (best ? `Best ${it.of}: the solid shots that came closest to an ideal one, ranked by the yards each landed short of a pure strike${ref ? ` (${ref.carry} yds)` : ''} plus the yards it finished off line. ` : '') +
-      `The pin is where a pure strike with your ${name.toLowerCase()} finishes: ${pin} yds, carry plus roll. ` +
+      ({ total: `The pin is where a pure strike with your ${name.toLowerCase()} finishes: ${pin} yds, carry plus roll. `,
+        carry: `The pin is where a pure strike with your ${name.toLowerCase()} lands: ${pin} yds, its carry (the screen didn’t give where it finished). `,
+        middle: `The pin is in the middle of your shots with the ${name.toLowerCase()}: ${pin} yds. ` })[C.pinBasis(rp.entries[s.club], s.club, data.equipment)] +
       (est.length ? `Not on the screen, so estimated: ${est.join(', ')}.` : 'Everything is drawn from the screen’s numbers.');
     rpLabel();
   }
@@ -1423,7 +1491,8 @@
     const flagsBy = {};
     clubs.forEach((c) => { flagsBy[c] = C.needsWork(entries[c]); });
     if (!ui.statClub || clubs.indexOf(ui.statClub) < 0) ui.statClub = clubs[0];
-    const dirFlagged = new Set(clubs.filter((c) => flagsBy[c].some((f) => f.kind === 'direction')));
+    // (the average-miss rule only: a club that sprays both ways can average near the line)
+    const dirFlagged = new Set(clubs.filter((c) => flagsBy[c].some((f) => f.key === 'offline_ft')));
     const work = hl.find((h) => h.id === 'work');
     const replayItems = rpItems(sc.sessions);
     const clubChips = clubs.map((c) => {
@@ -1467,14 +1536,12 @@
       <div class="card">
         <div class="chips" role="group" aria-label="Club">${clubChips}</div>
         ${clubs.some((c) => flagsBy[c].length) ? '<p class="nw-key"><span class="nw-dot" aria-hidden="true"></span> marks a club that needs work</p>' : ''}
-        ${clubCard(entries, ui.statClub, sc.id === 'all')}
+        ${clubCard(entries, ui.statClub, sc.id === 'all', sc.session)}
         <details class="more"><summary>Compare all clubs in one table</summary>${matrixTable(entries, clubs)}</details>
       </div>` : ''}
       <h2>Carry gapping</h2>
       <div class="card"><div class="chart" id="gapChart"></div>
-        <p class="hint">Carry in yards. Bar: shortest to longest solid shot. Black line and number: average of solid shots. Dots: every shot${hasMis && hasOut ? ' (hollow = likely mis-hit; ringed = outlier, solid but far off the usual carry; both are left out of the numbers)'
-          : hasMis ? ' (hollow = likely mis-hit, left out of the numbers)'
-            : hasOut ? ' (ringed = outlier, solid but far off the usual carry, left out of the numbers)' : ''}. “Gap” is the change from the next-shorter club.</p></div>
+        ${gapHint(entries, clubs, hasMis, hasOut)}</div>
       ${disp}
       ${missRows.length >= 2 ? `<h2>Average miss by club</h2><div class="card"><div class="chart" id="missChart"></div><p class="hint">Average offline of solid shots${hasOut ? ' (outliers left out)' : ''}, in yards. Bars to the right are misses right of the target line.${missRows.some((r) => dirFlagged.has(r.club)) ? ` Clubs marked “needs work” average ${C.NEEDS_WORK.missYds} yds or more off line.` : ''}</p></div>` : ''}
       ${sc.session ? `<h2>Coaching notes</h2><div class="card">${notes.length ? `<ul class="plain">${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '<p class="empty">No coaching notes for this session.</p>'}
@@ -1509,9 +1576,11 @@
   // change within the luck of his shots is "about the same".
   function trendBadge(t) {
     if (!t) return '';
-    const full = t.basis === 'best' ? 'Can’t tell' : t.dir === 'same' ? 'About the same' : TREND_WORDS[t.dir][t.level];
-    const note = [t.basis === 'best' ? 'the baseline kept only ranges' : '', t.few ? 'only a few shots' : ''].filter(Boolean).join(', ');
-    const word = t.basis === 'best' ? 'Can’t tell' : t.dir === 'same' ? 'Same' : t.dir === 'better' ? 'Better' : 'Worse';
+    // With only a few shots a change can't be told from chance, so it isn't called the same.
+    const unsure = t.few && t.dir === 'same';
+    const full = t.basis === 'best' ? 'Can’t tell' : unsure ? 'Too few shots to tell' : t.dir === 'same' ? 'About the same' : TREND_WORDS[t.dir][t.level];
+    const note = [t.basis === 'best' ? 'the baseline kept only ranges' : '', t.few && !unsure ? 'only a few shots' : ''].filter(Boolean).join(', ');
+    const word = t.basis === 'best' ? 'Can’t tell' : unsure ? 'Too few to tell' : t.dir === 'same' ? 'Same' : t.dir === 'better' ? 'Better' : 'Worse';
     return `<span class="trend ${t.dir} l${t.dir === 'same' ? 0 : t.level}" title="${esc(full + (note ? ` (${note})` : ''))}">${trendIcon(t)}<span aria-hidden="true">${word}</span><span class="sr">${esc(full + (note ? `, ${note}` : ''))}</span></span>`;
   }
   function progValue(m, st) {
@@ -1613,7 +1682,7 @@
       }
       return `<tr><th scope="row">${esc(m.label)}${m.unit ? `<span class="u">${esc(unitLabel(m))}</span>` : ''}</th><td>${statCell(m, a)}</td><td>${statCell(m, c)}${trendBadge(t)}${change ? `<span class="chg">${esc(change)}</span>` : ''}</td></tr>`;
     }).join('');
-    const head = (r, label) => `${label}<span class="u">${esc(C.fmtDate(r.session.date))} · ${esc(C.shortDevice(r.session.device))}</span>`;
+    const head = (r, label) => `${label}<span class="u">${esc(sessName(r.session))}</span>`;
     return `<div class="table-wrap"><table class="matrix cmp"><thead><tr><th scope="col">Metric</th><th scope="col">${head(b, 'Baseline')}</th><th scope="col">${head(l, 'Latest')}</th></tr></thead><tbody>${solidRow}${rows}</tbody></table></div>
       <p class="hint trend-key"><span class="trend better l2">${trendIcon({ dir: 'better', level: 2 })}<span aria-hidden="true">Better</span></span> <span class="trend worse l2">${trendIcon({ dir: 'worse', level: 2 })}<span aria-hidden="true">Worse</span></span>
         Up arrows mean better since the baseline and down arrows worse: one arrow is a small change, three a big one. An arrow shows only when the change is bigger than the spread of his shots could make by luck, so a few more shots one way don’t count as better or worse. Launch is better when it moves toward the club’s target window; curve and offline when shots finish closer to the line on average. When the baseline kept only ranges, the longest shots are set side by side with no arrow, since a longer list of shots has a longer longest. Peak height, landing and hang time get no arrow, since higher isn’t always better.</p>
@@ -1655,6 +1724,10 @@
     if (!sel) return;
     if (ck.carry == null && ck.ball == null && ck.launch == null && ck.off == null) { toast('Type at least one number from the screen'); const f = $('#ckCarry'); if (f) f.focus(); return; }
     if (ck.off && !ck.dir) { toast('Tap Left or Right for the offline number'); return; }
+    // The limits the data check uses, so a typo isn't judged as a shot.
+    const bad = [['ckCarry', ck.carry, 1, 400, 'carry'], ['ckBall', ck.ball, 5, 220, 'ball speed'], ['ckLaunch', ck.launch, -20, 90, 'launch'], ['ckOff', ck.off, 0, 700, 'offline']]
+      .find((x) => x[1] != null && (x[1] < x[2] || x[1] > x[3]));
+    if (bad) { toast(`That ${bad[4]} looks wrong. Check the number on the screen.`); const f = $('#' + bad[0]); if (f) f.focus(); return; }
     const off = ck.off == null ? null : (ck.dir === 'L' ? -Math.abs(ck.off) : Math.abs(ck.off));
     ck.result = C.checkShot(sel.pooled, c, { carry_yds: ck.carry, ball_speed_mph: ck.ball, launch_deg: ck.launch, offline_ft: off }, data.equipment);
     renderTips();
@@ -1672,7 +1745,7 @@
     const flags = C.needsWork(e);
     const aim = [];
     if (zone) aim.push(['flag', 'Distance', 'The same distance every time', `${zone.lo}–${zone.hi} yds`, `your typical ${zone.typical} yds${r ? ` · pure strike about ${r.carry}` : ''}`]);
-    if (m.ball_speed_mph) aim.push(['bolt', 'Ball speed', 'Shows a centred strike', `${C.fmtRaw(m.ball_speed_mph.min)}+ mph`, `your pure strikes: ${C.fmtRange(m.ball_speed_mph.min, m.ball_speed_mph.max)} mph`]);
+    if (m.ball_speed_mph) aim.push(['bolt', 'Ball speed', 'Shows a centred strike', `${Math.floor(m.ball_speed_mph.min)}+ mph`, `your pure strikes: ${C.fmtRange(m.ball_speed_mph.min, m.ball_speed_mph.max)} mph`]);
     if (win) aim.push(['launch', 'Launch', 'How steeply it starts', `${win[0]}–${win[1]}°`, m.launch_deg ? `your pure strikes: about ${C.fmtNum(m.launch_deg.avg, 0)}°` : '']);
     aim.push(['line', 'On line', 'Left or right of target', 'within 10 yds', '30 ft or less on the screen']);
     const look = [];
@@ -1851,7 +1924,7 @@
     const longest = Math.max(1, ...clubs.map((c) => Math.max(refs[c] ? refs[c].carry : 0, pc[c].typical || 0)));
     const rows = clubs.map((c) => {
       const e = pc[c].entry, r = refs[c], ty = pc[c].typical, nw = C.needsWork(e).length;
-      const sub = [r ? `pure strike\u00a0${r.carry}` : '', r && r.metrics.ball_speed_mph ? `${C.fmtRaw(r.metrics.ball_speed_mph.min)}+\u00a0mph ball\u00a0speed` : '',
+      const sub = [r ? `pure strike\u00a0${r.carry}` : '', r && r.metrics.ball_speed_mph ? `${Math.floor(r.metrics.ball_speed_mph.min)}+\u00a0mph ball\u00a0speed` : '',
         r && r.solid < 4 ? `only ${plural(r.solid, 'solid shot')} so far` : ''].filter(Boolean).join(' · ');
       const big = C.isNum(ty) ? ty : r ? r.carry : null;
       return `<li><button class="yard-row" data-action="practice-club" data-club="${esc(c)}" aria-pressed="${c === ui.practiceClub}">
@@ -1880,7 +1953,7 @@
       : `<div class="card"><h3 class="card-title">Numbers to aim for</h3><p>After ${esc(playerName())}’s first range session, each club’s pure-strike distance and the numbers to aim for show up here, with a quick way to check a shot.</p></div>${chartCard()}`}`;
     const drillsView = t ? `${t.focus.map((f, i) => focusCard(f, i, true)).join('')}
         <div class="card lesson"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Check it with a coach</h3></div><p style="margin-top:6px">${esc(fillText(t.lesson))}</p></div>`
-      : `<div class="card"><p class="empty">No drills for ${esc(playerName())} yet. Once his first range sessions are in, ask Claude for a plan built from them.</p></div>`;
+      : `<div class="card"><p class="empty">No drills for ${esc(playerName())} yet. ${data.sessions.some((x) => shotCount(x)) ? 'His range sessions are in, so ask Claude for a plan built from them.' : 'Once his first range sessions are in, ask Claude for a plan built from them.'}</p></div>`;
     el.innerHTML = `
       <div class="hero">${HERO_ART}<span class="hero-k">Practice</span><h2>${esc(heads[view][0])}</h2>
         <p>${esc(heads[view][1])}</p>
@@ -1983,7 +2056,7 @@
     const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const when = (d) => { const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(d || ''); return !m ? '' : m[3] ? C.fmtDate(d) : `${MON[+m[2] - 1]} ${m[1]}`; };
     return `<div class="card"><div class="card-head"><span class="head-ico">${icon('coach')}</span><h3 class="card-title">Swing notes</h3></div>
-      <ul class="rv-good">${list.map((x) => `<li>${icon('check')}<span>${esc(x.note)}${x.source || x.date ? `<span class="muted"> (${esc([when(x.date), x.source].filter(Boolean).join(', '))})</span>` : ''}</span></li>`).join('')}</ul></div>`;
+      <ul class="sw-notes">${list.map((x) => `<li><span>${esc(x.note)}${x.source || x.date ? `<span class="muted"> (${esc([when(x.date), x.source].filter(Boolean).join(', '))})</span>` : ''}</span></li>`).join('')}</ul></div>`;
   }
   function swingView() {
     const list = data.reviews || [];
@@ -2105,14 +2178,33 @@
     gmMount(st, round, pools);
   }
 
-  // A course's map and heights are fetched when a round on it starts (GolfCourses.load).
+  // A course's map and heights are fetched when a round on it starts (GolfCourses.load), if
+  // they weren't fetched ahead of time (gmPrefetch). While they come in the card says so,
+  // with a way back to the setup; if they don't, it says why and offers to try again. Each
+  // load acts only on the card that asked for it: the same player, still waiting for that
+  // course, with no game on the screen.
+  let gmLoadTok = 0, gmScrollOnLoad = false;
   function gmLoadCourse(el, id) {
-    const c = gmCourse(id);
-    el.innerHTML = `<div class="card"><p class="note">Loading ${esc(c.name)}…</p></div>`;
-    COURSES.load(id).then(() => { if (ui.tab === 'game') renderGame(); }, (e) => {
+    const c = gmCourse(id), tok = ++gmLoadTok, who = playerId, back = '<button class="btn ghost" data-action="gm-new">Back</button>';
+    const mine = () => tok === gmLoadTok && who === playerId && ui.tab === 'game' && !gm && !ui.game.setup;
+    el.innerHTML = `<div class="card"><p class="note">Loading ${esc(c.name)}…</p><div class="row-actions">${back}</div></div>`;
+    COURSES.load(id).then(() => {
+      if (!mine()) return;
+      renderGame();
+      if (gmScrollOnLoad && gm) gmScrollTop();
+      gmScrollOnLoad = false;
+    }, (e) => {
+      if (!mine()) return;
       el.innerHTML = `<div class="card"><p class="empty">${esc(e.message)}. Check the connection, then try again.</p>
-        <div class="row-actions"><button class="btn" data-action="gm-continue">Try again</button></div></div>`;
+        <div class="row-actions"><button class="btn" data-action="gm-continue">Try again</button>${back}</div></div>`;
     });
+  }
+  // Soon after the page is up (and on switching player), the course of the round in progress
+  // and the one picked last are fetched quietly, so either plays with no signal later.
+  function gmPrefetch() {
+    if (!COURSES) return;
+    const st = gmState(), last = st.last && COURSES.get(st.last.course) ? st.last.course : COURSES.list[0].id;
+    [st.round && st.round.course, last].forEach((id) => { if (id) COURSES.prefetch(id); });
   }
 
   // ----- Before a round: the course, tees, holes and how shots are played -----
@@ -2121,6 +2213,9 @@
   }
   function gmSetupHtml(st, pools, round) {
     const set = gmSettings(st, pools), course = gmCourse(set.course), clubs = GM.clubList(pools).map((p) => p.club);
+    // Clubs that play the yardage chart (all of them, for M2 until his next range session).
+    const charted = clubs.filter((c) => pools[c].chart), allChart = clubs.length > 0 && charted.length === clubs.length;
+    const plays = allChart ? 'Each club plays its yardage chart numbers' : charted.length ? 'Each club plays your real shots, or your yardage chart’s numbers' : 'Each club plays your real shots';
     const live = set.mode === 'live' || !clubs.length, mode = live ? 'live' : set.mode, lefty = set.hand === 'L';
     const t = round ? GM.totals(round) : null, next = round ? round.cards.find((c) => !c.done) : null;
     const going = round && next ? `<div class="card">
@@ -2134,8 +2229,8 @@
         ${COURSES.list.length > 1 ? `<div class="chips gm-courses" role="group" aria-label="Course">${COURSES.list.map((c) => gmChip('course', c.id, esc(c.name), set.course)).join('')}</div>` : ''}
         <p class="note">${esc(course.place)} · par ${COURSES.par(course)}. ${esc(course.blurb)}</p>
         <ul class="gm-how">
-          <li>Every shot flies like your real range shots with that club: its distance, its height and your usual shape.</li>
-          ${data.yardageChart ? `<li>Clubs on your yardage chart play its numbers, struck clean every time, until a range session from ${esc(C.fmtDate(data.yardageChart.date, { short: true }))} on has them. Your swing still sends them left or right.</li>` : ''}
+          ${allChart ? '' : '<li>Every shot flies like your real range shots with that club: its distance, its height and your usual shape.</li>'}
+          ${charted.length ? `<li>${allChart ? 'Every club plays its numbers from your yardage chart' : `Clubs on your yardage chart (${esc(charted.join(', '))}) play its numbers`} until a range session from ${esc(C.fmtDate(data.yardageChart.date, { short: true }))} on has them. Your swing still sends them left or right, and a badly timed one is a mis-hit.</li>` : ''}
           <li><strong>Real swing:</strong> put your thumb on the ball, drag down for the backswing, then swipe up through the ball. A gold ring rises at the pace of a perfect tempo: 3 : 1, back to down.</li>
           <li>Quick from the top shuts the face, so it starts ${lefty ? 'right' : 'left'}; slow leaves it open, so it starts ${lefty ? 'left' : 'right'}. Swipe up and to the ${lefty ? 'left' : 'right'} for a draw, up and to the ${lefty ? 'right' : 'left'} for a fade.</li>
           <li>Tap the map to aim. The oval shows where most of your shots with that club finish.</li>
@@ -2147,8 +2242,8 @@
           <p class="hint">Hole ${+set.one}: par ${course.holes[+set.one - 1].par}, ${course.holes[+set.one - 1].yds[set.tee] || '–'} yds. ${esc(course.holes[+set.one - 1].note)}</p>` : ''}</div>
         <div class="field"><span class="label" id="gmModeL">Shots</span><div class="chips" role="group" aria-labelledby="gmModeL">${GM_MODES.filter(([v]) => clubs.length || v === 'live').map(([v, l]) => gmChip('mode', v, l, mode)).join('')}</div>
           <p class="hint">${live ? 'After each shot at the range, type in its carry and offline from the screen, and it plays on the hole. You can switch during a round.'
-            : mode === 'meter' ? `Three taps: start the swing, set the power, then tap on the yellow line. Early pulls it ${lefty ? 'right' : 'left'}, late pushes it ${lefty ? 'left' : 'right'}. Each club plays your real shots: ${esc(clubs.join(', '))}.`
-            : `A swing like a real one: your tempo sets the clubface and the way you swipe sets the path, so you see what starts a ball left or right and what curves it. Each club plays your real distances and your usual shape: ${esc(clubs.join(', '))}.`}</p></div>
+            : mode === 'meter' ? `Three taps: start the swing, set the power, then tap on the yellow line. Early pulls it ${lefty ? 'right' : 'left'}, late pushes it ${lefty ? 'left' : 'right'}. ${plays}: ${esc(clubs.join(', '))}.`
+            : `A swing like a real one: your tempo sets the clubface and the way you swipe sets the path, so you see what starts a ball left or right and what curves it. ${plays}${charted.length ? '' : ', with your usual shape'}: ${esc(clubs.join(', '))}.`}</p></div>
         ${live ? '' : `<label class="gm-check"><input type="checkbox" data-change="gm-easy"${set.easy ? ' checked' : ''}> Easy: more room for error</label>
         <label class="gm-check"><input type="checkbox" data-change="gm-hand"${lefty ? ' checked' : ''}> I play left-handed</label>`}
         <div class="row-actions"><button class="btn block" data-action="gm-start">${icon('flag')}<span>Tee off</span></button></div>
@@ -2161,10 +2256,16 @@
     const hist = (st.history || []).filter((r) => r && C.isNum(r.strokes));
     const erase = round || hist.length ? `<div class="row-actions"><button class="btn ghost small" data-action="gm-erase">Erase all rounds</button></div>` : '';
     if (!hist.length) return erase ? `<div class="card">${erase}</div>` : '';
-    const full = hist.filter((r) => r.holes === 18 && gmCourse(r.course).id === course.id), best = full.length ? full.reduce((a, b) => (b.strokes < a.strokes ? b : a)) : null;
-    return `<h2>Your rounds</h2><div class="card"><ul class="plain gm-rounds">${hist.slice(0, 8).map((r) => `<li><span>${esc(C.fmtDate(r.date, { short: true }))} · ${esc(gmCourse(r.course).name)} · ${esc(r.label || plural(r.holes, 'hole'))} · ${esc(gmTeeName(gmCourse(r.course), r.tee))}${r.mode === 'live' ? ' · from the range' : r.mode === 'meter' ? ' · swing meter' : ''}</span>
+    // The best 18 at this course from each set of tees, longest tees first.
+    const best = {};
+    hist.forEach((r) => { const k = r.tee || ''; if (r.holes === 18 && r.course === course.id && (!best[k] || r.strokes < best[k].strokes)) best[k] = r; });
+    const bestTees = course.tees.map((x) => x.id).filter((id) => best[id]).concat(Object.keys(best).filter((id) => !course.tees.some((x) => x.id === id)));
+    const known = (r) => COURSES.get(r.course);
+    const MODE_WORDS = { swing: 'real swing', meter: 'swing meter', live: 'from the range' };
+    const modesText = (r) => { const m = Array.isArray(r.modes) && r.modes.length ? r.modes : [r.mode]; return m.length === 1 && m[0] === 'swing' ? '' : ' · ' + m.map((x) => MODE_WORDS[x] || x).join(' and '); };
+    return `<h2>Your rounds</h2><div class="card"><ul class="plain gm-rounds">${hist.slice(0, 8).map((r) => `<li><span>${esc(C.fmtDate(r.date, { short: true }))} · ${esc(known(r) ? known(r).name : 'Another course')} · ${esc(r.label || plural(r.holes, 'hole'))} · ${esc(known(r) ? gmTeeName(known(r), r.tee) : cap(String(r.tee || '')))}${esc(modesText(r))}</span>
       <span class="sc">${r.strokes} (${GM.toParText(r.toPar)})</span></li>`).join('')}</ul>
-      ${best ? `<p class="hint">Best 18 holes at ${esc(course.name)}: ${best.strokes} (${GM.toParText(best.toPar)}) on ${esc(C.fmtDate(best.date, { short: true }))}.</p>` : ''}${erase}</div>`;
+      ${bestTees.length ? `<p class="hint">Best 18 holes at ${esc(course.name)}: ${bestTees.map((id) => { const b = best[id]; return `${id ? esc(gmTeeName(course, id)) + ' tees ' : ''}${b.strokes} (${GM.toParText(b.toPar)}) on ${esc(C.fmtDate(b.date, { short: true }))}`; }).join('; ')}.</p>` : ''}${erase}</div>`;
   }
   // A rounds reset from the data file ("rounds_reset": "YYYY-MM-DD"): the first time a phone
   // sees it, it erases this player's round in progress and past rounds from that day or
@@ -2255,7 +2356,8 @@
   }
   function gmSize() {
     const w = Math.max(240, Math.floor(gm.canvas.parentElement.getBoundingClientRect().width));
-    const h = Math.round(Math.min(520, Math.max(280, w)));
+    // Square up to 520 px, but never taller than 80% of the screen (a phone held sideways).
+    const h = Math.round(Math.min(520, Math.max(280, w), Math.max(220, (window.innerHeight || 800) * 0.8)));
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     gm.canvas.width = Math.round(w * dpr);
     gm.canvas.height = Math.round(h * dpr);
@@ -2290,7 +2392,9 @@
     const c = club || gm.club, pool = gm.pools[c];
     return GM.playsLike(GM.dist(gm.ball, at), gmRise(at), pool ? GM.typeLanding(pool, club || gmPutting() ? 'normal' : gmShotType()) : GM.landingOf(c)) / (gm.H.air || 1);
   }
-  function gmSlopeTo(at) { return GM.slopeAt(gm.H.ground, gm.ball.x, gm.ball.z, GM.headingTo(gm.ball, at)); }
+  // The slope of his stance toward `at`. A tee box is level (the 6-yd heights only see the hill
+  // round it, as on a green), so a tee shot has none.
+  function gmSlopeTo(at) { return gmLie() === 'tee' ? null : GM.slopeAt(gm.H.ground, gm.ball.x, gm.ball.z, GM.headingTo(gm.ball, at)); }
   function gmLieSlope(at) { return GM.lieSlope(gmSlopeTo(at || gmAimPoint()), gm.club, gmHand(), data.equipment); }
   function gmSuggest() {
     const list = gmClubs(), d = GM.playsLike(GM.dist(gm.ball, gm.pin), gmRise(gm.pin), 46) / (gm.H.air || 1);
@@ -2523,13 +2627,14 @@
   }
 
   // ----- Controls under the map -----
+  // Each club with how far a good swing goes here: up a mountain, farther in the thin air.
   function gmClubChips() {
-    const clubs = gmClubs().slice();
+    const clubs = gmClubs().slice(), air = gm.H.air || 1;
     if (gmLie() === 'fringe' || gmLie() === 'green') clubs.unshift('Putter');
     return `<div class="chips gm-clubs" role="group" aria-label="Club">${clubs.map((c) => {
       const p = gm.pools[c];
-      return `<button type="button" class="chip" data-action="gm-club" data-club="${esc(c)}" aria-pressed="${c === gm.club}">${esc(c)}${p ? `<span class="cd">${Math.round(p.full)}</span>` : ''}</button>`;
-    }).join('')}</div>`;
+      return `<button type="button" class="chip" data-action="gm-club" data-club="${esc(c)}" aria-pressed="${c === gm.club}">${esc(c)}${p ? `<span class="cd">${Math.round(p.full * air)}</span>` : ''}</button>`;
+    }).join('')}</div>${air > 1.005 ? `<p class="hint gm-air">Thin air up here: the ball carries about ${Math.round((air - 1) * 100)}% farther, and these numbers allow for it.</p>` : ''}`;
   }
   // The shot to hit: the ones that make sense from here, and what the one picked does. It
   // starts as his plain shot; a shape is his to choose, with nothing suggested.
@@ -2627,17 +2732,20 @@
     if (!el) return;
     const aim = gmAimPoint(), d = GM.dist(gm.ball, aim), pool = gm.pools[gm.club];
     const atPin = GM.dist(aim, gm.pin) < 1.5, rise = gmRise(aim), plays = gmPlays(aim);
-    // The climb to the spot, when it's worth a club's thought: "plays 163, 21 ft uphill".
-    const climb = Math.abs(rise) >= 1.5 ? `plays ${Math.round(plays)}, ${Math.round(Math.abs(rise) * 3)} ft ${rise > 0 ? 'uphill' : 'downhill'}` : '';
+    // The climb to the spot, when it's worth a club's thought: "plays 163, 21 ft uphill". Every
+    // number here is in yards on this course: up a mountain, the club numbers allow for the
+    // thin air (gmClubChips), so the climb is all "plays" is about.
+    const air = gm.H.air || 1;
+    const climb = Math.abs(rise) >= 1.5 ? `plays ${Math.round(plays * air)}, ${Math.round(Math.abs(rise) * 3)} ft ${rise > 0 ? 'uphill' : 'downhill'}` : '';
     let sub = '';
-    if (gm.round.mode === 'live') sub = pool ? `A good ${C.clubName(gm.club, data.clubs).toLowerCase()} goes about ${Math.round(pool.full)}` : 'Tap the map to aim';
+    if (gm.round.mode === 'live') sub = pool ? `A good ${C.clubName(gm.club, data.clubs).toLowerCase()} goes about ${Math.round(pool.full * air)}` : 'Tap the map to aim';
     else if (pool) {
       const type = gmShotType(), sc = GM.strokeScale(type, pool), p = GM.strokeFor(pool, plays, gmLie(), type), full = gmReach(gm.club) * (type === 'normal' ? 1 : GM.shotReach(type, pool.carry, pool.full - pool.carry, gm.club)) * sc;
       const what = GM.ownStroke(type) ? GM.SHOTS[type].name.toLowerCase() + ' stroke' : 'swing';
       // Out of reach only when it's the pin or a spot he picked: the spot the game picks is
       // within a normal full swing, and a shot that goes shorter (a fade, a high one) just
-      // comes up a little short of it.
-      sub = plays > full + 2 && (gm.aim || atPin) ? `Out of reach: a full ${what} goes about ${Math.round(full)}` : p >= 0.97 ? `A full ${what}` : `About a ${Math.round(p * 100)}% ${what}`;
+      // comes up a little short of it. 3 yds short is still in reach, as for the suggested club.
+      sub = plays > full + 3 && (gm.aim || atPin) ? `Out of reach: a full ${what} goes about ${Math.round(full * air)}` : p >= 0.97 ? `A full ${what}` : `About ${/^(8\d?|11|18)$/.test(String(Math.round(p * 100))) ? 'an' : 'a'} ${Math.round(p * 100)}% ${what}`;
     }
     el.innerHTML = `Aiming ${gmYds(d)}${atPin ? ' at the pin' : ''}${climb ? `<span class="s">${esc(climb)}</span>` : ''}<span class="s">${esc(sub)}</span>`;
     if (gm.meter && gm.meter.kind === 'swing' && gm.meter.phase === 'ready') gmMeterSetup('swing');
@@ -3371,7 +3479,7 @@
     const out = GM.swingShot(gm.pools[gm.club], sw, { lie: gmLie(), easy: gm.round.easy, hand: gmHand(), still: true, slope: gmSlopeTo(gmAimPoint()), equip: data.equipment, type: gmShotType() });
     const r = out.rep, side = Math.round(Math.abs(r.side));
     gmPadWord(r, 'practice');
-    gmMsgHtml(`Practice swing · ${r.shape}`, `A swing like that: ${Math.round(r.carry)} yds carry${side >= 1 ? `, ${gmYds(side)} ${r.side < 0 ? 'left' : 'right'}` : ', on line'}.`, gmSwingReportHtml(r, true));
+    gmMsgHtml(`Practice swing · ${r.shape}`, `A swing like that: ${Math.round(r.carry * (gm.H.air || 1))} yds carry${side >= 1 ? `, ${gmYds(side)} ${r.side < 0 ? 'left' : 'right'}` : ', on line'}.`, gmSwingReportHtml(r, true));
   }
   function gmRealSwing(sw) {
     const rnd = gmRnd(), lie = gmLie(), out = GM.swingShot(gm.pools[gm.club], sw, { lie, rnd, easy: gm.round.easy, hand: gmHand(), slope: gmSlopeTo(gmAimPoint()), equip: data.equipment, type: gmShotType() });
@@ -3501,10 +3609,10 @@
     gmMeterStop();
     const m = gm.meter, e = GM.timingOf(pos, gm.round.easy), pool = gm.pools[gm.club];
     gmMeterText(GM.timingWord(e));
-    const rnd = gmRnd(), pick = GM.pickShot(pool, e, rnd);
+    const rnd = gmRnd(), pick = GM.pickShot(pool, e, rnd, gmHand());
     const type = gmShotType();
     const power = m.power * GM.strokeScale(type, gm.pools[gm.club]);
-    gmPlay(GM.typeShot(GM.slopeShot(GM.adjustShot(pick.shot, power, gmLie()), gmLieSlope(), gmHand()), type, gmHand(), gmLie(), Math.abs(e)), { kind: 'meter', e, power, pick, rnd, lie: gmLie(), type });
+    gmPlay(GM.typeShot(GM.slopeShot(GM.adjustShot(pick.play || pick.shot, power, gmLie()), gmLieSlope(), gmHand()), type, gmHand(), gmLie(), Math.abs(e)), { kind: 'meter', e, power, pick, rnd, lie: gmLie(), type });
   }
   function gmLiveShot() {
     const carry = numOrNull('gmCarry'), total = numOrNull('gmTotal'), off = numOrNull('gmOff');
@@ -3887,7 +3995,7 @@
     const stroke = {
       kind: info.kind, club: shot.club, from: [r1(from.x), r1(from.z)], to: [r1(res.rest.x), r1(res.rest.z)], lie0: from.lie, lie: res.lie, result: res.result,
       penalty: res.penalty, carry: r1(res.carry), total: r1(res.total), e: C.isNum(info.e) ? r1(info.e * 100) / 100 : null, power: C.isNum(info.power) ? r1(info.power * 100) / 100 : null,
-      grade: pick ? pick.grade : rep ? (rep.mis ? 'mishit' : null) : null, real: real && real.id && !real.made ? real.id : null, track: res.track
+      grade: pick ? pick.grade : rep ? (rep.mis ? 'mishit' : null) : null, real: real && real.id && !real.made && !(pick && pick.made) ? real.id : null, track: res.track
     };
     if (rep) stroke.sw = gmSwingRecord(rep);
     const type = info.type || (rep && rep.type);
@@ -3946,6 +4054,7 @@
     };
     gm.raf = requestAnimationFrame(tick);
   }
+  const GM_MADE = { thin: ['A thin mis-hit', 'it came off low and ran'], fat: ['A fat mis-hit', 'it came up well short'], toe: ['Off the toe', 'a weak mis-hit'], shank: ['A shank', 'it shot off to the side'] };
   function gmSessionOf(shot) { return data.sessions.find((s) => C.sessionShots(s).indexOf(shot) >= 0) || null; }
   function gmAfterShot(res, info, shot) {
     const card = gm.card, name = C.clubName(shot.club, data.clubs);
@@ -3955,8 +4064,11 @@
     const where = nb ? `${GM_WHERE[nb.lie] || GM.LIE_WORDS[nb.lie]}, ${nb.lie === 'green' ? gmFtText(d * 3) + ' from the hole' : gmYds(d) + ' to the pin'}.` : '';
     let line = where, kind = '';
     if (res.result === 'holed') { line = card.strokes === 1 ? 'Hole in one!' : 'In the hole!'; kind = 'great'; }
-    else if (res.result === 'water') { line = `In the water. One penalty stroke: drop where it went in. ${where}`; kind = 'bad'; }
-    else if (res.result === 'penalty') { line = `In the penalty area. One penalty stroke: drop where it went in. ${where}`; kind = 'bad'; }
+    else if (res.result === 'water' || res.result === 'penalty') {
+      const into = res.result === 'water' ? 'In the water' : 'In the penalty area';
+      line = res.rehit ? `${into}. One penalty stroke: the bank where it went in is too steep to drop on, so hit again from the same spot.` : `${into}. One penalty stroke: drop where it went in. ${where}`;
+      kind = 'bad';
+    }
     else if (res.result === 'ob') { line = 'Out of bounds. One penalty stroke: hit again from the same spot.'; kind = 'bad'; }
     else if (res.result === 'tree') line = `Hit a tree! ${where}`;
     else if ((info.pick && info.pick.grade === 'mishit') || (info.rep && info.rep.mis)) kind = 'bad';
@@ -3974,8 +4086,11 @@
       const side = C.isNum(real.offline_ft) && Math.round(Math.abs(real.offline_ft)) ? `, ${Math.round(Math.abs(real.offline_ft))} ft ${real.offline_ft < 0 ? 'left' : 'right'}` : '';
       const how = [Math.round(info.power * 100) < 100 ? `at ${Math.round(info.power * 100)}% power` : '', GM_FROM[info.lie] || ''].filter(Boolean).join(', ');
       const wasMis = (gm.pools[shot.club] || { mis: [] }).mis.indexOf(real) >= 0;
-      sub = real.chart ? `It flew like your ${name.toLowerCase()} on your yardage chart: ${C.fmtRaw(Math.round(real.carry_yds))} yds carry${how ? `. This one was ${how}` : ''}.`
-        : `${wasMis ? 'A mis-hit, like' : 'It flew like'} your ${name.toLowerCase()}${sess ? ` on ${C.fmtDate(sess.date, { short: true })}` : ''}${real.time ? ` at ${real.time}` : ''}: ${C.fmtRaw(real.carry_yds)} yds carry${side}${how ? `. This one was ${how}` : ''}.`;
+      // A club with too few shots to pick from: the timing turned it, or made a mis-hit from it.
+      const turned = !info.pick.made && Math.abs(info.pick.turned || 0) >= 4 ? ` Your timing ${info.pick.turned * (gmHand() === 'L' ? -1 : 1) < 0 ? 'pulled' : 'pushed'} it ${info.pick.turned < 0 ? 'left' : 'right'}.` : '';
+      sub = info.pick.made ? `${GM_MADE[info.pick.made][0]} with your ${name.toLowerCase()}${how ? ` (${how})` : ''}: ${GM_MADE[info.pick.made][1]}.`
+        : real.chart ? `It flew like your ${name.toLowerCase()} on your yardage chart: ${C.fmtRaw(Math.round(real.carry_yds))} yds carry${how ? `. This one was ${how}` : ''}.${turned}`
+        : `${wasMis ? 'A mis-hit, like' : 'It flew like'} your ${name.toLowerCase()}${sess ? ` on ${C.fmtDate(sess.date, { short: true })}` : ''}${real.time ? ` at ${real.time}` : ''}: ${C.fmtRaw(real.carry_yds)} yds carry${side}${how ? `. This one was ${how}` : ''}.${turned}`;
     } else if (GM_FROM[info.lie]) sub = `Played ${GM_FROM[info.lie]}.`;
     if (card.done && card.picked) line = `${line ? line + ' ' : ''}That’s double par, so you pick up.`;
     // The shot he planned, and whether it came off.
@@ -4037,11 +4152,20 @@
   }
 
   // ----- The round -----
+  // The ways a round's shots were played, in the order first used: ['swing', 'meter', 'live'].
+  function gmModesOf(r) {
+    const out = [];
+    (r.cards || []).forEach((c) => (c.shots || []).forEach((x) => {
+      const m = x.kind === 'real' ? 'swing' : x.kind === 'meter' || x.kind === 'live' ? x.kind : null;
+      if (m && out.indexOf(m) < 0) out.push(m);
+    }));
+    return out.length ? out : [r.mode];
+  }
   function gmFinish(r) {
     if (r.finished) return;
     r.finished = true;
     const t = GM.totals(r);
-    gm.st.history = [{ date: todayISO(), course: r.course, tee: r.tee, holes: t.holes, label: r.label || '', strokes: t.strokes, par: t.par, toPar: t.toPar, mode: r.mode, scores: r.cards.map((c) => c.score) }]
+    gm.st.history = [{ date: todayISO(), course: r.course, tee: r.tee, holes: t.holes, label: r.label || '', strokes: t.strokes, par: t.par, toPar: t.toPar, mode: r.mode, modes: gmModesOf(r), scores: r.cards.map((c) => c.score) }]
       .concat(gm.st.history || []).slice(0, 20);
   }
   function gmCanvasTap(e) {
@@ -4061,7 +4185,7 @@
       if (!window.confirm('Start a new round? The one you’re playing ends.')) return;
       if (old.cards.some((c) => c.done)) {
         const t = GM.totals(old);
-        st.history = [{ date: todayISO(), course: old.course, tee: old.tee, holes: t.played, label: `${t.played} of ${old.label || plural(t.holes, 'hole')}`, strokes: t.strokes, par: t.par, toPar: t.toPar, mode: old.mode, scores: old.cards.filter((c) => c.done).map((c) => c.score) }]
+        st.history = [{ date: todayISO(), course: old.course, tee: old.tee, holes: t.played, label: `${t.played} of ${old.label || plural(t.holes, 'hole')}`, strokes: t.strokes, par: t.par, toPar: t.toPar, mode: old.mode, modes: gmModesOf(old), scores: old.cards.filter((c) => c.done).map((c) => c.score) }]
           .concat(st.history || []).slice(0, 20);
       }
     }
@@ -4073,6 +4197,7 @@
     st.round.label = set.holes === 'one' ? `Hole ${+set.one}` : GM_HOLES[set.holes] || '';
     gmStore(st);
     Object.assign(ui.game, { setup: false, card: false, dir: null });
+    gmScrollOnLoad = !COURSES.loaded(course.id);   // a course still loading brings the hole into view once it's in
     renderGame();
     gmScrollTop();
   }
@@ -4087,7 +4212,7 @@
     const t = GM.totals(r);
     if (!window.confirm(t.played ? `End this round? Your ${plural(t.played, 'hole')} so far go in Your rounds.` : 'End this round?')) return;
     if (t.played && !r.finished) {
-      st.history = [{ date: todayISO(), course: r.course, tee: r.tee, holes: t.played, label: `${t.played} of ${r.label || plural(t.holes, 'hole')}`, strokes: t.strokes, par: t.par, toPar: t.toPar, mode: r.mode, scores: r.cards.filter((c) => c.done).map((c) => c.score) }]
+      st.history = [{ date: todayISO(), course: r.course, tee: r.tee, holes: t.played, label: `${t.played} of ${r.label || plural(t.holes, 'hole')}`, strokes: t.strokes, par: t.par, toPar: t.toPar, mode: r.mode, modes: gmModesOf(r), scores: r.cards.filter((c) => c.done).map((c) => c.score) }]
         .concat(st.history || []).slice(0, 20);
     }
     st.round = null;
@@ -4129,11 +4254,12 @@
     if (s._source === 'local') badges.push('Added on this device');
     if (C.isSummaryOnly(s)) badges.push('Ranges only');
     if (s.id === data.baseline_session_id) badges.push('Baseline');
+    const twin = /#\d+$/.exec(sessTag(s)); // two sessions alike in date, device and clubs
     return `<button class="session-card" data-action="open-session" data-id="${esc(s.id)}">
       ${calTile(s.date)}
       <span class="sc-body">
         <span class="sc-title">${esc(longDate(s.date))}</span>
-        <span class="sc-meta">${esc(deviceLine(s))} · ${n ? plural(n, 'shot') : 'no individual shots'}</span>
+        <span class="sc-meta">${esc(deviceLine(s))} · ${n ? plural(n, 'shot') : 'no individual shots'}${twin ? ' · ' + esc(twin[0]) : ''}</span>
         ${clubs.length ? `<span class="sc-clubs">${clubs.map((c) => `<span class="sc-club">${esc(c)}</span>`).join('')}</span>` : ''}
         ${badges.length ? `<span class="badges">${badges.map((b) => `<span class="badge${b === 'Baseline' ? ' base' : ''}">${esc(b)}</span>`).join('')}</span>` : ''}
       </span>${icon('chevron', 'chev')}
@@ -4155,7 +4281,7 @@
   function renderSessionDetail(el, s) {
     const n = shotCount(s);
     const dataNotes = C.asList(s.notes);
-    const notMeasured = Array.isArray(s.metrics_not_available) ? s.metrics_not_available.map((k) => (C.METRIC[k] ? C.METRIC[k].label : k).toLowerCase()) : [];
+    const notMeasured = Array.isArray(s.metrics_not_available) ? s.metrics_not_available.map((k) => keyName(k).toLowerCase()) : [];
     const coaching = C.asList(s.coaching_notes);
     if (!ui.addMode) ui.addMode = n ? 'enter' : 'paste';
     el.innerHTML = `
@@ -4202,7 +4328,7 @@
     clubs.forEach((c) => Object.keys(sa[c] || {}).forEach((k) => { if (keys.indexOf(k) < 0) keys.push(k); }));
     const order = C.METRICS.map((m) => m.key);
     keys.sort((a, b) => (order.indexOf(a) < 0 ? 99 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 99 : order.indexOf(b)));
-    const label = (k) => C.METRIC[k] ? C.METRIC[k].label + (C.METRIC[k].unit ? ` (${unitLabel(C.METRIC[k])})` : '') : k === 'consistency_pct' ? 'Consistency (%)' : k;
+    const label = (k) => C.METRIC[k] ? C.METRIC[k].label + (C.METRIC[k].unit ? ` (${unitLabel(C.METRIC[k])})` : '') : keyName(k) + (/_pct$/.test(k) ? ' (%)' : '');
     const fmt = (k, v) => !C.isNum(v) ? '—' : C.METRIC[k] && C.METRIC[k].dir ? C.fmtRawDir(v) : C.fmtRaw(v);
     return `<div class="card"><h3>Screen averages</h3><p class="hint" style="margin:4px 0 8px">As shown on the ${esc(C.shortDevice(s.device))} screen (all shots), for checking.</p>
       <div class="table-wrap"><table class="matrix"><thead><tr><th>Metric</th>${clubs.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
@@ -4213,7 +4339,7 @@
     const sum = s.summary || {};
     const clubs = C.sortClubs(Object.keys(sum));
     const keys = C.METRICS.map((m) => m.key).filter((k) => clubs.some((c) => sum[c] && sum[c][k]));
-    return `<div class="card"><h3>Recorded ranges</h3><p class="hint" style="margin:4px 0 8px">Only ranges were kept from this session, so they include any mis-hits.</p>
+    return `<div class="card"><h3>Recorded ranges</h3><p class="hint" style="margin:4px 0 8px">${C.sessionShots(s).length ? 'Some numbers from this session were kept only as ranges' : 'Only ranges were kept from this session'}, so they include any mis-hits.</p>
       <div class="table-wrap"><table class="matrix"><thead><tr><th>Metric</th>${clubs.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
       ${keys.map((k) => `<tr><th scope="row">${esc(C.METRIC[k].label)}<span class="u">${esc(unitLabel(C.METRIC[k]))}</span></th>${clubs.map((c) => { const r = (sum[c] || {})[k]; return `<td>${r ? esc(C.fmtRange(r.min, r.max, C.METRIC[k].dir)) : '—'}</td>`; }).join('')}</tr>`).join('')}
       </tbody></table></div></div>`;
@@ -4447,7 +4573,7 @@
       </div></div>
       <div class="card"><h3 class="card-title">Progress baseline</h3>
         ${data.sessions.length ? `<div class="field"><label for="baseSel">Baseline session</label>
-          <select id="baseSel" data-change="baseline"><option value="">First session for each club</option>${data.sessions.slice().reverse().map((s) => `<option value="${esc(s.id)}"${s.id === data.baseline_session_id ? ' selected' : ''}>${esc(C.fmtDate(s.date))} · ${esc(C.shortDevice(s.device))}</option>`).join('')}</select></div>` : '<p class="empty">No sessions yet.</p>'}
+          <select id="baseSel" data-change="baseline"><option value="">First session for each club</option>${data.sessions.slice().reverse().map((s) => `<option value="${esc(s.id)}"${s.id === data.baseline_session_id ? ' selected' : ''}>${esc(sessName(s))}</option>`).join('')}</select></div>` : '<p class="empty">No sessions yet.</p>'}
         <p class="hint">Progress compares each club with this session. A club it doesn’t include uses its own first session.</p></div>
       <div class="card" id="ghCard"><h3 class="card-title">Save goals to GitHub</h3>
         ${ghReady() ? `<p class="note"><strong>✓ This phone saves goals to GitHub</strong> (${esc(github.repo)}). Goals added, finished or removed here show on every phone.</p>
@@ -4475,15 +4601,18 @@
         <p class="hint">Sessions added or edited here are saved in this browser only. To share them, export the JSON and replace <code>${esc(file)}</code> in the repo; every device then picks them up. Import merges sessions by id.</p>
       </div>`;
   }
+  // The data file as it should be now: everything the file has, in its order (a yardage chart,
+  // swing notes and reviews, a rounds reset, anything added later), with what the page keeps
+  // (the player, clubs, baseline, goals and sessions) brought up to date. So the copy can
+  // replace the file without losing anything.
   function exportObject() {
     const b = bundle || {};
     const clubs = Object.assign({}, data.clubs);
     data.sessions.forEach((s) => C.sessionShots(s).forEach((x) => { if (x.club && !clubs[x.club]) clubs[x.club] = C.clubName(x.club); }));
-    const out = { player: data.player };
-    if (b.units) out.units = b.units;
-    if (b.sign_convention) out.sign_convention = b.sign_convention;
+    const out = {};
+    Object.keys(b).forEach((k) => { out[k] = b[k]; });
+    out.player = data.player;
     out.clubs = clubs;
-    if (b.equipment) out.equipment = b.equipment;
     out.baseline_session_id = data.baseline_session_id;
     out.personal_goals = (data.goals || []).map((g) => ({ id: g.id, text: g.text, source: g.source, added: g.added, done: g.done }));
     out.sessions = data.sessions.map(stripUI);
@@ -4601,6 +4730,7 @@
       const st = gmState(), k = b.dataset.k, v = k === 'one' ? Number(b.dataset.v) : b.dataset.v;
       st.last = Object.assign(gmSettings(st, gmPools()), { [k]: v });
       gmStore(st);
+      if (k === 'course') COURSES.prefetch(v);
       renderGame();
     },
     'gm-start'() { gmStartRound(); },
@@ -4624,9 +4754,11 @@
     },
     'gm-club'(b) {
       if (!gm || gm.busy || gmSwinging()) return;
+      // A spot he picked stays picked: he chooses the target, then the club for it.
+      const wasPutter = gm.club === 'Putter';
       gm.club = b.dataset.club;
       if (gm.shot && !GM.shotFits(gm.shot, gm.club)) gm.shot = null;
-      gm.aim = null;
+      if (wasPutter || gm.club === 'Putter') gm.aim = null;
       gm.phase = gm.club === 'Putter' ? 'putt' : 'aim';
       gmView();
       gmControls();
@@ -4693,8 +4825,7 @@
       if (!gm || gm.busy || gmSwinging()) return;
       gmShotOptions();
       const type = b.dataset.type, want = GM.clubForShot(type, gm.pools, gm.club, gm.shotCtx);
-      gm.shot = type;
-      gm.aim = null;
+      gm.shot = type;   // the aim he picked stays: the shape and the aim are both his to choose
       if (want !== gm.club && gm.pools[want]) { gm.club = want; gmView(); }
       gmControls();
       gmDraw();
@@ -4787,7 +4918,6 @@
       f.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0&playsinline=1';
       f.title = (b.getAttribute('aria-label') || 'Coach’s video').replace(/^Play the coach’s video: /, '');
       f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-      f.setAttribute('allowfullscreen', '');
       f.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
       b.replaceWith(f);
     },
@@ -5153,5 +5283,6 @@
   try { localStorage.setItem(LS + '.lastPlayer', playerId); } catch (e) { /* ignore */ }
   render();
   fetchBundle();
+  setTimeout(gmPrefetch, 1500);
   fetchPlayers();
 })();

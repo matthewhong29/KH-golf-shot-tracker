@@ -507,6 +507,17 @@
     });
     return labels;
   }
+  // Where the yardage markers' numbers sit, as boxes for a label to keep clear of.
+  function markerBoxes(ctx, cam, c) {
+    if (!c || !c.markers) return [];
+    ctx.font = FONT;
+    return c.markers.map(function (d) {
+      var b = project(cam, -c.half - 2.5, 0, d);
+      if (!b || b.x < 30 || b.x > cam.w || b.y < 20 || b.y > cam.h) return null;
+      var w = Math.ceil(ctx.measureText(String(d)).width);
+      return { x: b.x - 5 - w, y: b.y - 16, w: w, h: 18 };
+    }).filter(Boolean);
+  }
   function drawMarkerLabels(ctx, labels) {
     ctx.font = FONT;
     ctx.textAlign = 'right';
@@ -618,11 +629,13 @@
     });
   }
   // From the side, the peak height is labelled once the ball has been over the top.
-  // Above the apex, or just under it when the corner readout is in the way.
+  // Above the apex, or just under it, or to one side, wherever the corner readout and the
+  // yardage markers' numbers aren't.
   function drawApex(ctx, cam, tr, t, avoid) {
     if (t < tr.apexT || tr.apex * 3 < 6) return;
     var q = project(cam, tr.apexPoint.x, tr.apexPoint.y, tr.apexPoint.z), text = Math.round(tr.apex * 3) + ' ft';
-    if (q && !pill(ctx, cam, q.x, q.y - 4, text, avoid)) pill(ctx, cam, q.x, q.y + 46, text, avoid);
+    if (!q) return;
+    [[0, -4], [0, 46], [70, -4], [-70, -4]].some(function (o) { return pill(ctx, cam, q.x + o[0], q.y + o[1], text, avoid); });
   }
   var VIEWS = ['tee', 'side', 'green'];
   // One frame. o: { cam, view: 'tee' | 'side' | 'green', course, bg (the course already
@@ -638,7 +651,7 @@
     var done = t >= tr.duration, hud = [];
     if (o.view === 'green' && done) drawResult(ctx, cam, tr, o.course, 'overhead');
     else if (o.hud !== false) hud = drawHud(ctx, cam, hudLines(tr, t, o.course, o.view));
-    if (o.view === 'side') drawApex(ctx, cam, tr, t, hud);
+    if (o.view === 'side') drawApex(ctx, cam, tr, t, (hud || []).concat(markerBoxes(ctx, cam, o.course)));
   }
 
   // ---------------------------------------------------------------------------
