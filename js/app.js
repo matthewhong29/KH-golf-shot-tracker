@@ -2334,17 +2334,14 @@
     if (gm.shot && types.indexOf(gm.shot) >= 0) return gm.shot;
     return types.filter((t) => GM.plainShot(t))[0] || types[0] || 'normal';
   }
-  // His aim, or the default for this club from this spot (worked out once for each).
-  // With the real swing, the default allows for his usual shape: if a perfect swing with
-  // the club finishes 8 yds right, it aims 8 yds left of the spot it wants.
+  // His aim, or the default for this club from this spot (worked out once for each):
+  // straight at the spot it wants, whatever his usual shape. Allowing for a draw or a fade
+  // is his to think about (Matthew's call), so the game neither aims off for one nor names
+  // it; the oval still shows where his shots with the club tend to finish.
   function gmAimPoint() {
     if (gm.aim) return gm.aim;
     const k = gm.round.mode + ':' + gm.club + ':' + gmShotType() + '@' + gm.ball.x.toFixed(2) + ',' + gm.ball.z.toFixed(2);
-    if (gm.autoKey !== k) {
-      const target = gmTarget(), shape = gmShapeAt(target), allow = shape && Math.abs(shape.side) >= 3 ? shape.side : 0;
-      const aim = allow ? Object.assign(FL.offsetPoint(target.x, target.z, GM.headingTo(gm.ball, target), 0, -allow), { pin: target.pin }) : target;
-      Object.assign(gm, { autoKey: k, autoAim: aim, autoTarget: target, autoAllow: allow, autoShape: shape });
-    }
+    if (gm.autoKey !== k) Object.assign(gm, { autoKey: k, autoAim: gmTarget() });
     return gm.autoAim;
   }
   // Where a perfect real swing with this club, aimed at `at`, finishes: yds right (+) or
@@ -2628,8 +2625,8 @@
   function gmAimText() {
     const el = $('.gm-aimtext', gm.box);
     if (!el) return;
-    const aim = gmAimPoint(), d = GM.dist(gm.ball, aim), pool = gm.pools[gm.club], allow = !gm.aim && gm.autoAllow ? gm.autoAllow : 0;
-    const atPin = GM.dist(allow ? gm.autoTarget : aim, gm.pin) < 1.5, rise = gmRise(aim), plays = gmPlays(aim);
+    const aim = gmAimPoint(), d = GM.dist(gm.ball, aim), pool = gm.pools[gm.club];
+    const atPin = GM.dist(aim, gm.pin) < 1.5, rise = gmRise(aim), plays = gmPlays(aim);
     // The climb to the spot, when it's worth a club's thought: "plays 163, 21 ft uphill".
     const climb = Math.abs(rise) >= 1.5 ? `plays ${Math.round(plays)}, ${Math.round(Math.abs(rise) * 3)} ft ${rise > 0 ? 'uphill' : 'downhill'}` : '';
     let sub = '';
@@ -2641,7 +2638,6 @@
       // within a normal full swing, and a shot that goes shorter (a fade, a high one) just
       // comes up a little short of it.
       sub = plays > full + 2 && (gm.aim || atPin) ? `Out of reach: a full ${what} goes about ${Math.round(full)}` : p >= 0.97 ? `A full ${what}` : `About a ${Math.round(p * 100)}% ${what}`;
-      if (allow) sub += ` · ${gmYds(Math.abs(allow))} ${allow > 0 ? 'left' : 'right'} for your ${gm.autoShape.shape.toLowerCase()}`;
     }
     el.innerHTML = `Aiming ${gmYds(d)}${atPin ? ' at the pin' : ''}${climb ? `<span class="s">${esc(climb)}</span>` : ''}<span class="s">${esc(sub)}</span>`;
     if (gm.meter && gm.meter.kind === 'swing' && gm.meter.phase === 'ready') gmMeterSetup('swing');
